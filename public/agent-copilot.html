@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NextIQ Agent Copilot</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="copilot-shell">
+      <section class="copilot-guidance" id="copilotGuidance" aria-live="polite">
+        <article class="copilot-guidance-card copilot-empty">
+          <p>Loading live guidance...</p>
+        </article>
+      </section>
+
+      <section class="copilot-panel">
+        <div class="copilot-panel-header">
+          <div>
+            <h1 id="copilotTitle">Copilot</h1>
+            <p id="copilotSubtitle">Ask for help, rewrites, or policy guidance.</p>
+          </div>
+        </div>
+
+        <div id="copilotMessages" class="copilot-messages" aria-live="polite">
+          <article class="welcome-card welcome-card-left" id="copilotWelcomeCard">
+            <p class="welcome-kicker">Copilot</p>
+            <h1>Ask for a shorter version, a more empathetic reply, or what policy applies.</h1>
+          </article>
+        </div>
+
+        <form id="copilotForm" class="copilot-composer">
+          <label class="sr-only" for="copilotInput">Ask copilot</label>
+          <input
+            id="copilotInput"
+            name="message"
+            type="text"
+            placeholder="Ask the copilot..."
+            autocomplete="off"
+            required
+          />
+          <button type="submit" id="copilotSendButton" aria-label="Ask copilot">
+            <svg class="send-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 12h11" />
+              <path d="m12 5 7 7-7 7" />
+            </svg>
+          </button>
+        </form>
+      </section>
+    </main>
+
+    <template id="copilotMessageTemplate">
+      <article class="message">
+        <div class="message-meta"></div>
+        <div class="message-bubble"></div>
+      </article>
+    </template>
+
+    <script src="./i18n.js"></script>
+    <script src="./agent-copilot.js"></script>
+  </body>
+</html>

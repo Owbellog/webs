@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NextIQ Workitem</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="brandbar" id="brandbar">
+        <div class="brand" id="brandTitle">NextIQ Workitem</div>
+        <div class="campaign-badge" id="campaignBadge" hidden></div>
+      </header>
+
+      <section class="frame frame-static">
+        <div class="inspector" id="inspector">
+          <article class="welcome-card welcome-card-left" id="welcomeCard">
+            <p class="welcome-kicker">Workitem</p>
+            <h1>Pass `campaign` and `workitemid` in the URL to load the customer transcript and sentiment.</h1>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <template id="transcriptTemplate">
+      <article class="transcript-card">
+        <div class="transcript-meta">
+          <span class="transcript-author"></span>
+          <span class="transcript-time"></span>
+        </div>
+        <div class="transcript-sentiment">
+          <span class="sentiment-pill"></span>
+        </div>
+        <div class="transcript-text"></div>
+      </article>
+    </template>
+
+    <script src="./i18n.js"></script>
+    <script src="./workitem.js"></script>
+  </body>
+</html>

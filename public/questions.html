@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NextIQ Checklist</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell questions-shell">
+      <header class="brandbar" id="questionsBrandbar">
+        <div class="brand" id="questionsBrandTitle">Checklist</div>
+        <div class="campaign-badge" id="questionsCampaignBadge" hidden></div>
+      </header>
+
+      <section class="frame frame-static questions-frame">
+        <div class="questions-board" id="questionsBoard">
+          <article class="welcome-card welcome-card-left" id="questionsWelcomeCard">
+            <p class="welcome-kicker">Checklist</p>
+            <h1>Pass `campaign` and `workitemid` in the URL to validate your configured questions.</h1>
+          </article>
+        </div>
+      </section>
+    </main>
+    <script src="./i18n.js"></script>
+    <script src="./questions.js"></script>
+  </body>
+</html>

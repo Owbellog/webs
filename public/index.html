@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NextIQ</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="brandbar" id="brandbar">
+        <div class="brand" id="brandTitle">NextIQ</div>
+        <div class="campaign-badge" id="campaignBadge" hidden></div>
+      </header>
+
+      <section class="frame">
+        <div id="messages" class="messages" aria-live="polite">
+          <article class="welcome-card" id="welcomeCard">
+            <p class="welcome-kicker">Welcome</p>
+            <h1>Ask NextIQ a question, and it will search your articles and give a relevant answer</h1>
+          </article>
+        </div>
+
+        <form id="chatForm" class="composer">
+          <label class="sr-only" for="messageInput">Ask a question</label>
+          <input
+            id="messageInput"
+            name="message"
+            type="text"
+            placeholder="Help me find answers..."
+            autocomplete="off"
+            required
+          />
+          <button type="submit" id="sendButton" aria-label="Send message">
+            <svg class="send-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 12h11" />
+              <path d="m12 5 7 7-7 7" />
+            </svg>
+          </button>
+        </form>
+      </section>
+    </main>
+
+    <template id="messageTemplate">
+      <article class="message">
+        <div class="message-meta"></div>
+        <div class="message-bubble"></div>
+      </article>
+    </template>
+
+    <script src="./i18n.js"></script>
+    <script src="./app.js"></script>
+  </body>
+  </html>

@@ -1,0 +1,3462 @@
+const http = require("http");
+const fs = require("fs");
+const path = require("path");
+const crypto = require("crypto");
+const { URL } = require("url");
+const { Firestore } = require("@google-cloud/firestore");
+
+const ROOT = __dirname;
+const PUBLIC_DIR = path.join(ROOT, "public");
+const CAMPAIGNS_FILE = path.join(ROOT, "campaigns.json");
+const USERS_FILE = path.join(ROOT, "users.json");
+
+loadEnv(path.join(ROOT, ".env"));
+
+const PORT = Number(process.env.PORT || 3000);
+const HOST = process.env.HOST || "127.0.0.1";
+const DEFAULT_API_URL = process.env.THRIO_API_URL || "https://mancity.thrio.io/data/api/ai/prediction";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
+const ENCRYPTION_SALT = process.env.ENCRYPTION_SALT || "nextiq-campaigns-salt-v1";
+const FIRESTORE_PREFIX = sanitizeFirestorePrefix(process.env.FIRESTORE_PREFIX || "nextiq");
+const FIRESTORE_COLLECTION = process.env.FIRESTORE_COLLECTION || `${FIRESTORE_PREFIX}_campaigns`;
+const USERS_COLLECTION = `${FIRESTORE_PREFIX}_users`;
+const SESSION_EXPIRY_SECONDS = 8 * 60 * 60; // 8 hours
+const SESSION_COOKIE_NAME = "niq_sess";
+const CAMPAIGN_PERMISSIONS = ["createCampaign", "editCampaign", "deleteCampaign"];
+
+const firestore = createFirestoreClient();
+
+// Rate limiter for admin authentication (in-memory, per IP)
+const RATE_LIMIT_MAX_ATTEMPTS = 5;
+const RATE_LIMIT_BLOCK_MS = 15 * 60 * 1000; // 15 minutes
+const adminLoginAttempts = new Map(); // ip -> { count, blockedUntil }
+
+function getClientIp(req) {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (forwarded) return forwarded.split(",")[0].trim();
+  return req.socket.remoteAddress || "unknown";
+}
+
+function isAdminRateLimited(ip) {
+  const record = adminLoginAttempts.get(ip);
+  if (!record) return false;
+  if (Date.now() < record.blockedUntil) return true;
+  adminLoginAttempts.delete(ip); // block expired, reset
+  return false;
+}
+
+function recordFailedAdminAttempt(ip) {
+  const record = adminLoginAttempts.get(ip) || { count: 0, blockedUntil: 0 };
+  record.count += 1;
+  if (record.count >= RATE_LIMIT_MAX_ATTEMPTS) {
+    record.blockedUntil = Date.now() + RATE_LIMIT_BLOCK_MS;
+  }
+  adminLoginAttempts.set(ip, record);
+}
+
+function clearAdminAttempts(ip) {
+  adminLoginAttempts.delete(ip);
+}
+
+// ── Encryption helpers ─────────────────────────────────────────────────────
+// AES-256-GCM. Key is derived from ADMIN_PASSWORD + ENCRYPTION_SALT using
+// PBKDF2 (100,000 iterations) so the raw password is never stored.
+// Encrypted values are stored as: "enc:v1:<iv>:<authTag>:<ciphertext>" (hex).
+// Plain-text values (legacy) are accepted on read for backward compatibility.
+
+const ENCRYPT_PREFIX = "enc:v1:";
+let _encryptionKey = null;
+
+function getEncryptionKey() {
+  if (_encryptionKey) return _encryptionKey;
+  if (!ADMIN_PASSWORD) {
+    throw new Error("ADMIN_PASSWORD is required for campaign secret encryption.");
+  }
+  _encryptionKey = crypto.pbkdf2Sync(
+    ADMIN_PASSWORD,
+    ENCRYPTION_SALT,
+    100_000,
+    32,
+    "sha256"
+  );
+  return _encryptionKey;
+}
+
+function encryptSecret(plaintext) {
+  if (!plaintext) return plaintext;
+  const key = getEncryptionKey();
+  const iv = crypto.randomBytes(12); // 96-bit IV for GCM
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return `${ENCRYPT_PREFIX}${iv.toString("hex")}:${authTag.toString("hex")}:${encrypted.toString("hex")}`;
+}
+
+function decryptSecret(value) {
+  if (!value) return value;
+  // Legacy plaintext — return as-is for backward compatibility
+  if (!value.startsWith(ENCRYPT_PREFIX)) return value;
+  const key = getEncryptionKey();
+  const rest = value.slice(ENCRYPT_PREFIX.length);
+  const parts = rest.split(":");
+  if (parts.length !== 3) throw new Error("Invalid encrypted secret format.");
+  const [ivHex, authTagHex, ciphertextHex] = parts;
+  const iv = Buffer.from(ivHex, "hex");
+  const authTag = Buffer.from(authTagHex, "hex");
+  const ciphertext = Buffer.from(ciphertextHex, "hex");
+  const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
+  decipher.setAuthTag(authTag);
+  return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+}
+
+// Fields that must be encrypted at rest
+const SECRET_FIELDS = ["token", "cookie", "geminiApiKey", "questionsGeminiApiKey"];
+
+function encryptCampaignSecrets(campaign) {
+  const result = { ...campaign };
+  for (const field of SECRET_FIELDS) {
+    if (result[field]) result[field] = encryptSecret(result[field]);
+  }
+  return result;
+}
+
+function decryptCampaignSecrets(campaign) {
+  const result = { ...campaign };
+  for (const field of SECRET_FIELDS) {
+    if (result[field]) result[field] = decryptSecret(result[field]);
+  }
+  return result;
+}
+// ──────────────────────────────────────────────────────────────────────────
+
+// ── Session auth ───────────────────────────────────────────────────────────
+function getSessionSecret() {
+  if (!ADMIN_PASSWORD) throw new Error("ADMIN_PASSWORD is required for session signing.");
+  return crypto.createHmac("sha256", ADMIN_PASSWORD + ENCRYPTION_SALT)
+    .update("nextiq-session-v1")
+    .digest();
+}
+
+function createSessionToken(user) {
+  const normalized = normalizeUser(user);
+  const payload = Buffer.from(JSON.stringify({
+    sub: normalized.id,
+    name: normalized.username,
+    role: normalized.role,
+    permissions: normalized.permissions,
+    exp: Math.floor(Date.now() / 1000) + SESSION_EXPIRY_SECONDS
+  })).toString("base64url");
+  const sig = crypto.createHmac("sha256", getSessionSecret()).update(payload).digest("hex");
+  return `${payload}.${sig}`;
+}
+
+function verifySessionToken(token) {
+  if (!token || typeof token !== "string") return null;
+  const dot = token.lastIndexOf(".");
+  if (dot === -1) return null;
+  const payload = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  let expectedSig;
+  try {
+    expectedSig = crypto.createHmac("sha256", getSessionSecret()).update(payload).digest("hex");
+  } catch {
+    return null;
+  }
+  try {
+    if (sig.length !== expectedSig.length) return null;
+    if (!crypto.timingSafeEqual(Buffer.from(sig, "hex"), Buffer.from(expectedSig, "hex"))) return null;
+  } catch {
+    return null;
+  }
+  try {
+    const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (!data.sub || !data.exp || Math.floor(Date.now() / 1000) > data.exp) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function parseCookies(req) {
+  const result = {};
+  for (const part of (req.headers.cookie || "").split(";")) {
+    const eq = part.indexOf("=");
+    if (eq === -1) continue;
+    result[part.slice(0, eq).trim()] = decodeURIComponent(part.slice(eq + 1).trim());
+  }
+  return result;
+}
+
+function getSessionFromRequest(req) {
+  return verifySessionToken(parseCookies(req)[SESSION_COOKIE_NAME]);
+}
+
+function setSessionCookie(res, token) {
+  res.setHeader("Set-Cookie",
+    `${SESSION_COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${SESSION_EXPIRY_SECONDS}`
+  );
+}
+
+function clearSessionCookie(res) {
+  res.setHeader("Set-Cookie",
+    `${SESSION_COOKIE_NAME}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`
+  );
+}
+
+// ── User management ────────────────────────────────────────────────────────
+function hashPassword(password) {
+  const salt = crypto.randomBytes(32).toString("hex");
+  const hash = crypto.pbkdf2Sync(password, salt, 100_000, 64, "sha512").toString("hex");
+  return { hash, salt };
+}
+
+function verifyPassword(password, storedHash, storedSalt) {
+  let computed;
+  try {
+    computed = crypto.pbkdf2Sync(password, storedSalt, 100_000, 64, "sha512").toString("hex");
+  } catch {
+    return false;
+  }
+  try {
+    return crypto.timingSafeEqual(Buffer.from(computed, "hex"), Buffer.from(storedHash, "hex"));
+  } catch {
+    return false;
+  }
+}
+
+async function readUsers() {
+  const normalizeList = (users) => users.map(normalizeUser).filter((user) => user.id && user.username);
+  if (firestore) {
+    const snapshot = await firestore.collection(USERS_COLLECTION).get();
+    return normalizeList(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
+  }
+  if (!fs.existsSync(USERS_FILE)) return [];
+  const raw = fs.readFileSync(USERS_FILE, "utf8").trim();
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? normalizeList(parsed) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeUsers(users) {
+  if (firestore) {
+    const existing = await firestore.collection(USERS_COLLECTION).get();
+    const batch = firestore.batch();
+    for (const doc of existing.docs) batch.delete(doc.ref);
+    for (const user of users) {
+      const ref = firestore.collection(USERS_COLLECTION).doc(user.id);
+      batch.set(ref, user);
+    }
+    await batch.commit();
+    return;
+  }
+  fs.writeFileSync(USERS_FILE, `${JSON.stringify(users, null, 2)}\n`, "utf8");
+}
+
+function sanitizeUsername(value) {
+  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9._%+@-]/g, "");
+}
+
+function normalizeUserPermissions(value, role = "editor") {
+  if (role === "admin") {
+    return Object.fromEntries(CAMPAIGN_PERMISSIONS.map((permission) => [permission, true]));
+  }
+
+  const source = value && typeof value === "object" ? value : {};
+  const hasExplicitPermissions = CAMPAIGN_PERMISSIONS.some((permission) => permission in source)
+    || "create_campaign" in source
+    || "edit_campaign" in source
+    || "delete_campaign" in source;
+  if (!hasExplicitPermissions) {
+    return Object.fromEntries(CAMPAIGN_PERMISSIONS.map((permission) => [permission, true]));
+  }
+
+  return {
+    createCampaign: Boolean(source.createCampaign || source.create_campaign),
+    editCampaign: Boolean(source.editCampaign || source.edit_campaign),
+    deleteCampaign: Boolean(source.deleteCampaign || source.delete_campaign)
+  };
+}
+
+function normalizeUser(user) {
+  const role = user?.role === "admin" ? "admin" : "editor";
+  return {
+    ...user,
+    id: String(user?.id || user?.username || "").trim(),
+    username: sanitizeUsername(user?.username || user?.id || ""),
+    role,
+    permissions: normalizeUserPermissions(user?.permissions, role)
+  };
+}
+
+function publicUser(user) {
+  const normalized = normalizeUser(user);
+  return {
+    id: normalized.id,
+    username: normalized.username,
+    role: normalized.role,
+    permissions: normalized.permissions,
+    createdAt: normalized.createdAt
+  };
+}
+
+function hasAdminPermission(session, permission) {
+  if (!session) return true; // Legacy ADMIN_PASSWORD access keeps full permissions.
+  if (session.role === "admin") return true;
+  return Boolean(normalizeUserPermissions(session.permissions, session.role)?.[permission]);
+}
+
+// ── Admin auth route handlers (public — no session required) ───────────────
+async function handleAdminLogin(req, res) {
+  let body;
+  try { body = await readJson(req); } catch {
+    sendJson(res, 400, { error: "Invalid JSON." });
+    return;
+  }
+  const username = sanitizeUsername(body.username);
+  const password = String(body.password || "");
+  if (!username || !password) {
+    sendJson(res, 400, { error: "Username and password are required." });
+    return;
+  }
+  const users = await readUsers();
+  if (!users.length) {
+    sendJson(res, 403, { error: "No users configured. Complete the setup first." });
+    return;
+  }
+  const user = users.find((u) => u.username === username);
+  if (!user || !verifyPassword(password, user.passwordHash, user.passwordSalt)) {
+    sendJson(res, 401, { error: "Invalid username or password." });
+    return;
+  }
+  const token = createSessionToken(user);
+  setSessionCookie(res, token);
+  sendJson(res, 200, { ok: true, user: publicUser(user) });
+}
+
+function handleAdminLogout(res) {
+  clearSessionCookie(res);
+  sendJson(res, 200, { ok: true });
+}
+
+function handleAdminMe(req, res) {
+  const session = getSessionFromRequest(req);
+  if (!session) { sendJson(res, 401, { error: "Not authenticated." }); return; }
+  sendJson(res, 200, {
+    user: {
+      id: session.sub,
+      username: session.name,
+      role: session.role,
+      permissions: normalizeUserPermissions(session.permissions, session.role)
+    }
+  });
+}
+
+async function handleAdminSetupStatus(res) {
+  const users = await readUsers();
+  sendJson(res, 200, { needsSetup: users.length === 0 });
+}
+
+async function handleAdminSetup(req, res) {
+  const users = await readUsers();
+  if (users.length > 0) {
+    sendJson(res, 403, { error: "Setup already completed." });
+    return;
+  }
+  let body;
+  try { body = await readJson(req); } catch {
+    sendJson(res, 400, { error: "Invalid JSON." });
+    return;
+  }
+  const setupKey = String(body.setupKey || "").trim();
+  if (!ADMIN_PASSWORD || setupKey !== ADMIN_PASSWORD) {
+    sendJson(res, 401, { error: "Invalid setup key." });
+    return;
+  }
+  const username = sanitizeUsername(body.username);
+  const password = String(body.password || "");
+  if (!username || username.length < 3) {
+    sendJson(res, 400, { error: "Username must be at least 3 characters (letters, numbers, dots, hyphens, underscores)." });
+    return;
+  }
+  if (!password || password.length < 8) {
+    sendJson(res, 400, { error: "Password must be at least 8 characters." });
+    return;
+  }
+  const { hash, salt } = hashPassword(password);
+  const newUser = {
+    id: username,
+    username,
+    passwordHash: hash,
+    passwordSalt: salt,
+    role: "admin",
+    permissions: normalizeUserPermissions({}, "admin"),
+    createdAt: new Date().toISOString()
+  };
+  await writeUsers([newUser]);
+  const token = createSessionToken(newUser);
+  setSessionCookie(res, token);
+  sendJson(res, 200, { ok: true, user: publicUser(newUser) });
+}
+// ──────────────────────────────────────────────────────────────────────────
+
+const MIME_TYPES = {
+  ".html": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml; charset=utf-8",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".ico": "image/x-icon"
+};
+
+async function handleRequest(req, res) {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+
+  if (req.method === "GET" && url.pathname === "/api/health") {
+    sendJson(res, 200, getHealthStatus());
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/config") {
+    await handleConfig(req, res, url);
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/workitem") {
+    await handleWorkitem(req, res, url);
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/questions-check") {
+    await handleQuestionsCheck(req, res, url);
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/agent-next-step") {
+    await handleAgentNextStep(req, res, url);
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/agent-quality-board") {
+    await handleAgentQualityBoard(req, res, url);
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/agent-chat/workitems") {
+    await handleAgentChatWorkitems(req, res, url);
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/agent-chat/workitem") {
+    await handleAgentChatWorkitem(req, res, url);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent-chat/auth/login") {
+    await handleAgentChatLogin(req, res);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent-chat/auth/logout") {
+    await handleAgentChatLogout(req, res);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent-chat/messages") {
+    await handleAgentChatMessage(req, res);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/agent-chat/acd-status") {
+    await handleAgentChatAcdStatus(req, res);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/prediction") {
+    await handlePrediction(req, res);
+    return;
+  }
+
+  // Public admin auth routes (no session required)
+  if (req.method === "POST" && url.pathname === "/api/admin/login") {
+    await handleAdminLogin(req, res);
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/api/admin/logout") {
+    handleAdminLogout(res);
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/api/admin/me") {
+    handleAdminMe(req, res);
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/api/admin/setup-status") {
+    await handleAdminSetupStatus(res);
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/api/admin/setup") {
+    await handleAdminSetup(req, res);
+    return;
+  }
+
+  if (url.pathname.startsWith("/api/admin/")) {
+    await handleAdmin(req, res, url);
+    return;
+  }
+
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    sendJson(res, 405, { error: "Method not allowed" });
+    return;
+  }
+
+  serveStatic(url.pathname, req.method === "HEAD", res);
+}
+
+const server = http.createServer(handleRequest);
+
+async function handleConfig(req, res, url) {
+  try {
+    const selection = readSelection(url.searchParams);
+    const config = await resolveCampaignConfigAsync(selection);
+
+    sendJson(res, 200, {
+      configured: true,
+      campaign: {
+        id: config.id,
+        name: config.name,
+        domain: config.domain,
+        apiUrl: config.apiUrl,
+        workitemApiUrl: config.workitemApiUrl,
+        allowedKbIds: config.allowedKbIds,
+        ui: config.ui
+      },
+      request: {
+        campaignId: config.id,
+        domain: config.domain,
+        kbIds: config.requestKbIds
+      }
+    });
+  } catch (error) {
+    const status = error.code === "CONFIG" ? 400 : 500;
+    sendJson(res, status, { configured: false, error: error.message });
+  }
+}
+
+async function handleWorkitem(req, res, url) {
+  try {
+    const selection = readSelection(url.searchParams);
+    const workitemId = String(
+      url.searchParams.get("workitemid")
+      || url.searchParams.get("workitemId")
+      || ""
+    ).trim();
+
+    if (!workitemId) {
+      throwConfig('Missing workitem id. Provide ?workitemid=... in the URL.');
+    }
+
+    const config = await resolveCampaignConfigAsync(selection);
+    const workitemData = await fetchWorkitem(config, workitemId);
+
+    sendJson(res, 200, {
+      ok: true,
+      workitemId,
+      campaign: {
+        id: config.id,
+        name: config.name,
+        domain: config.domain,
+        workitemApiUrl: config.workitemApiUrl,
+        sentimentProvider: config.sentimentProvider,
+        ui: config.ui
+      },
+      summary: summarizeWorkitem(workitemData),
+      messages: await extractClientMessages(workitemData, config)
+    });
+  } catch (error) {
+    const status = error.code === "CONFIG" ? 400 : 502;
+    sendJson(res, status, {
+      error: status === 400 ? error.message : "Failed to reach workitem API",
+      details: status === 400 ? undefined : error.message
+    });
+  }
+}
+
+async function handleQuestionsCheck(req, res, url) {
+  try {
+    const selection = readSelection(url.searchParams);
+    const workitemId = String(
+      url.searchParams.get("workitemid")
+      || url.searchParams.get("workitemId")
+      || ""
+    ).trim();
+
+    if (!workitemId) {
+      throwConfig('Missing workitem id. Provide ?workitemid=... in the URL.');
+    }
+
+    const config = await resolveCampaignConfigAsync(selection);
+    const questionsConfig = resolveQuestionsConfig(config);
+    const questions = normalizeQuestionItems(questionsConfig.items || []);
+
+    if (!questions.length) {
+      throwConfig(`Campaign "${config.id}" is missing checklist questions.`);
+    }
+
+    const workitemData = await fetchWorkitem(config, workitemId);
+    const messages = extractChecklistMessages(workitemData);
+    const results = config?.ui?.questions?.useGemini === false
+      ? analyzeChecklistHeuristically(messages, questions)
+      : await analyzeChecklistWithGemini(messages, questions, config, questionsConfig);
+
+    sendJson(res, 200, {
+      ok: true,
+      workitemId,
+      campaign: {
+        id: config.id,
+        name: config.name,
+        domain: config.domain,
+        ui: config.ui
+      },
+      summary: summarizeWorkitem(workitemData),
+      questions: results,
+      updatedAt: Date.now()
+    });
+  } catch (error) {
+    const status = error.code === "CONFIG" ? 400 : 502;
+    sendJson(res, status, {
+      error: status === 400 ? error.message : "Failed to evaluate checklist",
+      details: status === 400 ? undefined : error.message
+    });
+  }
+}
+
+async function handleAgentNextStep(req, res, url) {
+  try {
+    const selection = readSelection(url.searchParams);
+    const workitemId = String(
+      url.searchParams.get("workitemid")
+      || url.searchParams.get("workitemId")
+      || ""
+    ).trim();
+
+    if (!workitemId) {
+      throwConfig('Missing workitem id. Provide ?workitemid=... in the URL.');
+    }
+
+    const config = await resolveCampaignConfigAsync(selection);
+    const workitemData = await fetchWorkitem(config, workitemId);
+    const transcriptMessages = extractChecklistMessages(workitemData);
+    const clientMessages = await extractClientMessages(workitemData, config);
+    const transcriptSignature = createTranscriptSignature(transcriptMessages);
+    const nextStep = await buildAgentNextStep(transcriptMessages, config);
+    const article = await fetchRecommendedArticle(config, nextStep.kbQuery || nextStep.actionTitle || nextStep.suggestedPhrase, workitemId);
+
+    sendJson(res, 200, {
+      ok: true,
+      workitemId,
+      campaign: {
+        id: config.id,
+        name: config.name,
+        domain: config.domain,
+        ui: config.ui
+      },
+      summary: summarizeWorkitem(workitemData),
+      nextStep,
+      article,
+      messages: clientMessages,
+      transcriptSignature,
+      transcriptCount: transcriptMessages.length,
+      updatedAt: Date.now()
+    });
+  } catch (error) {
+    const status = error.code === "CONFIG" ? 400 : 502;
+    sendJson(res, status, {
+      error: status === 400 ? error.message : "Failed to generate next step",
+      details: status === 400 ? undefined : error.message
+    });
+  }
+}
+
+async function handleAgentQualityBoard(req, res, url) {
+  try {
+    const selection = readSelection(url.searchParams);
+    const config = await resolveCampaignConfigAsync(selection);
+    const limit = Math.max(1, Math.min(24, Number(url.searchParams.get("limit") || 12) || 12));
+    const questionsConfig = resolveQuestionsConfig(config);
+    const questions = normalizeQuestionItems(questionsConfig.items || []);
+    const workitems = await fetchWorkitems(config);
+    const ranked = rankWorkitemsForBoard(workitems).slice(0, limit);
+
+    const agents = await Promise.all(ranked.map(async (workitem) => {
+      const clientMessages = await extractClientMessages(workitem, config);
+      const transcriptMessages = extractChecklistMessages(workitem);
+      const summary = summarizeWorkitem(workitem);
+      const sentiment = summarizeAgentSentiment(clientMessages);
+      const checklist = questions.length
+        ? (config?.ui?.questions?.useGemini === false
+          ? analyzeChecklistHeuristically(transcriptMessages, questions)
+          : await analyzeChecklistWithGemini(transcriptMessages, questions, config, questionsConfig))
+        : [];
+      const compliance = summarizeCompliance(checklist);
+      const alerts = buildAgentAlerts(summary, sentiment, compliance);
+
+      return {
+        summary,
+        sentiment,
+        compliance,
+        alerts,
+        checklist,
+        messageCount: clientMessages.length,
+        updatedAt: latestWorkitemTimestamp(workitem)
+      };
+    }));
+
+    sendJson(res, 200, {
+      ok: true,
+      campaign: {
+        id: config.id,
+        name: config.name,
+        domain: config.domain,
+        ui: config.ui
+      },
+      overview: summarizeQualityBoard(agents),
+      agents,
+      updatedAt: Date.now()
+    });
+  } catch (error) {
+    const status = error.code === "CONFIG" ? 400 : 502;
+    sendJson(res, status, {
+      error: status === 400 ? error.message : "Failed to build agent quality board",
+      details: status === 400 ? undefined : error.message
+    });
+  }
+}
+
+async function handleAgentChatWorkitems(req, res, url) {
+  try {
+    const selection = readSelection(url.searchParams);
+    const config = await resolveCampaignSelectionAsync(selection);
+    const auth = readAgentChatAuth(req);
+    const scopedConfig = buildAgentChatScopedConfig(config, auth);
+    const workitems = await fetchWorkitems(scopedConfig);
+    const ranked = rankWorkitemsForBoard(workitems);
+
+    sendJson(res, 200, {
+      ok: true,
+      campaign: {
+        id: config.id,
+        name: config.name,
+        domain: config.domain,
+        agentUserId: scopedConfig.agentUserId,
+        ui: config.ui
+      },
+      workitems: ranked.map((workitem) => summarizeAgentChatWorkitem(workitem))
+    });
+  } catch (error) {
+    const status = error.code === "CONFIG" ? 400 : 502;
+    sendJson(res, status, {
+      error: status === 400 ? error.message : "Failed to load workitems",
+      details: status === 400 ? undefined : error.message
+    });
+  }
+}
+
+async function handleAgentChatWorkitem(req, res, url) {
+  try {
+    const selection = readSelection(url.searchParams);
+    const workitemId = String(
+      url.searchParams.get("workitemid")
+      || url.searchParams.get("workitemId")
+      || ""
+    ).trim();
+
+    if (!workitemId) {
+      throwConfig('Missing workitem id. Provide ?workitemid=... in the URL.');
+    }
+
+    const config = await resolveCampaignSelectionAsync(selection);
+    const auth = readAgentChatAuth(req);
+    const scopedConfig = buildAgentChatScopedConfig(config, auth);
+    const workitemData = await fetchWorkitem(scopedConfig, workitemId);
+
+    sendJson(res, 200, {
+      ok: true,
+      campaign: {
+        id: config.id,
+        name: config.name,
+        domain: config.domain,
+        agentUserId: scopedConfig.agentUserId,
+        ui: config.ui
+      },
+      summary: summarizeWorkitem(workitemData),
+      messages: extractAgentChatMessages(workitemData)
+    });
+  } catch (error) {
+    const status = error.code === "CONFIG" ? 400 : 502;
+    sendJson(res, status, {
+      error: status === 400 ? error.message : "Failed to load workitem conversation",
+      details: status === 400 ? undefined : error.message
+    });
+  }
+}
+
+async function handleAgentChatLogin(req, res) {
+  let body;
+  try {
+    body = await readJson(req);
+  } catch (error) {
+    sendJson(res, 400, { error: "Invalid JSON body" });
+    return;
+  }
+
+  try {
+    const username = String(body.username || "").trim();
+    const password = String(body.password || "").trim();
+
+    if (!username || !password) {
+      throwConfig("Username and password are required.");
+    }
+
+    const config = await resolveCampaignSelectionAsync({
+      campaignId: body.campaignId || body.campaign || "",
+      domain: body.domain || "",
+      kbIds: []
+    });
+
+    const token = await fetchAgentChatUserToken(username, password);
+    try {
+      await loginAgentChatUser(config, token);
+    } catch (error) {
+      // Some tenants reject /users/api/login even with a valid token.
+      // Keep sign-in working and let downstream endpoints use the token directly.
+    }
+    const agentUserId = inferAgentUserIdFromToken(token);
+
+    sendJson(res, 200, {
+      ok: true,
+      token,
+      agentUserId,
+      campaign: {
+        id: config.id,
+        name: config.name,
+        domain: config.domain
+      }
+    });
+  } catch (error) {
+    const status = error.code === "CONFIG" ? 400 : 502;
+    sendJson(res, status, {
+      error: status === 400 ? error.message : "Failed to authenticate user",
+      details: status === 400 ? undefined : error.message
+    });
+  }
+}
+
+async function handleAgentChatLogout(req, res) {
+  let body;
+  try {
+    body = await readJson(req);
+  } catch (error) {
+    sendJson(res, 400, { error: "Invalid JSON body" });
+    return;
+  }
+
+  try {
+    const auth = readAgentChatAuth(req, body);
+    const token = String(auth.token || "").trim();
+    if (!token) {
+      throwConfig("Missing user token.");
+    }
+
+    const config = await resolveCampaignSelectionAsync({
+      campaignId: body.campaignId || body.campaign || "",
+      domain: body.domain || "",
+      kbIds: []
+    });
+
+    await logoutAgentChatUser(config, token);
+    sendJson(res, 200, { ok: true });
+  } catch (error) {
+    const status = error.code === "CONFIG" ? 400 : 502;
+    sendJson(res, status, {
+      error: status === 400 ? error.message : "Failed to logout user",
+      details: status === 400 ? undefined : error.message
+    });
+  }
+}
+
+async function handleAgentChatMessage(req, res) {
+  let body;
+  try {
+    body = await readJson(req);
+  } catch (error) {
+    sendJson(res, 400, { error: "Invalid JSON body" });
+    return;
+  }
+
+  try {
+    const workitemId = String(body.workitemId || body.workitemid || body.toId || "").trim();
+    const text = String(body.textMsg || body.text || "").trim();
+
+    if (!workitemId) {
+      throwConfig("Missing workitem id.");
+    }
+
+    if (!text) {
+      throwConfig("Message text is required.");
+    }
+
+    const config = await resolveCampaignSelectionAsync({
+      campaignId: body.campaignId || body.campaign || "",
+      domain: body.domain || "",
+      kbIds: body.kb_ids || body.kbIds || []
+    });
+
+    const auth = readAgentChatAuth(req, body);
+    const scopedConfig = buildAgentChatScopedConfig(config, auth);
+    const fromId = String(body.fromId || scopedConfig.agentUserId || "").trim();
+    if (!fromId) {
+      throwConfig(`Campaign "${config.id}" is missing an agent user id.`);
+    }
+
+    const upstream = await sendAgentChatMessage(scopedConfig, {
+      workitemId,
+      fromId,
+      text
+    });
+
+    const responseText = await upstream.text();
+    let payload = {};
+    try {
+      payload = responseText ? JSON.parse(responseText) : {};
+    } catch (error) {
+      payload = { raw: responseText };
+    }
+
+    if (!upstream.ok) {
+      sendJson(res, 502, {
+        error: "Failed to send message",
+        details: payload?.error || responseText || `Upstream returned ${upstream.status}.`
+      });
+      return;
+    }
+
+    sendJson(res, 200, {
+      ok: true,
+      sent: {
+        workitemId,
+        fromId,
+        text
+      },
+      upstream: payload
+    });
+  } catch (error) {
+    const status = error.code === "CONFIG" ? 400 : 502;
+    sendJson(res, status, {
+      error: status === 400 ? error.message : "Failed to send chat message",
+      details: status === 400 ? undefined : error.message
+    });
+  }
+}
+
+async function handleAgentChatAcdStatus(req, res) {
+  let body;
+  try {
+    body = await readJson(req);
+  } catch (error) {
+    sendJson(res, 400, { error: "Invalid JSON body" });
+    return;
+  }
+
+  try {
+    const config = await resolveCampaignSelectionAsync({
+      campaignId: body.campaignId || body.campaign || "",
+      domain: body.domain || "",
+      kbIds: []
+    });
+
+    const auth = readAgentChatAuth(req, body);
+    const scopedConfig = buildAgentChatScopedConfig(config, auth);
+    const enabled = parseBoolean(body.enabled, null);
+    if (enabled === null) {
+      throwConfig("Missing ACD status.");
+    }
+
+    const payload = buildAcdStatusPayload(scopedConfig, enabled);
+
+    const upstream = await fetch(`https://${sanitizeDomain(scopedConfig.domain)}/users/api/acd/login`, {
+      method: "POST",
+      headers: {
+        "Authorization": scopedConfig.token,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const responseText = await upstream.text();
+    let responseBody = {};
+    try {
+      responseBody = responseText ? JSON.parse(responseText) : {};
+    } catch (error) {
+      responseBody = { raw: responseText };
+    }
+
+    if (!upstream.ok) {
+      sendJson(res, 502, {
+        error: "Failed to update ACD status",
+        details: responseBody?.error || responseText || `Upstream returned ${upstream.status}.`
+      });
+      return;
+    }
+
+    sendJson(res, 200, {
+      ok: true,
+      enabled,
+      payload,
+      upstream: responseBody
+    });
+  } catch (error) {
+    const status = error.code === "CONFIG" ? 400 : 502;
+    sendJson(res, status, {
+      error: status === 400 ? error.message : "Failed to update ACD status",
+      details: status === 400 ? undefined : error.message
+    });
+  }
+}
+
+function readAgentChatAuth(req, body) {
+  return {
+    token: String(
+      req.headers["x-agent-chat-token"]
+      || req.headers["x-agent-token"]
+      || body?.token
+      || body?.authToken
+      || ""
+    ).trim(),
+    agentUserId: String(
+      req.headers["x-agent-user-id"]
+      || body?.agentUserId
+      || body?.agent_user_id
+      || ""
+    ).trim()
+  };
+}
+
+function buildAgentChatScopedConfig(config, auth) {
+  const token = String(auth?.token || "").trim();
+  if (!token) {
+    throwConfig("Missing user token. Sign in again.");
+  }
+
+  const agentUserId = String(auth?.agentUserId || "").trim()
+    || inferAgentUserIdFromToken(token)
+    || String(config.agentUserId || "").trim();
+
+  return {
+    ...config,
+    token,
+    agentUserId
+  };
+}
+
+function buildAcdStatusPayload(config, enabled) {
+  const configuredPayload = enabled ? config?.acdEnabledPayload : config?.acdDisabledPayload;
+  if (configuredPayload && typeof configuredPayload === "object") {
+    return configuredPayload;
+  }
+
+  const enabledStatusId = String(
+    config?.acdEnabledStatusId
+    || config?.acd?.enabledStatusId
+    || ""
+  ).trim();
+  const disabledStatusId = String(
+    config?.acdDisabledStatusId
+    || config?.acd?.disabledStatusId
+    || ""
+  ).trim();
+  const enabledStatusCode = parseInteger(config?.acdEnabledStatusCode ?? config?.acd?.enabledStatusCode, 0);
+  const disabledStatusCode = parseInteger(config?.acdDisabledStatusCode ?? config?.acd?.disabledStatusCode, 3);
+  const statusId = enabled ? enabledStatusId : disabledStatusId;
+  const status = enabled ? enabledStatusCode : disabledStatusCode;
+
+  if (!statusId) {
+    throwConfig(`Campaign "${config?.id || "unknown"}" is missing ACD status IDs. Configure acdEnabledStatusId and acdDisabledStatusId in admin.`);
+  }
+
+  return { statusId, status };
+}
+
+async function handlePrediction(req, res) {
+  let body;
+  try {
+    body = await readJson(req);
+  } catch (error) {
+    sendJson(res, 400, { error: "Invalid JSON body" });
+    return;
+  }
+
+  try {
+    const config = await resolveCampaignConfigAsync({
+      campaignId: body.campaignId || body.campaign || "",
+      domain: body.domain || "",
+      kbIds: body.kb_ids || body.kbIds || []
+    });
+
+    const upstream = await fetchPredictionUpstream(config, {
+      message: body.message || "",
+      workitem_id: body.workitem_id || ""
+    });
+
+    const text = await upstream.text();
+    res.writeHead(upstream.status, {
+      "Content-Type": upstream.headers.get("content-type") || "application/json; charset=utf-8"
+    });
+    res.end(text);
+  } catch (error) {
+    const status = error.code === "CONFIG" ? 400 : 502;
+    sendJson(res, status, {
+      error: status === 400 ? error.message : "Failed to reach prediction API",
+      details: status === 400 ? undefined : error.message
+    });
+  }
+}
+
+async function fetchPredictionUpstream(config, input) {
+  const payload = JSON.stringify({
+    message: input.message || "",
+    kb_ids: config.requestKbIds,
+    regenerate: "true",
+    workitem_id: input.workitem_id || ""
+  });
+
+  const headers = {
+    "Authorization": config.token,
+    "Content-Type": "application/json",
+    "Content-Length": Buffer.byteLength(payload)
+  };
+
+  if (config.cookie) {
+    headers["Cookie"] = config.cookie;
+  }
+
+  return fetch(config.apiUrl, {
+    method: "POST",
+    headers,
+    body: payload
+  });
+}
+
+async function fetchAgentChatUserToken(username, password) {
+  const credentials = Buffer.from(`${username}:${password}`, "utf8").toString("base64");
+  const upstream = await fetch("https://login.thrio.com/provider/token-with-authorities", {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Basic ${credentials}`
+    }
+  });
+
+  const responseText = await upstream.text();
+  if (!upstream.ok) {
+    throw new Error(`Login provider returned ${upstream.status}${responseText ? `: ${responseText}` : "."}`);
+  }
+
+  let payload = {};
+  try {
+    payload = responseText ? JSON.parse(responseText) : {};
+  } catch (error) {
+    payload = { token: responseText };
+  }
+
+  const token = String(payload?.access_token || payload?.token || payload?.id_token || "").trim();
+  if (!token) {
+    throw new Error("Login provider did not return a token.");
+  }
+
+  return token;
+}
+
+async function resolveCampaignSelectionAsync(selection) {
+  const campaigns = await getEffectiveCampaigns();
+  if (!campaigns.length) {
+    throwConfig("No campaign configuration found. Add one in /admin.html or set THRIO_AUTH_TOKEN in .env.");
+  }
+
+  const campaignId = String(selection?.campaignId || selection?.campaign || "").trim();
+  const domain = sanitizeDomain(selection?.domain);
+
+  let match = null;
+
+  if (campaignId) {
+    match = campaigns.find((item) => item.id === campaignId);
+    if (!match) {
+      throwConfig(`Unknown campaign "${campaignId}".`);
+    }
+  }
+
+  if (!match && domain) {
+    match = campaigns.find((item) => item.domain === domain);
+    if (!match) {
+      throwConfig(`Unknown domain "${domain}".`);
+    }
+  }
+
+  if (!match) {
+    if (campaigns.length === 1) {
+      match = campaigns[0];
+    } else {
+      throwConfig("Missing campaign selection. Provide ?campaign=... in the URL.");
+    }
+  }
+
+  return match;
+}
+
+async function loginAgentChatUser(config, token) {
+  const upstream = await fetch(`https://${sanitizeDomain(config.domain)}/users/api/login`, {
+    method: "POST",
+    headers: {
+      "Authorization": token,
+      "Content-Type": "application/json"
+    }
+  });
+
+  const responseText = await upstream.text();
+  if (!upstream.ok) {
+    throw new Error(`User login API returned ${upstream.status}${responseText ? `: ${responseText}` : "."}`);
+  }
+}
+
+async function logoutAgentChatUser(config, token) {
+  const upstream = await fetch(`https://${sanitizeDomain(config.domain)}/users/api/logout`, {
+    method: "POST",
+    headers: {
+      "Authorization": token,
+      "Content-Type": "application/json"
+    }
+  });
+
+  const responseText = await upstream.text();
+  if (!upstream.ok) {
+    throw new Error(`User logout API returned ${upstream.status}${responseText ? `: ${responseText}` : "."}`);
+  }
+}
+
+async function handleAdmin(req, res, url) {
+  const ip = getClientIp(req);
+
+  if (isAdminRateLimited(ip)) {
+    sendJson(res, 429, { error: "Too many failed attempts. Try again in 15 minutes." });
+    return;
+  }
+
+  if (!isAuthorizedAdmin(req)) {
+    recordFailedAdminAttempt(ip);
+    res.writeHead(401, {
+      "Content-Type": "application/json; charset=utf-8",
+      "WWW-Authenticate": 'Basic realm="NextIQ Admin"'
+    });
+    res.end(JSON.stringify({ error: "Unauthorized" }));
+    return;
+  }
+
+  clearAdminAttempts(ip);
+
+  // ── User management (admin role required) ──────────────────────────────
+  if (req.method === "GET" && url.pathname === "/api/admin/users") {
+    const session = getSessionFromRequest(req);
+    if (!session || session.role !== "admin") {
+      sendJson(res, 403, { error: "Admin role required to view users." });
+      return;
+    }
+    const users = await readUsers();
+    sendJson(res, 200, { users: users.map(publicUser) });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/admin/users") {
+    const session = getSessionFromRequest(req);
+    if (!session || session.role !== "admin") {
+      sendJson(res, 403, { error: "Admin role required to manage users." });
+      return;
+    }
+    let body;
+    try { body = await readJson(req); } catch {
+      sendJson(res, 400, { error: "Invalid JSON." });
+      return;
+    }
+    const username = sanitizeUsername(body.username);
+    const password = String(body.password || "");
+    const role = body.role === "editor" ? "editor" : "admin";
+    const permissions = normalizeUserPermissions(body.permissions, role);
+    if (!username || username.length < 3) {
+      sendJson(res, 400, { error: "Username must be at least 3 characters." });
+      return;
+    }
+    if (!password || password.length < 8) {
+      sendJson(res, 400, { error: "Password must be at least 8 characters." });
+      return;
+    }
+    const users = await readUsers();
+    if (users.find((u) => u.username === username)) {
+      sendJson(res, 409, { error: `User "${username}" already exists.` });
+      return;
+    }
+    const { hash, salt } = hashPassword(password);
+    const newUser = { id: username, username, passwordHash: hash, passwordSalt: salt, role, permissions, createdAt: new Date().toISOString() };
+    await writeUsers([...users, newUser]);
+    sendJson(res, 200, { ok: true, user: publicUser(newUser) });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/admin/users/delete") {
+    const session = getSessionFromRequest(req);
+    if (!session || session.role !== "admin") {
+      sendJson(res, 403, { error: "Admin role required to manage users." });
+      return;
+    }
+    let body;
+    try { body = await readJson(req); } catch {
+      sendJson(res, 400, { error: "Invalid JSON." });
+      return;
+    }
+    const id = String(body.id || "").trim();
+    if (!id) { sendJson(res, 400, { error: "Missing user id." }); return; }
+    if (id === session.sub) { sendJson(res, 400, { error: "You cannot delete your own account." }); return; }
+    const users = await readUsers();
+    const filtered = users.filter((u) => u.id !== id);
+    if (filtered.length === users.length) { sendJson(res, 404, { error: "User not found." }); return; }
+    await writeUsers(filtered);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/admin/users/change-password") {
+    const session = getSessionFromRequest(req);
+    let body;
+    try { body = await readJson(req); } catch {
+      sendJson(res, 400, { error: "Invalid JSON." });
+      return;
+    }
+    const targetId = String(body.id || "").trim();
+    // Only admin can change others' passwords; any user can change their own
+    if (session && session.sub !== targetId && session.role !== "admin") {
+      sendJson(res, 403, { error: "Admin role required to change other users' passwords." });
+      return;
+    }
+    const newPassword = String(body.password || "");
+    if (!newPassword || newPassword.length < 8) {
+      sendJson(res, 400, { error: "Password must be at least 8 characters." });
+      return;
+    }
+    const users = await readUsers();
+    const idx = users.findIndex((u) => u.id === targetId);
+    if (idx === -1) { sendJson(res, 404, { error: "User not found." }); return; }
+    const { hash, salt } = hashPassword(newPassword);
+    users[idx] = { ...users[idx], passwordHash: hash, passwordSalt: salt };
+    await writeUsers(users);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+  // ──────────────────────────────────────────────────────────────────────
+
+  if (req.method === "GET" && url.pathname === "/api/admin/campaigns") {
+    sendJson(res, 200, {
+      campaigns: await readCampaigns(),
+      adminConfigured: Boolean(ADMIN_PASSWORD)
+    });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/admin/campaigns") {
+    const session = getSessionFromRequest(req);
+    let body;
+    try {
+      body = await readJson(req);
+    } catch (error) {
+      sendJson(res, 400, { error: "Invalid JSON body" });
+      return;
+    }
+
+    try {
+      const campaign = normalizeCampaign(body);
+      const campaigns = await readCampaigns();
+      const index = campaigns.findIndex((item) => item.id === campaign.id);
+      const permission = index >= 0 ? "editCampaign" : "createCampaign";
+      if (!hasAdminPermission(session, permission)) {
+        sendJson(res, 403, {
+          error: index >= 0
+            ? "You do not have permission to edit campaigns."
+            : "You do not have permission to create campaigns."
+        });
+        return;
+      }
+
+      if (index >= 0) {
+        campaigns[index] = campaign;
+      } else {
+        campaigns.push(campaign);
+      }
+
+      await writeCampaigns(campaigns);
+      sendJson(res, 200, { ok: true, campaign });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/admin/campaigns/delete") {
+    const session = getSessionFromRequest(req);
+    if (!hasAdminPermission(session, "deleteCampaign")) {
+      sendJson(res, 403, { error: "You do not have permission to delete campaigns." });
+      return;
+    }
+    let body;
+    try {
+      body = await readJson(req);
+    } catch (error) {
+      sendJson(res, 400, { error: "Invalid JSON body" });
+      return;
+    }
+
+    const id = String(body.id || "").trim();
+    if (!id) {
+      sendJson(res, 400, { error: "Missing campaign id" });
+      return;
+    }
+
+    const campaigns = await readCampaigns();
+    const filtered = campaigns.filter((item) => item.id !== id);
+    await writeCampaigns(filtered);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  sendJson(res, 405, { error: "Method not allowed" });
+}
+
+function serveStatic(requestPath, isHeadRequest, res) {
+  const safePath = requestPath === "/" ? "/index.html" : requestPath;
+  const filePath = path.normalize(path.join(PUBLIC_DIR, safePath));
+
+  if (!filePath.startsWith(PUBLIC_DIR)) {
+    sendJson(res, 403, { error: "Forbidden" });
+    return;
+  }
+
+  fs.readFile(filePath, (error, data) => {
+    if (error) {
+      if (requestPath !== "/" && path.extname(filePath) === "") {
+        serveStatic("/index.html", isHeadRequest, res);
+        return;
+      }
+
+      sendJson(res, 404, { error: "Not found" });
+      return;
+    }
+
+    const ext = path.extname(filePath).toLowerCase();
+    res.writeHead(200, { "Content-Type": MIME_TYPES[ext] || "application/octet-stream" });
+    if (isHeadRequest) {
+      res.end();
+      return;
+    }
+
+    res.end(data);
+  });
+}
+
+function getHealthStatus() {
+  try {
+    return {
+      configured: true,
+      storage: firestore ? "firestore" : "file",
+      adminConfigured: Boolean(ADMIN_PASSWORD)
+    };
+  } catch (error) {
+    return {
+      configured: false,
+      error: error.message
+    };
+  }
+}
+
+async function resolveCampaignConfigAsync(selection) {
+  const campaigns = await getEffectiveCampaigns();
+  if (!campaigns.length) {
+    throwConfig("No campaign configuration found. Add one in /admin.html or set THRIO_AUTH_TOKEN in .env.");
+  }
+
+  const campaignId = String(selection.campaignId || "").trim();
+  const domain = sanitizeDomain(selection.domain);
+  const requestedKbIds = normalizeKbIds(selection.kbIds);
+
+  let match = null;
+
+  if (campaignId) {
+    match = campaigns.find((item) => item.id === campaignId);
+    if (!match) {
+      throwConfig(`Unknown campaign "${campaignId}".`);
+    }
+  }
+
+  if (!match && domain) {
+    match = campaigns.find((item) => item.domain === domain);
+    if (!match) {
+      throwConfig(`Unknown domain "${domain}".`);
+    }
+  }
+
+  if (!match) {
+    if (campaigns.length === 1) {
+      match = campaigns[0];
+    } else {
+      throwConfig("Missing campaign selection. Provide ?campaign=... in the URL.");
+    }
+  }
+
+  if (!match.token) {
+    throwConfig(`Campaign "${match.id}" is missing a token.`);
+  }
+
+  let kbIds = requestedKbIds.length ? requestedKbIds : match.allowedKbIds;
+  if (!kbIds.length) {
+    throwConfig(`Campaign "${match.id}" is missing KB IDs.`);
+  }
+
+  if (match.allowedKbIds.length) {
+    const invalid = kbIds.find((kbId) => !match.allowedKbIds.includes(kbId));
+    if (invalid) {
+      throwConfig(`KB ID "${invalid}" is not allowed for campaign "${match.id}".`);
+    }
+  }
+
+  return {
+    ...match,
+    requestKbIds: kbIds
+  };
+}
+
+async function getEffectiveCampaigns() {
+  const campaigns = await readCampaigns();
+  if (campaigns.length) {
+    return campaigns;
+  }
+
+  const fallback = getFallbackCampaign();
+  return fallback ? [fallback] : [];
+}
+
+function getFallbackCampaign() {
+  const token = String(process.env.THRIO_AUTH_TOKEN || "").trim();
+  if (!token || token === "replace-with-your-authorization-token") {
+    return null;
+  }
+
+  return normalizeCampaign({
+    id: process.env.DEFAULT_CAMPAIGN_ID || "default",
+    name: process.env.DEFAULT_CAMPAIGN_NAME || "Default campaign",
+    domain: process.env.THRIO_DOMAIN || getDomainFromUrl(DEFAULT_API_URL),
+    apiUrl: DEFAULT_API_URL,
+    token,
+    cookie: process.env.THRIO_COOKIE || "",
+    allowedKbIds: normalizeKbIds(process.env.THRIO_KB_ID || "")
+  });
+}
+
+function readSelection(searchParams) {
+  const kbParam = searchParams.getAll("kb_id");
+  const kbIds = kbParam.length ? kbParam : searchParams.get("kb_ids") || "";
+
+  return {
+    campaignId: searchParams.get("campaign") || "",
+    domain: searchParams.get("domain") || "",
+    kbIds
+  };
+}
+
+async function readCampaigns() {
+  if (firestore) {
+    const snapshot = await firestore.collection(FIRESTORE_COLLECTION).get();
+    return snapshot.docs.map((doc) =>
+      decryptCampaignSecrets(normalizeCampaign({ id: doc.id, ...doc.data() }))
+    );
+  }
+
+  if (!fs.existsSync(CAMPAIGNS_FILE)) {
+    return [];
+  }
+
+  const raw = fs.readFileSync(CAMPAIGNS_FILE, "utf8").trim();
+  if (!raw) {
+    return [];
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`Invalid campaigns.json: ${error.message}`);
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new Error("Invalid campaigns.json: expected an array.");
+  }
+
+  return parsed.map((item) => decryptCampaignSecrets(normalizeCampaign(item)));
+}
+
+async function writeCampaigns(campaigns) {
+  const normalized = campaigns.map((campaign) =>
+    encryptCampaignSecrets(stripUndefinedDeep(normalizeCampaign(campaign)))
+  );
+
+  if (firestore) {
+    const existing = await firestore.collection(FIRESTORE_COLLECTION).get();
+    const batch = firestore.batch();
+    const incomingIds = new Set(normalized.map((item) => item.id));
+
+    for (const doc of existing.docs) {
+      if (!incomingIds.has(doc.id)) {
+        batch.delete(doc.ref);
+      }
+    }
+
+    for (const campaign of normalized) {
+      const ref = firestore.collection(FIRESTORE_COLLECTION).doc(campaign.id);
+      batch.set(ref, campaign);
+    }
+
+    await batch.commit();
+    return;
+  }
+
+  fs.writeFileSync(CAMPAIGNS_FILE, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
+}
+
+function normalizeCampaign(input) {
+  const id = slugify(input.id || input.name || input.domain);
+  if (!id) {
+    throw new Error("Campaign id is required.");
+  }
+
+  const apiUrl = String(input.apiUrl || input.api_url || DEFAULT_API_URL).trim();
+  if (!apiUrl) {
+    throw new Error("API URL is required.");
+  }
+
+  return {
+    id,
+    name: String(input.name || id).trim() || id,
+    domain: sanitizeDomain(input.domain || getDomainFromUrl(apiUrl)),
+    apiUrl,
+    workitemApiUrl: String(
+      input.workitemApiUrl
+      || input.workitem_api_url
+      || buildWorkitemApiUrl(input.domain || getDomainFromUrl(apiUrl))
+    ).trim(),
+    agentChatApiUrl: String(
+      input.agentChatApiUrl
+      || input.agent_chat_api_url
+      || buildAgentChatApiUrl(input.domain || getDomainFromUrl(apiUrl))
+    ).trim(),
+    token: String(input.token || "").trim(),
+    cookie: String(input.cookie || "").trim(),
+    agentUserId: String(
+      input.agentUserId
+      || input.agent_user_id
+      || inferAgentUserIdFromToken(String(input.token || "").trim())
+    ).trim(),
+    sentimentProvider: normalizeSentimentProvider(input.sentimentProvider || input.sentiment_provider || ""),
+    geminiApiKey: String(input.geminiApiKey || input.gemini_api_key || "").trim(),
+    geminiModel: String(input.geminiModel || input.gemini_model || "gemini-2.5-flash").trim() || "gemini-2.5-flash",
+    geminiApiUrl: String(input.geminiApiUrl || input.gemini_api_url || "https://generativelanguage.googleapis.com").trim() || "https://generativelanguage.googleapis.com",
+    geminiPrompt: String(input.geminiPrompt || input.gemini_prompt || "").trim(),
+    questionsGeminiApiKey: String(input.questionsGeminiApiKey || input.questions_gemini_api_key || "").trim(),
+    questionsGeminiModel: String(input.questionsGeminiModel || input.questions_gemini_model || "gemini-2.5-flash").trim() || "gemini-2.5-flash",
+    questionsGeminiApiUrl: String(input.questionsGeminiApiUrl || input.questions_gemini_api_url || "https://generativelanguage.googleapis.com").trim() || "https://generativelanguage.googleapis.com",
+    questionsGeminiPrompt: String(input.questionsGeminiPrompt || input.questions_gemini_prompt || "").trim(),
+    nextStepGeminiPrompt: String(input.nextStepGeminiPrompt || input.next_step_gemini_prompt || "").trim(),
+    acdEnabledPayload: normalizeJsonObject(input.acdEnabledPayload || input.acd_enabled_payload || input.acd?.enabledPayload),
+    acdDisabledPayload: normalizeJsonObject(input.acdDisabledPayload || input.acd_disabled_payload || input.acd?.disabledPayload),
+    acdEnabledStatusId: String(
+      input.acdEnabledStatusId
+      || input.acd_enabled_status_id
+      || input.acdOnlineStatusId
+      || input.acd_online_status_id
+      || input.acd?.enabledStatusId
+      || ""
+    ).trim(),
+    acdDisabledStatusId: String(
+      input.acdDisabledStatusId
+      || input.acd_disabled_status_id
+      || input.acdOfflineStatusId
+      || input.acd_offline_status_id
+      || input.acd?.disabledStatusId
+      || ""
+    ).trim(),
+    acdEnabledStatusCode: parseInteger(
+      input.acdEnabledStatusCode
+      ?? input.acd_enabled_status_code
+      ?? input.acd?.enabledStatusCode,
+      0
+    ),
+    acdDisabledStatusCode: parseInteger(
+      input.acdDisabledStatusCode
+      ?? input.acd_disabled_status_code
+      ?? input.acd?.disabledStatusCode,
+      3
+    ),
+    allowedKbIds: normalizeKbIds(input.allowedKbIds || input.allowed_kb_ids || input.kbIds || ""),
+    ui: normalizeUiConfig(input.ui || input)
+  };
+}
+
+function normalizeUiConfig(input) {
+  const source = input || {};
+  const sharedSource = source.shared || source.common || {};
+  const chatSource = source.chat || {};
+  const workitemSource = source.workitem || {};
+  const sentimentSource = source.sentiment || {};
+  const questionsSource = source.questions || source.checklist || {};
+  const nextStepSource = source.nextStep || source.next_step || source.agentNextStep || source.agent_next_step || {};
+
+  return {
+    shared: {
+      language: normalizeLanguage(sharedSource.language || sharedSource.lang || source.language || source.lang || "en"),
+      fontFamily: String(sharedSource.fontFamily || sharedSource.font_family || source.fontFamily || source.font_family || "").trim(),
+      baseFontSize: normalizeCssSize(sharedSource.baseFontSize || sharedSource.base_font_size || source.baseFontSize || source.base_font_size || "", "16px")
+    },
+    chat: normalizePageUiConfig({
+      source: chatSource,
+      fallback: source,
+      defaults: {
+        titleText: "",
+        titleSize: "2rem",
+        metaSize: "0.82rem",
+        showTitle: true,
+        showMeta: true,
+        showPageHeader: true,
+        embedMinHeight: "180px",
+        embedMaxHeight: "520px"
+      }
+    }),
+    workitem: normalizePageUiConfig({
+      source: workitemSource,
+      fallback: source,
+      defaults: {
+        titleText: "",
+        titleSize: "2rem",
+        metaSize: "0.82rem",
+        showTitle: true,
+        showMeta: true,
+        showPageHeader: true,
+        embedMinHeight: "180px",
+        embedMaxHeight: "520px"
+      }
+    }),
+    sentiment: {
+      ...normalizePageUiConfig({
+        source: sentimentSource,
+        fallback: source,
+        defaults: {
+          titleText: "",
+          titleSize: "2rem",
+          metaSize: "0.82rem",
+          showTitle: true,
+          showMeta: true,
+          showPageHeader: true,
+          embedMinHeight: "180px",
+          embedMaxHeight: "520px"
+        }
+      }),
+      sentimentLayout: normalizeSentimentLayout(sentimentSource.sentimentLayout || sentimentSource.sentiment_layout || source.sentimentLayout || source.sentiment_layout || ""),
+      sentimentStylePreset: normalizeSentimentStylePreset(
+        sentimentSource.sentimentStylePreset
+        || sentimentSource.sentiment_style_preset
+        || source.sentimentStylePreset
+        || source.sentiment_style_preset
+        || ""
+      ),
+      sentimentCardMaxWidth: normalizeCssSize(sentimentSource.sentimentCardMaxWidth || sentimentSource.sentiment_card_max_width || source.sentimentCardMaxWidth || source.sentiment_card_max_width || "", "560px"),
+      sentimentCardMinHeight: normalizeCssSize(sentimentSource.sentimentCardMinHeight || sentimentSource.sentiment_card_min_height || source.sentimentCardMinHeight || source.sentiment_card_min_height || "", "0px"),
+      sentimentCardMaxHeight: normalizeCssSize(sentimentSource.sentimentCardMaxHeight || sentimentSource.sentiment_card_max_height || source.sentimentCardMaxHeight || source.sentiment_card_max_height || "", "none"),
+      sentimentCardPadding: normalizeCssSize(sentimentSource.sentimentCardPadding || sentimentSource.sentiment_card_padding || source.sentimentCardPadding || source.sentiment_card_padding || "", "34px 40px 28px"),
+      sentimentCardRadius: normalizeCssSize(sentimentSource.sentimentCardRadius || sentimentSource.sentiment_card_radius || source.sentimentCardRadius || source.sentiment_card_radius || "", "38px"),
+      sentimentOrbSize: normalizeCssSize(sentimentSource.sentimentOrbSize || sentimentSource.sentiment_orb_size || source.sentimentOrbSize || source.sentiment_orb_size || "", "180px"),
+      sentimentDualPanelGlowSize: normalizeCssSize(
+        sentimentSource.sentimentDualPanelGlowSize || sentimentSource.sentiment_dual_panel_glow_size || source.sentimentDualPanelGlowSize || source.sentiment_dual_panel_glow_size || "",
+        "180px"
+      ),
+      sentimentDualPanelSectionGap: normalizeCssSize(
+        sentimentSource.sentimentDualPanelSectionGap || sentimentSource.sentiment_dual_panel_section_gap || source.sentimentDualPanelSectionGap || source.sentiment_dual_panel_section_gap || "",
+        "0px"
+      ),
+      sentimentDualPanelTextOrbGap: normalizeCssSize(
+        sentimentSource.sentimentDualPanelTextOrbGap || sentimentSource.sentiment_dual_panel_text_orb_gap || source.sentimentDualPanelTextOrbGap || source.sentiment_dual_panel_text_orb_gap || "",
+        "18px"
+      ),
+      sentimentDualPanelTextGap: normalizeCssSize(
+        sentimentSource.sentimentDualPanelTextGap || sentimentSource.sentiment_dual_panel_text_gap || source.sentimentDualPanelTextGap || source.sentiment_dual_panel_text_gap || "",
+        "6px"
+      ),
+      sentimentDualPanelHeartSize: normalizeCssSize(
+        sentimentSource.sentimentDualPanelHeartSize || sentimentSource.sentiment_dual_panel_heart_size || source.sentimentDualPanelHeartSize || source.sentiment_dual_panel_heart_size || "",
+        "68px"
+      ),
+      sentimentCardTitleFontSize: normalizeCssSize(
+        sentimentSource.sentimentCardTitleFontSize || sentimentSource.sentiment_card_title_font_size || source.sentimentCardTitleFontSize || source.sentiment_card_title_font_size || "",
+        "3.6rem"
+      ),
+      sentimentLabelFontSize: normalizeCssSize(
+        sentimentSource.sentimentLabelFontSize || sentimentSource.sentiment_label_font_size || source.sentimentLabelFontSize || source.sentiment_label_font_size || "",
+        "3rem"
+      ),
+      sentimentScoreFontSize: normalizeCssSize(
+        sentimentSource.sentimentScoreFontSize || sentimentSource.sentiment_score_font_size || source.sentimentScoreFontSize || source.sentiment_score_font_size || "",
+        "4rem"
+      ),
+      sentimentInsightTitleSize: normalizeCssSize(
+        sentimentSource.sentimentInsightTitleSize || sentimentSource.sentiment_insight_title_size || source.sentimentInsightTitleSize || source.sentiment_insight_title_size || "",
+        "1rem"
+      ),
+      sentimentInsightTextSize: normalizeCssSize(
+        sentimentSource.sentimentInsightTextSize || sentimentSource.sentiment_insight_text_size || source.sentimentInsightTextSize || source.sentiment_insight_text_size || "",
+        "0.98rem"
+      ),
+      sentimentMetaFontSize: normalizeCssSize(
+        sentimentSource.sentimentMetaFontSize || sentimentSource.sentiment_meta_font_size || source.sentimentMetaFontSize || source.sentiment_meta_font_size || "",
+        "0.82rem"
+      ),
+      sentimentDualPanelChartHeight: normalizeCssSize(
+        sentimentSource.sentimentDualPanelChartHeight || sentimentSource.sentiment_dual_panel_chart_height || source.sentimentDualPanelChartHeight || source.sentiment_dual_panel_chart_height || "",
+        "92px"
+      ),
+      sentimentDualPanelChartTopGap: normalizeCssSize(
+        sentimentSource.sentimentDualPanelChartTopGap || sentimentSource.sentiment_dual_panel_chart_top_gap || source.sentimentDualPanelChartTopGap || source.sentiment_dual_panel_chart_top_gap || "",
+        "18px"
+      ),
+      sentimentCompactBreakpoint: normalizeCssSize(
+        sentimentSource.sentimentCompactBreakpoint || sentimentSource.sentiment_compact_breakpoint || source.sentimentCompactBreakpoint || source.sentiment_compact_breakpoint || "",
+        "560px"
+      ),
+      sentimentCompactCardPadding: normalizeCssSize(
+        sentimentSource.sentimentCompactCardPadding || sentimentSource.sentiment_compact_card_padding || source.sentimentCompactCardPadding || source.sentiment_compact_card_padding || "",
+        "16px 14px 12px"
+      ),
+      sentimentCompactOrbSize: normalizeCssSize(
+        sentimentSource.sentimentCompactOrbSize || sentimentSource.sentiment_compact_orb_size || source.sentimentCompactOrbSize || source.sentiment_compact_orb_size || "",
+        "126px"
+      ),
+      sentimentCompactTitleFontSize: normalizeCssSize(
+        sentimentSource.sentimentCompactTitleFontSize || sentimentSource.sentiment_compact_title_font_size || source.sentimentCompactTitleFontSize || source.sentiment_compact_title_font_size || "",
+        "2.4rem"
+      ),
+      sentimentCompactLabelFontSize: normalizeCssSize(
+        sentimentSource.sentimentCompactLabelFontSize || sentimentSource.sentiment_compact_label_font_size || source.sentimentCompactLabelFontSize || source.sentiment_compact_label_font_size || "",
+        "2rem"
+      ),
+      sentimentCompactScoreFontSize: normalizeCssSize(
+        sentimentSource.sentimentCompactScoreFontSize || sentimentSource.sentiment_compact_score_font_size || source.sentimentCompactScoreFontSize || source.sentiment_compact_score_font_size || "",
+        "2.8rem"
+      ),
+      sentimentCompactInsightTitleSize: normalizeCssSize(
+        sentimentSource.sentimentCompactInsightTitleSize || sentimentSource.sentiment_compact_insight_title_size || source.sentimentCompactInsightTitleSize || source.sentiment_compact_insight_title_size || "",
+        "0.92rem"
+      ),
+      sentimentCompactInsightTextSize: normalizeCssSize(
+        sentimentSource.sentimentCompactInsightTextSize || sentimentSource.sentiment_compact_insight_text_size || source.sentimentCompactInsightTextSize || source.sentiment_compact_insight_text_size || "",
+        "0.88rem"
+      ),
+      sentimentCompactMetaFontSize: normalizeCssSize(
+        sentimentSource.sentimentCompactMetaFontSize || sentimentSource.sentiment_compact_meta_font_size || source.sentimentCompactMetaFontSize || source.sentiment_compact_meta_font_size || "",
+        "0.72rem"
+      ),
+      refreshIntervalSeconds: normalizeRefreshInterval(
+        sentimentSource.refreshIntervalSeconds
+        || sentimentSource.refresh_interval_seconds
+        || sentimentSource.sentimentRefreshSeconds
+        || sentimentSource.sentiment_refresh_seconds
+        || source.refreshIntervalSeconds
+        || source.refresh_interval_seconds
+        || source.sentimentRefreshSeconds
+        || source.sentiment_refresh_seconds
+      ),
+      useGemini: parseBoolean(
+        sentimentSource.useGemini ?? sentimentSource.use_gemini,
+        String(input.sentimentProvider || input.sentiment_provider || "").trim().toLowerCase() === "gemini"
+      )
+    }
+    ,
+    questions: {
+      ...normalizePageUiConfig({
+        source: questionsSource,
+        fallback: source,
+        defaults: {
+          titleText: "Checklist",
+          titleSize: "2rem",
+          metaSize: "0.82rem",
+        showTitle: true,
+        showMeta: true,
+        showEvidence: true,
+        showCardShadow: true,
+        showPageHeader: true,
+        embedMinHeight: "220px",
+        embedMaxHeight: "560px"
+        }
+      }),
+      questionSize: normalizeCssSize(
+        questionsSource.questionSize || questionsSource.question_size || source.questionSize || source.question_size || "",
+        "1rem"
+      ),
+      evidenceSize: normalizeCssSize(
+        questionsSource.evidenceSize || questionsSource.evidence_size || source.evidenceSize || source.evidence_size || "",
+        "1rem"
+      ),
+      metaFontSize: normalizeCssSize(
+        questionsSource.metaFontSize || questionsSource.meta_font_size || source.metaFontSize || source.meta_font_size || "",
+        "0.82rem"
+      ),
+      refreshIntervalSeconds: normalizeRefreshInterval(
+        questionsSource.refreshIntervalSeconds
+        || questionsSource.refresh_interval_seconds
+        || questionsSource.questionsRefreshSeconds
+        || questionsSource.questions_refresh_seconds
+        || source.questionsRefreshSeconds
+        || source.questions_refresh_seconds
+      ),
+      useGemini: parseBoolean(
+        questionsSource.useGemini ?? questionsSource.use_gemini,
+        parseBoolean(source.useGemini ?? source.use_gemini, true)
+      ),
+      showCardShadow: parseBoolean(
+        questionsSource.showCardShadow ?? questionsSource.show_card_shadow,
+        parseBoolean(source.showCardShadow ?? source.show_card_shadow, true)
+      ),
+      items: normalizeQuestionItems(
+        questionsSource.items
+        || questionsSource.questions
+        || source.questionItems
+        || source.question_items
+        || []
+      )
+    },
+    nextStep: {
+      ...normalizePageUiConfig({
+        source: nextStepSource,
+        fallback: source,
+        defaults: {
+          titleText: "NextIQ Assistant",
+          titleSize: "2rem",
+          metaSize: "0.82rem",
+          showTitle: true,
+          showMeta: true,
+          showPageHeader: true,
+          embedMinHeight: "220px",
+          embedMaxHeight: "280px"
+        }
+      }),
+      refreshIntervalSeconds: normalizeRefreshInterval(
+        nextStepSource.refreshIntervalSeconds
+        || nextStepSource.refresh_interval_seconds
+        || nextStepSource.nextStepRefreshSeconds
+        || nextStepSource.next_step_refresh_seconds
+        || source.nextStepRefreshSeconds
+        || source.next_step_refresh_seconds
+      ),
+      showCardShadow: parseBoolean(
+        nextStepSource.showCardShadow ?? nextStepSource.show_card_shadow,
+        parseBoolean(source.showCardShadow ?? source.show_card_shadow, true)
+      ),
+      useGemini: parseBoolean(
+        nextStepSource.useGemini ?? nextStepSource.use_gemini,
+        parseBoolean(source.useGemini ?? source.use_gemini, true)
+      ),
+      liveSize: normalizeCssSize(nextStepSource.liveSize || nextStepSource.live_size || source.liveSize || source.live_size || "", "1rem"),
+      badgeSize: normalizeCssSize(nextStepSource.badgeSize || nextStepSource.badge_size || source.badgeSize || source.badge_size || "", "0.82rem"),
+      kickerSize: normalizeCssSize(nextStepSource.kickerSize || nextStepSource.kicker_size || source.kickerSize || source.kicker_size || "", "0.86rem"),
+      actionTitleSize: normalizeCssSize(nextStepSource.actionTitleSize || nextStepSource.action_title_size || source.actionTitleSize || source.action_title_size || "", "1.6rem"),
+      actionTextSize: normalizeCssSize(nextStepSource.actionTextSize || nextStepSource.action_text_size || source.actionTextSize || source.action_text_size || "", "1rem"),
+      suggestedLabelSize: normalizeCssSize(nextStepSource.suggestedLabelSize || nextStepSource.suggested_label_size || source.suggestedLabelSize || source.suggested_label_size || "", "0.84rem"),
+      suggestedTextSize: normalizeCssSize(nextStepSource.suggestedTextSize || nextStepSource.suggested_text_size || source.suggestedTextSize || source.suggested_text_size || "", "1.35rem"),
+      buttonTextSize: normalizeCssSize(nextStepSource.buttonTextSize || nextStepSource.button_text_size || source.buttonTextSize || source.button_text_size || "", "1rem"),
+      articleTitleSize: normalizeCssSize(nextStepSource.articleTitleSize || nextStepSource.article_title_size || source.articleTitleSize || source.article_title_size || "", "1rem"),
+      articleTextSize: normalizeCssSize(nextStepSource.articleTextSize || nextStepSource.article_text_size || source.articleTextSize || source.article_text_size || "", "0.84rem"),
+      chipSize: normalizeCssSize(nextStepSource.chipSize || nextStepSource.chip_size || source.chipSize || source.chip_size || "", "0.84rem"),
+      reasonSize: normalizeCssSize(nextStepSource.reasonSize || nextStepSource.reason_size || source.reasonSize || source.reason_size || "", "0.92rem"),
+      metaFontSize: normalizeCssSize(nextStepSource.metaFontSize || nextStepSource.meta_font_size || source.metaFontSize || source.meta_font_size || "", "0.8rem")
+    }
+  };
+}
+
+function normalizeQuestionItems(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .slice(0, 5);
+  }
+
+  if (typeof value === "object" && value) {
+    return Object.keys(value)
+      .sort()
+      .map((key) => String(value[key] || "").trim())
+      .filter(Boolean)
+      .slice(0, 5);
+  }
+
+  return String(value || "")
+    .split(/\n|,/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 5);
+}
+
+function normalizePageUiConfig({ source, fallback, defaults }) {
+  const normalized = {
+    titleText: String(source.titleText || source.title_text || fallback.titleText || fallback.title_text || defaults.titleText || "").trim(),
+    showTitle: parseBoolean(source.showTitle, parseBoolean(fallback.showTitle, defaults.showTitle)),
+    showMeta: parseBoolean(source.showMeta, parseBoolean(fallback.showMeta, defaults.showMeta)),
+    showPageHeader: parseBoolean(source.showPageHeader, parseBoolean(fallback.showPageHeader, defaults.showPageHeader)),
+    titleSize: normalizeCssSize(source.titleSize || source.title_size || fallback.titleSize || fallback.title_size || "", defaults.titleSize),
+    metaSize: normalizeCssSize(source.metaSize || source.meta_size || fallback.metaSize || fallback.meta_size || "", defaults.metaSize),
+    embedMinHeight: normalizeCssSize(source.embedMinHeight || source.embed_min_height || fallback.embedMinHeight || fallback.embed_min_height || "", defaults.embedMinHeight),
+    embedMaxHeight: normalizeCssSize(source.embedMaxHeight || source.embed_max_height || fallback.embedMaxHeight || fallback.embed_max_height || "", defaults.embedMaxHeight)
+  };
+
+  const supportsEvidence = Object.prototype.hasOwnProperty.call(defaults, "showEvidence")
+    || Object.prototype.hasOwnProperty.call(source, "showEvidence")
+    || Object.prototype.hasOwnProperty.call(source, "show_evidence")
+    || Object.prototype.hasOwnProperty.call(fallback, "showEvidence")
+    || Object.prototype.hasOwnProperty.call(fallback, "show_evidence");
+
+  if (supportsEvidence) {
+    normalized.showEvidence = parseBoolean(
+      source.showEvidence ?? source.show_evidence,
+      parseBoolean(fallback.showEvidence ?? fallback.show_evidence, defaults.showEvidence)
+    );
+  }
+
+  return normalized;
+}
+
+function normalizeKbIds(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+
+  return String(value || "")
+    .split(/[,\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function sanitizeDomain(value) {
+  const domain = String(value || "")
+    .trim()
+    .replace(/^https?:\/\//, "")
+    .replace(/\/.*$/, "");
+
+  return domain;
+}
+
+function getDomainFromUrl(value) {
+  try {
+    return new URL(value).host;
+  } catch (error) {
+    return "";
+  }
+}
+
+function buildWorkitemApiUrl(domain) {
+  const normalizedDomain = sanitizeDomain(domain);
+  if (!normalizedDomain) {
+    return "";
+  }
+
+  return `https://${normalizedDomain}/users/api/workitems`;
+}
+
+function buildAgentChatApiUrl(domain) {
+  const normalizedDomain = sanitizeDomain(domain);
+  if (!normalizedDomain) {
+    return "";
+  }
+
+  return `https://${normalizedDomain}/chats/api/agent/chats`;
+}
+
+function slugify(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function stripUndefinedDeep(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map(stripUndefinedDeep)
+      .filter((item) => item !== undefined);
+  }
+
+  if (value && typeof value === "object") {
+    const cleaned = {};
+
+    for (const [key, item] of Object.entries(value)) {
+      const normalizedItem = stripUndefinedDeep(item);
+      if (normalizedItem !== undefined) {
+        cleaned[key] = normalizedItem;
+      }
+    }
+
+    return cleaned;
+  }
+
+  return value === undefined ? undefined : value;
+}
+
+function parseBoolean(value, fallback) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") {
+      return true;
+    }
+    if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") {
+      return false;
+    }
+  }
+
+  return fallback;
+}
+
+function parseInteger(value, fallback) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.trunc(value);
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return Math.trunc(parsed);
+    }
+  }
+
+  return fallback;
+}
+
+function normalizeJsonObject(value) {
+  if (!value) {
+    return undefined;
+  }
+
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" ? parsed : undefined;
+    } catch (error) {
+      return undefined;
+    }
+  }
+
+  return value && typeof value === "object" ? value : undefined;
+}
+
+function normalizeCssSize(value, fallback) {
+  const normalized = String(value || "").trim();
+  return normalized || fallback;
+}
+
+function normalizeRefreshInterval(value) {
+  const parsed = Number(value || 30);
+  if (!Number.isFinite(parsed)) {
+    return 30;
+  }
+
+  return Math.max(5, Math.min(3600, Math.round(parsed)));
+}
+
+function normalizeSentimentLayout(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "adaptive" || normalized === "compact" || normalized === "wide") {
+    return normalized;
+  }
+
+  return "centered";
+}
+
+function normalizeSentimentStylePreset(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "split" || normalized === "split-footer-top" || normalized === "dual-panels") {
+    return normalized;
+  }
+
+  return "stacked";
+}
+
+function normalizeSentimentProvider(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "gemini" ? "gemini" : "heuristic";
+}
+
+function normalizeLanguage(value) {
+  return String(value || "").trim().toLowerCase() === "es" ? "es" : "en";
+}
+
+function sanitizeFirestorePrefix(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  return normalized || "nextiq";
+}
+
+function isAuthorizedAdmin(req) {
+  // Primary: session cookie
+  if (getSessionFromRequest(req)) return true;
+
+  // Legacy fallback: X-Admin-Password header (kept for backward compatibility)
+  if (!ADMIN_PASSWORD) return false;
+  const headerPassword = String(req.headers["x-admin-password"] || "").trim();
+  if (headerPassword && headerPassword === ADMIN_PASSWORD) return true;
+
+  // Legacy fallback: HTTP Basic auth
+  const authHeader = req.headers.authorization || "";
+  if (!authHeader.startsWith("Basic ")) return false;
+  try {
+    const decoded = Buffer.from(authHeader.slice(6), "base64").toString("utf8");
+    const separator = decoded.indexOf(":");
+    const password = separator >= 0 ? decoded.slice(separator + 1) : "";
+    return password === ADMIN_PASSWORD;
+  } catch {
+    return false;
+  }
+}
+
+function sendJson(res, status, data) {
+  const payload = JSON.stringify(data);
+  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
+  res.end(payload);
+}
+
+function readJson(req) {
+  if (req.body && typeof req.body === "object") {
+    return Promise.resolve(req.body);
+  }
+
+  if (typeof req.body === "string") {
+    try {
+      return Promise.resolve(JSON.parse(req.body));
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  }
+
+  if (Buffer.isBuffer(req.rawBody)) {
+    try {
+      return Promise.resolve(JSON.parse(req.rawBody.toString("utf8") || "{}"));
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  }
+
+  return new Promise((resolve, reject) => {
+    let raw = "";
+    req.on("data", (chunk) => {
+      raw += chunk;
+    });
+    req.on("end", () => {
+      try {
+        resolve(JSON.parse(raw || "{}"));
+      } catch (error) {
+        reject(error);
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+function loadEnv(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return;
+  }
+
+  const content = fs.readFileSync(filePath, "utf8");
+  const lines = content.split(/\r?\n/);
+
+  for (const line of lines) {
+    if (!line || line.trim().startsWith("#")) {
+      continue;
+    }
+
+    const separatorIndex = line.indexOf("=");
+    if (separatorIndex === -1) {
+      continue;
+    }
+
+    const key = line.slice(0, separatorIndex).trim();
+    const value = line.slice(separatorIndex + 1).trim();
+    if (key && !(key in process.env)) {
+      process.env[key] = value;
+    }
+  }
+}
+
+function throwConfig(message) {
+  const error = new Error(message);
+  error.code = "CONFIG";
+  throw error;
+}
+
+async function fetchWorkitem(config, workitemId) {
+  const headers = {
+    "Authorization": config.token
+  };
+
+  if (config.cookie) {
+    headers["Cookie"] = config.cookie;
+  }
+
+  if (!config.workitemApiUrl) {
+    throwConfig(`Campaign "${config.id}" is missing a workitem API URL.`);
+  }
+
+  const upstream = await fetch(config.workitemApiUrl, {
+    method: "GET",
+    headers
+  });
+
+  if (!upstream.ok) {
+    throw new Error(`Workitem API returned ${upstream.status}.`);
+  }
+
+  const payload = await upstream.json();
+  const objects = Array.isArray(payload?.objects) ? payload.objects : [];
+  const workitem = objects.find((item) => {
+    return String(item?.workitemId || "").trim() === workitemId
+      || String(item?._id || "").trim() === workitemId;
+  });
+
+  if (!workitem) {
+    throwConfig(`Workitem "${workitemId}" was not found for campaign "${config.id}".`);
+  }
+
+  return workitem;
+}
+
+async function fetchWorkitems(config) {
+  const headers = {
+    "Authorization": config.token
+  };
+
+  if (config.cookie) {
+    headers["Cookie"] = config.cookie;
+  }
+
+  if (!config.workitemApiUrl) {
+    throwConfig(`Campaign "${config.id}" is missing a workitem API URL.`);
+  }
+
+  const upstream = await fetch(config.workitemApiUrl, {
+    method: "GET",
+    headers
+  });
+
+  if (!upstream.ok) {
+    throw new Error(`Workitem API returned ${upstream.status}.`);
+  }
+
+  const payload = await upstream.json();
+  return Array.isArray(payload?.objects) ? payload.objects : [];
+}
+
+async function sendAgentChatMessage(config, input) {
+  if (!config.agentChatApiUrl) {
+    throwConfig(`Campaign "${config.id}" is missing an agent chat API URL.`);
+  }
+
+  const workitemId = String(input.workitemId || "").trim();
+  const payload = JSON.stringify({
+    fromId: String(input.fromId || "").trim(),
+    toId: workitemId,
+    type: "USER",
+    textMsg: String(input.text || "").trim(),
+    priority: false
+  });
+
+  const headers = {
+    "Authorization": config.token,
+    "Content-Type": "application/json",
+    "Content-Length": Buffer.byteLength(payload)
+  };
+
+  if (config.cookie) {
+    headers["Cookie"] = config.cookie;
+  }
+
+  const baseUrl = String(config.agentChatApiUrl || "").replace(/\/+$/, "");
+  return fetch(`${baseUrl}/${encodeURIComponent(workitemId)}/messages`, {
+    method: "POST",
+    headers,
+    body: payload
+  });
+}
+
+function latestWorkitemTimestamp(workitem) {
+  const messages = getAgentChatSourceMessages(workitem);
+  const latestMessageTimestamp = messages.reduce((max, item) => Math.max(max, Number(item?.timestamp || 0)), 0);
+  return latestMessageTimestamp || Number(workitem?.timestamp || 0) || 0;
+}
+
+function rankWorkitemsForBoard(workitems) {
+  return [...(Array.isArray(workitems) ? workitems : [])]
+    .sort((left, right) => latestWorkitemTimestamp(right) - latestWorkitemTimestamp(left));
+}
+
+async function extractClientMessages(workitem, config) {
+  const clientMessages = extractRawClientMessages(workitem);
+
+  if (!clientMessages.length) {
+    return [];
+  }
+
+  if (config.sentimentProvider === "gemini" && config?.ui?.sentiment?.useGemini !== false) {
+    return analyzeMessagesWithGemini(clientMessages, config);
+  }
+
+  return clientMessages.map((item) => ({
+    ...item,
+    sentiment: scoreSentiment(item.text)
+  }));
+}
+
+function extractRawClientMessages(workitem) {
+  const messages = Array.isArray(workitem?.transcriptionMessages) ? workitem.transcriptionMessages : [];
+
+  return messages
+    .filter((item) => String(item?.type || "").toUpperCase() === "CLIENT")
+    .map((item) => {
+      return {
+        id: String(item?.id || "").trim(),
+        text: String(item?.textMsg || "").trim(),
+        fromId: String(item?.fromId || "").trim(),
+        timestamp: Number(item?.timestamp || 0)
+      };
+    })
+    .filter((item) => item.text);
+}
+
+function extractChecklistMessages(workitem) {
+  const messages = Array.isArray(workitem?.transcriptionMessages) ? workitem.transcriptionMessages : [];
+
+  return messages
+    .map((item) => {
+      const type = String(item?.type || "").trim().toUpperCase();
+      if (type !== "CLIENT" && type !== "USER") {
+        return null;
+      }
+
+      return {
+        id: String(item?.id || "").trim(),
+        text: String(item?.textMsg || "").trim(),
+        fromId: String(item?.fromId || "").trim(),
+        timestamp: Number(item?.timestamp || 0),
+        role: type === "CLIENT" ? "client" : "agent",
+        type
+      };
+    })
+    .filter((item) => item && item.text);
+}
+
+function extractAgentChatMessages(workitem) {
+  const messages = getAgentChatSourceMessages(workitem);
+
+  return messages
+    .map((item) => {
+      const type = String(item?.type || "").trim().toUpperCase();
+      if (type !== "CLIENT" && type !== "USER" && type !== "BOT") {
+        return null;
+      }
+
+      return {
+        id: String(item?.id || "").trim(),
+        text: String(item?.textMsg || "").trim(),
+        fromId: String(item?.fromId || "").trim(),
+        timestamp: Number(item?.timestamp || 0),
+        role: type === "CLIENT" ? "client" : "agent",
+        type
+      };
+    })
+    .filter((item) => item && item.text)
+    .sort((left, right) => left.timestamp - right.timestamp);
+}
+
+function getAgentChatSourceMessages(workitem) {
+  const chatMessages = Array.isArray(workitem?.chatMessages) ? workitem.chatMessages : [];
+  if (chatMessages.length) {
+    return chatMessages;
+  }
+
+  return Array.isArray(workitem?.transcriptionMessages) ? workitem.transcriptionMessages : [];
+}
+
+function summarizeAgentChatWorkitem(workitem) {
+  const summary = summarizeWorkitem(workitem);
+  const messages = extractAgentChatMessages(workitem);
+  const lastMessage = messages[messages.length - 1] || null;
+
+  return {
+    ...summary,
+    latestTimestamp: latestWorkitemTimestamp(workitem),
+    lastMessage: lastMessage ? {
+      text: lastMessage.text,
+      role: lastMessage.role,
+      timestamp: lastMessage.timestamp
+    } : null,
+    unreadCount: Number(workitem?.unreadCount || 0) || 0
+  };
+}
+
+function inferAgentUserIdFromToken(token) {
+  const payload = decodeJwtPayload(token);
+  return String(payload?.userId || payload?.user_id || "").trim();
+}
+
+function decodeJwtPayload(token) {
+  try {
+    const parts = String(token || "").split(".");
+    if (parts.length < 2) {
+      return null;
+    }
+
+    const payload = parts[1]
+      .replace(/-/g, "+")
+      .replace(/_/g, "/");
+    const padded = payload.padEnd(Math.ceil(payload.length / 4) * 4, "=");
+    return JSON.parse(Buffer.from(padded, "base64").toString("utf8"));
+  } catch (error) {
+    return null;
+  }
+}
+
+function summarizeWorkitem(workitem) {
+  const contact = workitem?.contact || {};
+
+  return {
+    workitemId: String(workitem?.workitemId || workitem?._id || "").trim(),
+    contactName: String(contact?.name || workitem?.name || "").trim(),
+    phone: String(contact?.phone || workitem?.to || "").trim(),
+    agentUsername: String(workitem?.agentUsername || "").trim(),
+    state: String(workitem?.state || "").trim(),
+    channelType: String(workitem?.channelType || "").trim(),
+    callType: String(workitem?.type || "").trim()
+  };
+}
+
+function summarizeAgentSentiment(messages) {
+  const scores = Array.isArray(messages)
+    ? messages.map((item) => Number(item?.sentiment?.score || 0)).filter((value) => Number.isFinite(value))
+    : [];
+
+  if (!scores.length) {
+    return { score: 0, label: "Neutral", color: "yellow", trend: [0] };
+  }
+
+  const average = scores.reduce((sum, value) => sum + value, 0) / scores.length;
+  let label = "Neutral";
+  let color = "yellow";
+
+  if (average <= -0.2) {
+    label = "Negative";
+    color = "red";
+  } else if (average >= 0.2) {
+    label = "Positive";
+    color = "green";
+  }
+
+  return {
+    score: Math.max(-1, Math.min(1, average)),
+    label,
+    color,
+    trend: scores.slice(-8)
+  };
+}
+
+function summarizeCompliance(items) {
+  const checklist = Array.isArray(items) ? items : [];
+  const total = checklist.length;
+  const fulfilled = checklist.filter((item) => item.fulfilled).length;
+  const score = total ? Math.round((fulfilled / total) * 100) : 100;
+  const missingItems = checklist.filter((item) => !item.fulfilled);
+
+  return {
+    score,
+    total,
+    fulfilled,
+    missingItems,
+    ok: score >= 80
+  };
+}
+
+function buildAgentAlerts(summary, sentiment, compliance) {
+  const alerts = [];
+
+  if (sentiment.color === "red") {
+    alerts.push({
+      tone: "high",
+      label: "Negative sentiment",
+      detail: "Customer sentiment is below the safe threshold."
+    });
+  }
+
+  for (const item of compliance.missingItems.slice(0, 2)) {
+    alerts.push({
+      tone: "warning",
+      label: "Script compliance",
+      detail: item.question
+    });
+  }
+
+  if (!compliance.ok && !alerts.length) {
+    alerts.push({
+      tone: "warning",
+      label: "Compliance below target",
+      detail: `${summary.agentUsername || "Agent"} is below the script target.`
+    });
+  }
+
+  return alerts;
+}
+
+function summarizeQualityBoard(agents) {
+  const rows = Array.isArray(agents) ? agents : [];
+  const averageSentiment = rows.length
+    ? rows.reduce((sum, item) => sum + Number(item?.sentiment?.score || 0), 0) / rows.length
+    : 0;
+  const averageCompliance = rows.length
+    ? Math.round(rows.reduce((sum, item) => sum + Number(item?.compliance?.score || 0), 0) / rows.length)
+    : 100;
+  const activeAlerts = rows.reduce((sum, item) => sum + (Array.isArray(item?.alerts) ? item.alerts.length : 0), 0);
+  const agentsAtRisk = rows.filter((item) => item?.sentiment?.color === "red" || item?.compliance?.ok === false).length;
+
+  return {
+    totalAgents: rows.length,
+    averageSentiment: Math.max(-1, Math.min(1, averageSentiment)),
+    averageCompliance,
+    activeAlerts,
+    agentsAtRisk
+  };
+}
+
+function scoreSentiment(text) {
+  const normalized = String(text || "").toLowerCase();
+  const negativeSignals = [
+    { pattern: "cancel", weight: -2.5 },
+    { pattern: "cancelar", weight: -2.5 },
+    { pattern: "cancelación", weight: -2.5 },
+    { pattern: "dar de baja", weight: -2.6 },
+    { pattern: "retirar el servicio", weight: -2.8 },
+    { pattern: "no voy a seguir", weight: -2.5 },
+    { pattern: "no creo que vaya a seguir", weight: -2.8 },
+    { pattern: "no quiero más inconvenientes", weight: -2.2 },
+    { pattern: "no me vuelvan a llamar", weight: -2.4 },
+    { pattern: "no me vuelvan a marcar", weight: -2.4 },
+    { pattern: "estoy enojado", weight: -2.8 },
+    { pattern: "estoy molesto", weight: -2.5 },
+    { pattern: "muy molesto", weight: -2.6 },
+    { pattern: "desagradable", weight: -2.1 },
+    { pattern: "lamentable", weight: -2.2 },
+    { pattern: "descontento", weight: -2.2 },
+    { pattern: "terrible", weight: -2.1 },
+    { pattern: "horrible", weight: -2.1 },
+    { pattern: "awful", weight: -2.1 },
+    { pattern: "terrible service", weight: -2.2 },
+    { pattern: "bad service", weight: -2.1 },
+    { pattern: "problem", weight: -1.2 },
+    { pattern: "issue", weight: -1.2 },
+    { pattern: "complaint", weight: -1.4 },
+    { pattern: "frustrated", weight: -1.8 },
+    { pattern: "annoyed", weight: -1.6 },
+    { pattern: "angry", weight: -2.2 },
+    { pattern: "upset", weight: -1.7 },
+    { pattern: "wrong", weight: -1.2 },
+    { pattern: "broken", weight: -1.6 },
+    { pattern: "hate", weight: -1.8 },
+    { pattern: "urgent", weight: -1.1 },
+    { pattern: "emergency", weight: -1.4 },
+    { pattern: "fail", weight: -1.3 },
+    { pattern: "enfadado", weight: -2.4 },
+    { pattern: "molesto", weight: -2.0 },
+    { pattern: "problema", weight: -1.2 },
+    { pattern: "queja", weight: -1.4 },
+    { pattern: "frustrado", weight: -1.8 },
+    { pattern: "urgente", weight: -1.1 },
+    { pattern: "emergencia", weight: -1.4 },
+    { pattern: "falla", weight: -1.5 },
+    { pattern: "fallo", weight: -1.5 },
+    { pattern: "no funciona", weight: -2.2 },
+    { pattern: "incidencia", weight: -1.0 }
+  ];
+  const positiveSignals = [
+    { pattern: "good", weight: 1.2 },
+    { pattern: "great", weight: 1.4 },
+    { pattern: "thanks", weight: 0.7 },
+    { pattern: "thank you", weight: 0.8 },
+    { pattern: "perfect", weight: 1.4 },
+    { pattern: "awesome", weight: 1.5 },
+    { pattern: "excellent", weight: 1.6 },
+    { pattern: "resolved", weight: 1.5 },
+    { pattern: "bien", weight: 0.9 },
+    { pattern: "gracias", weight: 0.6 },
+    { pattern: "perfecto", weight: 1.4 },
+    { pattern: "excelente", weight: 1.6 },
+    { pattern: "genial", weight: 1.4 },
+    { pattern: "resuelto", weight: 1.5 },
+    { pattern: "ok", weight: 0.4 },
+    { pattern: "vale", weight: 0.3 }
+  ];
+
+  let score = 0;
+
+  for (const signal of negativeSignals) {
+    if (normalized.includes(signal.pattern)) {
+      score += signal.weight;
+    }
+  }
+
+  for (const signal of positiveSignals) {
+    if (normalized.includes(signal.pattern)) {
+      score += signal.weight;
+    }
+  }
+
+  score = Math.max(-1, Math.min(1, score / 3));
+
+  let color = "yellow";
+  let label = "Neutral";
+
+  if (score <= -1) {
+    color = "red";
+    label = "Negative";
+  } else if (score >= 1) {
+    color = "green";
+    label = "Positive";
+  }
+
+  return { color, label, score };
+}
+
+async function analyzeMessagesWithGemini(messages, config) {
+  if (!config.geminiApiKey) {
+    throwConfig(`Campaign "${config.id}" is missing a Gemini API key.`);
+  }
+
+  const endpoint = buildGeminiEndpoint(config.geminiApiUrl, config.geminiModel);
+  const instruction = config.geminiPrompt || [
+    "You analyze customer sentiment from call transcript messages.",
+    "Treat explicit frustration, cancellation intent, service complaints, anger, repeated inconvenience, and requests to stop contact as Negative sentiment.",
+    "Do not overuse Neutral when the customer is clearly dissatisfied or wants to leave the product/service.",
+    "Return strict JSON only.",
+    "Return an array with one object per input message.",
+    'Each object must include: id, label, color, score.',
+    'score must be a number between -1 and 1.',
+    'label must be Positive, Neutral, or Negative.',
+    'color must be green, yellow, or red.'
+  ].join(" ");
+
+  const body = {
+    systemInstruction: {
+      parts: [{ text: instruction }]
+    },
+    contents: [
+      {
+        parts: [
+          {
+            text: JSON.stringify({
+              task: "Classify sentiment for each client message.",
+              messages: messages.map((item) => ({ id: item.id, text: item.text }))
+            })
+          }
+        ]
+      }
+    ],
+    generationConfig: {
+      temperature: 0,
+      responseMimeType: "application/json"
+    }
+  };
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": config.geminiApiKey
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!response.ok) {
+    throw new Error(`Gemini API returned ${response.status}.`);
+  }
+
+  const payload = await response.json();
+  const jsonText = payload?.candidates?.[0]?.content?.parts
+    ?.map((part) => part?.text || "")
+    .join("")
+    .trim();
+
+  if (!jsonText) {
+    throw new Error("Gemini API returned an empty response.");
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch (error) {
+    throw new Error(`Gemini response was not valid JSON: ${error.message}`);
+  }
+
+  const mapped = new Map(
+    (Array.isArray(parsed) ? parsed : []).map((item) => [
+      String(item?.id || "").trim(),
+      {
+        color: normalizeSentimentColor(item?.color, item?.label, item?.score),
+        label: normalizeSentimentLabel(item?.label, item?.score),
+        score: normalizeModelScore(item?.score)
+      }
+    ])
+  );
+
+  return messages.map((item) => ({
+    ...item,
+    sentiment: mapped.get(item.id) || scoreSentiment(item.text)
+  }));
+}
+
+function resolveQuestionsConfig(config) {
+  return {
+    apiKey: config.questionsGeminiApiKey || config.geminiApiKey,
+    model: config.questionsGeminiModel || config.geminiModel || "gemini-2.5-flash",
+    apiUrl: config.questionsGeminiApiUrl || config.geminiApiUrl || "https://generativelanguage.googleapis.com",
+    prompt: config.questionsGeminiPrompt || "",
+    items: config.ui?.questions?.items || []
+  };
+}
+
+async function analyzeChecklistWithGemini(messages, questions, config, questionsConfig) {
+  if (!questionsConfig.apiKey) {
+    throwConfig(`Campaign "${config.id}" is missing a Questions Gemini API key.`);
+  }
+
+  const endpoint = buildGeminiEndpoint(questionsConfig.apiUrl, questionsConfig.model);
+  const instruction = questionsConfig.prompt || [
+    "You validate whether each checklist question has already been satisfied by the conversation transcript of a call.",
+    "Return strict JSON only.",
+    "Return an array with one object per question.",
+    "Each object must include: id, question, fulfilled, color, evidence.",
+    "fulfilled must be true or false.",
+    "color must be green when fulfilled is true, red when fulfilled is false.",
+    "evidence must be a short sentence explaining why.",
+    "Use only information explicitly present in the provided transcript messages.",
+    "The transcript contains both client and agent messages, with a role field.",
+    "You may mark a question as fulfilled if the relevant evidence appears in either the client or the agent messages.",
+    "If the transcript does not clearly answer the question, mark fulfilled as false."
+  ].join(" ");
+
+  const body = {
+    systemInstruction: {
+      parts: [{ text: instruction }]
+    },
+    contents: [
+      {
+        parts: [
+          {
+            text: JSON.stringify({
+              task: "Evaluate checklist questions against client transcript messages.",
+              questions: questions.map((question, index) => ({
+                id: `q${index + 1}`,
+                question
+              })),
+              messages: messages.map((item) => ({
+                id: item.id,
+                role: item.role,
+                fromId: item.fromId,
+                text: item.text,
+                timestamp: item.timestamp
+              }))
+            })
+          }
+        ]
+      }
+    ],
+    generationConfig: {
+      temperature: 0,
+      responseMimeType: "application/json"
+    }
+  };
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": questionsConfig.apiKey
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!response.ok) {
+    throw new Error(`Gemini API returned ${response.status}.`);
+  }
+
+  const payload = await response.json();
+  const jsonText = payload?.candidates?.[0]?.content?.parts
+    ?.map((part) => part?.text || "")
+    .join("")
+    .trim();
+
+  if (!jsonText) {
+    throw new Error("Gemini API returned an empty response.");
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch (error) {
+    throw new Error(`Gemini response was not valid JSON: ${error.message}`);
+  }
+
+  const mapped = new Map(
+    (Array.isArray(parsed) ? parsed : []).map((item, index) => [
+      String(item?.id || `q${index + 1}`).trim(),
+      {
+        question: String(item?.question || "").trim(),
+        fulfilled: Boolean(item?.fulfilled),
+        color: Boolean(item?.fulfilled) ? "green" : "red",
+        evidence: String(item?.evidence || "").trim()
+      }
+    ])
+  );
+
+  return questions.map((question, index) => {
+    const id = `q${index + 1}`;
+    const result = mapped.get(id);
+
+    return {
+      id,
+      question,
+      fulfilled: result ? result.fulfilled : false,
+      color: result ? result.color : "red",
+      evidence: result?.evidence || "Not confirmed in the client transcript."
+    };
+  });
+}
+
+function analyzeChecklistHeuristically(messages, questions) {
+  const transcript = Array.isArray(messages) ? messages : [];
+  const fullText = transcript.map((item) => String(item.text || "").toLowerCase()).join(" ");
+
+  return questions.map((question, index) => {
+    const normalizedQuestion = String(question || "").toLowerCase();
+    let fulfilled = false;
+    let evidence = "Not confirmed in the client transcript.";
+
+    if (normalizedQuestion.includes("name") || normalizedQuestion.includes("nombre")) {
+      fulfilled = /\bmy name is\b|\bme llamo\b|\bsoy\s+[a-záéíóúñ]/i.test(fullText);
+      evidence = fulfilled ? "The transcript includes a customer name reference." : evidence;
+    } else if (normalizedQuestion.includes("phone") || normalizedQuestion.includes("tel")) {
+      fulfilled = /\b(phone|tel[eé]fono|number|número)\b/.test(fullText) && /\d{3,}/.test(fullText);
+      evidence = fulfilled ? "The transcript includes a phone confirmation cue." : evidence;
+    } else if (normalizedQuestion.includes("legal") || normalizedQuestion.includes("disclaimer") || normalizedQuestion.includes("texto legal")) {
+      fulfilled = /legal|disclaimer|texto legal|terms|conditions|recorded line/.test(fullText);
+      evidence = fulfilled ? "The transcript references the legal or disclaimer step." : evidence;
+    } else if (normalizedQuestion.includes("issue") || normalizedQuestion.includes("problem") || normalizedQuestion.includes("problema")) {
+      fulfilled = /issue|problem|problema|falla|fallo|not working|no funciona|incidencia/.test(fullText);
+      evidence = fulfilled ? "The transcript includes the customer's issue or problem statement." : evidence;
+    } else if (normalizedQuestion.includes("urgency") || normalizedQuestion.includes("severity") || normalizedQuestion.includes("urgencia")) {
+      fulfilled = /urgent|urgente|asap|emergency|emergencia|right now|hoy/.test(fullText);
+      evidence = fulfilled ? "The transcript includes urgency or severity cues." : evidence;
+    } else if (normalizedQuestion.includes("address") || normalizedQuestion.includes("unit") || normalizedQuestion.includes("dirección")) {
+      fulfilled = /address|unit|apt|suite|direcci[oó]n|calle|avenida/.test(fullText);
+      evidence = fulfilled ? "The transcript includes an address or unit reference." : evidence;
+    } else {
+      const keywords = normalizedQuestion
+        .replace(/[^\p{L}\p{N}\s]/gu, " ")
+        .split(/\s+/)
+        .map((item) => item.trim())
+        .filter((item) => item.length > 3);
+      const matched = keywords.filter((item) => fullText.includes(item));
+      fulfilled = matched.length >= Math.max(1, Math.min(2, Math.ceil(keywords.length / 3)));
+      if (fulfilled) {
+        evidence = `The transcript matches checklist keywords: ${matched.slice(0, 3).join(", ")}.`;
+      }
+    }
+
+    return {
+      id: `q${index + 1}`,
+      question,
+      fulfilled,
+      color: fulfilled ? "green" : "red",
+      evidence
+    };
+  });
+}
+
+async function buildAgentNextStep(messages, config) {
+  if (!Array.isArray(messages) || !messages.length) {
+    const spanish = normalizeLanguage(config?.ui?.shared?.language || "en") === "es";
+    return {
+      actionTitle: spanish ? "Abre la conversación" : "Open the conversation",
+      actionDetail: spanish
+        ? "Pídele al cliente que explique el problema para poder guiar el siguiente paso."
+        : "Ask the customer to explain the issue so you can guide the next step.",
+      suggestedPhrase: spanish
+        ? "¿Podría contarme qué ocurrió para ayudarle con el siguiente paso?"
+        : "Could you tell me what happened so I can help you with the next step?",
+      stage: "clarify",
+      urgency: "medium",
+      confidence: 72,
+      reason: spanish
+        ? "Aún no hay suficiente transcripción para inferir una acción más específica."
+        : "There is not enough transcript yet to infer a more specific action.",
+      kbQuery: spanish ? "primer paso para resolver problema" : "troubleshooting first call issue",
+      quickActions: spanish ? ["Aclarar", "Guiar", "Siguiente paso"] : ["Clarify", "Guide", "Next step"]
+    };
+  }
+
+  if (config?.ui?.nextStep?.useGemini === false) {
+    return buildHeuristicAgentNextStep(messages, config);
+  }
+
+  const questionsConfig = resolveQuestionsConfig(config);
+  const apiKey = questionsConfig.apiKey || config.geminiApiKey;
+  const model = questionsConfig.model || config.geminiModel || "gemini-2.5-flash";
+  const apiUrl = questionsConfig.apiUrl || config.geminiApiUrl || "https://generativelanguage.googleapis.com";
+
+  if (!apiKey) {
+    throwConfig(`Campaign "${config.id}" is missing a Gemini API key for next-step guidance.`);
+  }
+
+  const endpoint = buildGeminiEndpoint(apiUrl, model);
+  const instruction = String(config.nextStepGeminiPrompt || "").trim() || [
+    "You are a real-time contact center assistant.",
+    "Review the transcript and decide the single best next step the agent should take right now.",
+    "The answer must be immediately actionable during a live call.",
+    `Write every text field in ${normalizeLanguage(config?.ui?.shared?.language || "en") === "es" ? "Spanish" : "English"}.`,
+    "Return strict JSON only.",
+    "Fields required: actionTitle, actionDetail, suggestedPhrase, stage, urgency, confidence, reason, quickActions, kbQuery.",
+    "actionTitle must be a short imperative phrase of at most 6 words.",
+    "actionDetail must be one short sentence describing the next action.",
+    "suggestedPhrase must be one natural sentence the agent can say next.",
+    "stage must be one of: empathy, clarify, verify, legal, troubleshoot, escalate, close.",
+    "urgency must be one of: low, medium, high.",
+    "confidence must be a number between 0 and 100.",
+    "reason must be a short explanation grounded in the transcript.",
+    "quickActions must be an array with 2 to 4 short labels.",
+    "kbQuery must be a short search query for a support knowledge base article.",
+    "Use only transcript evidence. Do not invent policies or outcomes.",
+    "Prefer the most immediate conversational move instead of a long plan."
+  ].join(" ");
+
+  const body = {
+    systemInstruction: {
+      parts: [{ text: instruction }]
+    },
+    contents: [
+      {
+        parts: [
+          {
+            text: JSON.stringify({
+              task: "Generate the next-best action for the agent.",
+              messages: messages.map((item) => ({
+                id: item.id,
+                role: item.role,
+                text: item.text,
+                timestamp: item.timestamp
+              }))
+            })
+          }
+        ]
+      }
+    ],
+    generationConfig: {
+      temperature: 0.15,
+      responseMimeType: "application/json"
+    }
+  };
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": apiKey
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!response.ok) {
+    throw new Error(`Gemini API returned ${response.status}.`);
+  }
+
+  const payload = await response.json();
+  const jsonText = payload?.candidates?.[0]?.content?.parts
+    ?.map((part) => part?.text || "")
+    .join("")
+    .trim();
+
+  if (!jsonText) {
+    throw new Error("Gemini API returned an empty response.");
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch (error) {
+    throw new Error(`Gemini response was not valid JSON: ${error.message}`);
+  }
+
+  return normalizeAgentNextStep(parsed);
+}
+
+function normalizeAgentNextStep(input) {
+  const stage = normalizeNextStepStage(input?.stage);
+  const urgency = normalizeNextStepUrgency(input?.urgency);
+  const confidence = Math.max(0, Math.min(100, Number(input?.confidence || 0) || 0));
+  const actionTitle = String(input?.actionTitle || "").trim() || "Guide the customer";
+  const actionDetail = String(input?.actionDetail || "").trim() || "Use the latest transcript cues to move the conversation one step forward.";
+  const suggestedPhrase = String(input?.suggestedPhrase || "").trim() || "Let me help you with the next step right now.";
+  const reason = String(input?.reason || "").trim() || "Based on the latest transcript update.";
+  const kbQuery = String(input?.kbQuery || actionTitle).trim();
+  const quickActions = Array.isArray(input?.quickActions)
+    ? input.quickActions.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 4)
+    : [];
+
+  return {
+    actionTitle,
+    actionDetail,
+    suggestedPhrase,
+    stage,
+    urgency,
+    confidence,
+    reason,
+    kbQuery,
+    quickActions: quickActions.length ? quickActions : buildFallbackQuickActions(stage)
+  };
+}
+
+function normalizeNextStepStage(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (["empathy", "clarify", "verify", "legal", "troubleshoot", "escalate", "close"].includes(normalized)) {
+    return normalized;
+  }
+  return "clarify";
+}
+
+function normalizeNextStepUrgency(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (["low", "medium", "high"].includes(normalized)) {
+    return normalized;
+  }
+  return "medium";
+}
+
+function buildFallbackQuickActions(stage) {
+  if (stage === "empathy") {
+    return ["Empathy", "Clarify", "Reassure"];
+  }
+  if (stage === "legal") {
+    return ["Legal info", "Confirm", "Proceed"];
+  }
+  if (stage === "verify") {
+    return ["Verify", "Recap", "Proceed"];
+  }
+  if (stage === "troubleshoot") {
+    return ["Clarify", "Troubleshoot", "Next step"];
+  }
+  if (stage === "escalate") {
+    return ["Acknowledge", "Escalate", "Set expectation"];
+  }
+  if (stage === "close") {
+    return ["Recap", "Confirm", "Close"];
+  }
+  return ["Clarify", "Guide", "Next step"];
+}
+
+function buildHeuristicAgentNextStep(messages, config) {
+  const language = normalizeLanguage(config?.ui?.shared?.language || "en");
+  const recentMessages = messages.slice(-6);
+  const latestClientMessage = [...recentMessages].reverse().find((item) => item.role === "client") || recentMessages[recentMessages.length - 1];
+  const transcriptText = recentMessages.map((item) => item.text.toLowerCase()).join(" ");
+  const latestText = String(latestClientMessage?.text || "").toLowerCase();
+  const sentiment = scoreSentiment(transcriptText);
+
+  let stage = "clarify";
+  let urgency = "medium";
+  let actionTitle = language === "es" ? "Aclara el problema" : "Clarify the issue";
+  let actionDetail = language === "es"
+    ? "Haz una pregunta concreta para entender exactamente qué está fallando antes de avanzar."
+    : "Ask a concrete question to understand exactly what is failing before moving forward.";
+  let suggestedPhrase = language === "es"
+    ? "Quiero ayudarle con esto. ¿Puede decirme exactamente qué está ocurriendo ahora mismo?"
+    : "I want to help with this. Can you tell me exactly what is happening right now?";
+  let reason = language === "es"
+    ? "Todavía hace falta concretar el siguiente paso con base en el problema descrito."
+    : "The next step still needs to be narrowed down from the issue being described.";
+  let kbQuery = language === "es" ? "aclarar problema del cliente" : "clarify customer issue";
+
+  if (sentiment.score <= -0.45 || /molest|enojad|frustr|angry|upset|cancel|retirar|desagradable|lamentable/.test(transcriptText)) {
+    stage = "empathy";
+    urgency = "high";
+    actionTitle = language === "es" ? "Reconoce la frustración" : "Acknowledge frustration";
+    actionDetail = language === "es"
+      ? "Primero valida la molestia del cliente y después marca con claridad qué vas a revisar."
+      : "First validate the customer's frustration, then clearly state what you will review next.";
+    suggestedPhrase = language === "es"
+      ? "Entiendo lo frustrante que ha sido esto. Voy a revisar el problema ahora mismo para ayudarle."
+      : "I understand how frustrating this has been. I am going to review the issue right now so I can help.";
+    reason = language === "es"
+      ? "El transcript reciente contiene señales claras de frustración o riesgo de cancelación."
+      : "The recent transcript contains clear frustration or cancellation-risk cues.";
+    kbQuery = language === "es" ? "manejo cliente molesto y retención" : "handle frustrated customer retention";
+  } else if (/legal|disclaimer|texto legal|terms|conditions/.test(transcriptText)) {
+    stage = "legal";
+    urgency = "medium";
+    actionTitle = language === "es" ? "Lee el texto legal" : "Read the legal disclaimer";
+    actionDetail = language === "es"
+      ? "Da el texto obligatorio antes de continuar con cualquier gestión."
+      : "Provide the required legal text before continuing with the case.";
+    suggestedPhrase = language === "es"
+      ? "Antes de continuar, necesito leerle la información legal correspondiente."
+      : "Before we continue, I need to read the relevant legal information.";
+    reason = language === "es"
+      ? "El contexto sugiere que hace falta completar el paso legal antes de avanzar."
+      : "The context suggests the legal step should be completed before moving on.";
+    kbQuery = language === "es" ? "texto legal llamada" : "call legal disclaimer";
+  } else if (/name|nombre|phone|tel|identity|identidad|confirm/.test(latestText)) {
+    stage = "verify";
+    urgency = "medium";
+    actionTitle = language === "es" ? "Verifica los datos" : "Verify the details";
+    actionDetail = language === "es"
+      ? "Confirma el dato clave que falta antes de seguir con la resolución."
+      : "Confirm the key missing detail before proceeding with the resolution.";
+    suggestedPhrase = language === "es"
+      ? "Antes de seguir, ¿podría confirmarme ese dato para asegurarme de revisar la cuenta correcta?"
+      : "Before we continue, could you confirm that detail so I can review the correct account?";
+    reason = language === "es"
+      ? "El siguiente movimiento más seguro es validar la información necesaria."
+      : "The safest next move is to verify the required information.";
+    kbQuery = language === "es" ? "verificacion identidad cliente" : "customer identity verification";
+  } else if (/payment|tarjeta|credit|pago|billing|factura/.test(transcriptText)) {
+    stage = "troubleshoot";
+    urgency = "medium";
+    actionTitle = language === "es" ? "Guía la revisión" : "Guide troubleshooting";
+    actionDetail = language === "es"
+      ? "Lleva al cliente al siguiente chequeo concreto para aislar el fallo."
+      : "Guide the customer through the next concrete check to isolate the failure.";
+    suggestedPhrase = language === "es"
+      ? "Vamos a revisar juntos el siguiente paso para identificar por qué no está funcionando el pago."
+      : "Let’s review the next step together to identify why the payment is not working.";
+    reason = language === "es"
+      ? "El transcript apunta a un problema operativo que requiere diagnóstico."
+      : "The transcript points to an operational issue that needs troubleshooting.";
+    kbQuery = language === "es" ? "fallo pago tarjeta solucion" : "credit card payment issue troubleshooting";
+  }
+
+  const confidence = urgency === "high" ? 88 : stage === "clarify" ? 76 : 82;
+
+  return {
+    actionTitle,
+    actionDetail,
+    suggestedPhrase,
+    stage,
+    urgency,
+    confidence,
+    reason,
+    kbQuery,
+    quickActions: buildFallbackQuickActions(stage).map((item) => localizeQuickAction(item, language))
+  };
+}
+
+function localizeQuickAction(label, language) {
+  if (language !== "es") {
+    return label;
+  }
+
+  const mapping = {
+    Empathy: "Empatía",
+    Clarify: "Aclarar",
+    Reassure: "Tranquilizar",
+    "Legal info": "Info legal",
+    Confirm: "Confirmar",
+    Proceed: "Continuar",
+    Verify: "Verificar",
+    Recap: "Resumir",
+    Troubleshoot: "Revisar",
+    "Next step": "Siguiente paso",
+    Acknowledge: "Reconocer",
+    Escalate: "Escalar",
+    "Set expectation": "Alinear expectativa",
+    Close: "Cerrar",
+    Guide: "Guiar"
+  };
+
+  return mapping[label] || label;
+}
+
+function createTranscriptSignature(messages) {
+  const source = Array.isArray(messages)
+    ? messages.map((item) => `${item.id || ""}|${item.role || ""}|${item.timestamp || 0}|${item.text || ""}`).join("||")
+    : "";
+
+  let hash = 0;
+  for (let index = 0; index < source.length; index += 1) {
+    hash = ((hash << 5) - hash + source.charCodeAt(index)) | 0;
+  }
+
+  return `${Array.isArray(messages) ? messages.length : 0}:${Math.abs(hash)}`;
+}
+
+async function fetchRecommendedArticle(config, message, workitemId) {
+  const query = String(message || "").trim();
+  if (!query || !config.requestKbIds?.length) {
+    return null;
+  }
+
+  try {
+    const upstream = await fetchPredictionUpstream(config, {
+      message: query,
+      workitem_id: workitemId || ""
+    });
+
+    if (!upstream.ok) {
+      return null;
+    }
+
+    const payload = await upstream.json().catch(() => null);
+    const article = payload?.faq_response?.articles?.[0];
+    if (!article) {
+      return null;
+    }
+
+    return {
+      title: String(article.title || "").trim(),
+      description: String(article.description || article.file_type || "").trim(),
+      url: String(article.resource_url || article.url || "").trim()
+    };
+  } catch (error) {
+    return null;
+  }
+}
+
+function buildGeminiEndpoint(baseUrl, model) {
+  const normalizedBase = String(baseUrl || "https://generativelanguage.googleapis.com").trim().replace(/\/+$/, "");
+  const normalizedModel = String(model || "gemini-2.5-flash").trim().replace(/^models\//, "");
+  return `${normalizedBase}/v1beta/models/${normalizedModel}:generateContent`;
+}
+
+function normalizeModelScore(value) {
+  const parsed = Number(value || 0);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+
+  return Math.max(-1, Math.min(1, parsed));
+}
+
+function normalizeSentimentLabel(label, score) {
+  const normalized = String(label || "").trim().toLowerCase();
+  if (normalized === "positive") {
+    return "Positive";
+  }
+  if (normalized === "negative") {
+    return "Negative";
+  }
+  if (normalized === "neutral") {
+    return "Neutral";
+  }
+
+  if (Number(score) >= 0.2) {
+    return "Positive";
+  }
+  if (Number(score) <= -0.2) {
+    return "Negative";
+  }
+  return "Neutral";
+}
+
+function normalizeSentimentColor(color, label, score) {
+  const normalized = String(color || "").trim().toLowerCase();
+  if (normalized === "green" || normalized === "yellow" || normalized === "red") {
+    return normalized;
+  }
+
+  const normalizedLabel = String(label || "").trim().toLowerCase();
+  if (normalizedLabel === "positive") {
+    return "green";
+  }
+  if (normalizedLabel === "negative") {
+    return "red";
+  }
+  if (normalizedLabel === "neutral") {
+    return "yellow";
+  }
+
+  if (Number(score) >= 0.2) {
+    return "green";
+  }
+  if (Number(score) <= -0.2) {
+    return "red";
+  }
+  return "yellow";
+}
+
+function startServer() {
+  server.listen(PORT, HOST, () => {
+    console.log(`NextIQ Chat running at http://${HOST}:${PORT}`);
+
+    const health = getHealthStatus();
+    if (!health.configured) {
+      console.error(`Configuration error: ${health.error}`);
+    }
+  });
+}
+
+function createFirestoreClient() {
+  try {
+    if (
+      process.env.GOOGLE_CLOUD_PROJECT ||
+      process.env.GCLOUD_PROJECT ||
+      process.env.GCP_PROJECT ||
+      process.env.K_SERVICE ||
+      process.env.FUNCTION_TARGET
+    ) {
+      return new Firestore();
+    }
+  } catch (error) {
+    return null;
+  }
+
+  return null;
+}
+
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = {
+  handleRequest,
+  startServer
+};

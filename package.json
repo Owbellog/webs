@@ -1,0 +1,15 @@
+{
+  "name": "nextiq-chat",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "description": "Chat UI for NextIQ backed by the Thrio prediction API.",
+  "scripts": {
+    "start": "node server.js",
+    "start:functions": "functions-framework --target=nextiq"
+  },
+  "dependencies": {
+    "@google-cloud/firestore": "^7.11.0",
+    "@google-cloud/functions-framework": "^3.4.6"
+  }
+}

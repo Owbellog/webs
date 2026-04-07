@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NextIQ — Sign in</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+      :root {
+        --bg: #f5f2ec;
+        --brand: #1c2853;
+        --brand-light: #2d3e7a;
+        --text: #17191f;
+        --muted: #666d7d;
+        --line: #b8becd;
+        --line-soft: #d7dbe4;
+        --shadow: 0 24px 60px rgba(32, 43, 82, 0.10);
+        --error: #b01c1c;
+        --error-bg: #fde8e8;
+        --success: #14532d;
+        --success-bg: #dcfce7;
+      }
+
+      body {
+        font-family: "Manrope", sans-serif;
+        background: var(--bg);
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        color: var(--text);
+      }
+
+      .login-card {
+        background: white;
+        border: 1px solid var(--line-soft);
+        border-radius: 28px;
+        box-shadow: var(--shadow);
+        padding: 48px 44px 40px;
+        width: 100%;
+        max-width: 420px;
+      }
+
+      .login-logo {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 32px;
+      }
+
+      .login-logo-mark {
+        width: 38px;
+        height: 38px;
+        background: var(--brand);
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: 800;
+        font-size: 0.9rem;
+        letter-spacing: -0.5px;
+        flex-shrink: 0;
+      }
+
+      .login-logo-text {
+        font-weight: 800;
+        font-size: 1.25rem;
+        color: var(--brand);
+        letter-spacing: -0.3px;
+      }
+
+      .login-title {
+        font-size: 1.55rem;
+        font-weight: 800;
+        color: var(--brand);
+        margin-bottom: 6px;
+        letter-spacing: -0.4px;
+      }
+
+      .login-subtitle {
+        font-size: 0.92rem;
+        color: var(--muted);
+        margin-bottom: 28px;
+        line-height: 1.5;
+      }
+
+      .login-field {
+        display: grid;
+        gap: 6px;
+        margin-bottom: 16px;
+      }
+
+      .login-field label {
+        font-size: 0.88rem;
+        font-weight: 700;
+        color: var(--brand);
+      }
+
+      .login-field input {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px 14px;
+        font: inherit;
+        font-size: 0.97rem;
+        color: var(--text);
+        background: white;
+        outline: none;
+        transition: border-color 0.15s, box-shadow 0.15s;
+      }
+
+      .login-field input:focus {
+        border-color: var(--brand);
+        box-shadow: 0 0 0 3px rgba(28, 40, 83, 0.08);
+      }
+
+      .login-field input[type="password"] {
+        letter-spacing: 0.1em;
+      }
+
+      .login-field input::placeholder {
+        letter-spacing: 0;
+        color: #adb5c4;
+      }
+
+      .login-btn {
+        width: 100%;
+        border: 0;
+        background: var(--brand);
+        color: white;
+        font: inherit;
+        font-weight: 700;
+        font-size: 1rem;
+        padding: 13px 16px;
+        border-radius: 12px;
+        cursor: pointer;
+        margin-top: 8px;
+        transition: opacity 0.15s, transform 0.1s;
+      }
+
+      .login-btn:hover { opacity: 0.87; }
+      .login-btn:active { transform: scale(0.98); }
+      .login-btn:disabled { opacity: 0.55; cursor: not-allowed; pointer-events: none; }
+
+      .login-alert {
+        border-radius: 10px;
+        padding: 11px 14px;
+        font-size: 0.88rem;
+        font-weight: 600;
+        margin-bottom: 18px;
+        display: none;
+        line-height: 1.4;
+      }
+
+      .login-alert.error { background: var(--error-bg); color: var(--error); display: block; }
+      .login-alert.info { background: #eff6ff; color: #1e40af; display: block; }
+
+      .setup-divider {
+        border: 0;
+        border-top: 1px solid var(--line-soft);
+        margin: 28px 0 24px;
+      }
+
+      .setup-key-note {
+        font-size: 0.82rem;
+        color: var(--muted);
+        margin-top: 4px;
+        line-height: 1.4;
+      }
+
+      @media (max-width: 480px) {
+        .login-card { padding: 32px 20px 28px; border-radius: 20px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="login-card">
+      <div class="login-logo">
+        <div class="login-logo-mark">NQ</div>
+        <span class="login-logo-text">NextIQ</span>
+      </div>
+
+      <div id="loginAlert" class="login-alert"></div>
+      <div id="loadingView" style="text-align:center;padding:24px 0;color:#666d7d;font-size:0.92rem;">Loading…</div>
+
+      <!-- Login form -->
+      <div id="loginView" hidden>
+        <h1 class="login-title">Sign in</h1>
+        <p class="login-subtitle">Sign in to manage campaigns and settings.</p>
+
+        <form id="loginForm" autocomplete="on">
+          <div class="login-field">
+            <label for="loginUsername">Username or email</label>
+            <input id="loginUsername" name="username" type="text" placeholder="yourname@example.com" autocomplete="username" required />
+          </div>
+          <div class="login-field">
+            <label for="loginPassword">Password</label>
+            <input id="loginPassword" name="password" type="password" placeholder="••••••••" autocomplete="current-password" required />
+          </div>
+          <button class="login-btn" type="submit" id="loginBtn">Sign in</button>
+        </form>
+      </div>
+
+      <!-- Setup form (shown when no users exist yet) -->
+      <div id="setupView" hidden>
+        <h1 class="login-title">Initial setup</h1>
+        <p class="login-subtitle">No admin users found. Create your first account to get started.</p>
+
+        <form id="setupForm" autocomplete="off">
+          <div class="login-field">
+            <label for="setupKey">Setup key</label>
+            <input id="setupKey" name="setupKey" type="password" placeholder="ADMIN_PASSWORD from .env" required />
+            <span class="setup-key-note">Enter the <code>ADMIN_PASSWORD</code> configured in your environment.</span>
+          </div>
+          <hr class="setup-divider" />
+          <div class="login-field">
+            <label for="setupUsername">Username or email</label>
+            <input id="setupUsername" name="username" type="text" placeholder="admin@example.com" autocomplete="username" required />
+          </div>
+          <div class="login-field">
+            <label for="setupPassword">Password</label>
+            <input id="setupPassword" name="password" type="password" placeholder="At least 8 characters" autocomplete="new-password" required />
+          </div>
+          <div class="login-field">
+            <label for="setupPasswordConfirm">Confirm password</label>
+            <input id="setupPasswordConfirm" name="passwordConfirm" type="password" placeholder="Repeat password" autocomplete="new-password" required />
+          </div>
+          <button class="login-btn" type="submit" id="setupBtn">Create account & sign in</button>
+        </form>
+      </div>
+    </div>
+
+    <script>
+      const loginView = document.getElementById("loginView");
+      const setupView = document.getElementById("setupView");
+      const loginForm = document.getElementById("loginForm");
+      const setupForm = document.getElementById("setupForm");
+      const loginBtn = document.getElementById("loginBtn");
+      const setupBtn = document.getElementById("setupBtn");
+      const loginAlert = document.getElementById("loginAlert");
+      const appBaseUrl = new URL(".", window.location.href);
+
+      function buildAppUrl(pathname) {
+        const normalized = pathname.startsWith("/") ? pathname.slice(1) : pathname;
+        return new URL(normalized, appBaseUrl).toString();
+      }
+
+      function showAlert(message, type = "error") {
+        loginAlert.textContent = message;
+        loginAlert.className = `login-alert ${type}`;
+      }
+
+      function clearAlert() {
+        loginAlert.className = "login-alert";
+        loginAlert.textContent = "";
+      }
+
+      async function post(url, body) {
+        const res = await fetch(buildAppUrl(url), {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Request failed.");
+        return data;
+      }
+
+      const loadingView = document.getElementById("loadingView");
+
+      async function init() {
+        // Check if already logged in
+        try {
+          const me = await fetch(buildAppUrl("/api/admin/me"), { credentials: "include" });
+          if (me.ok) { location.replace(buildAppUrl("/admin.html")); return; }
+        } catch {}
+
+        // Determine login vs setup mode
+        try {
+          const r = await fetch(buildAppUrl("/api/admin/setup-status"));
+          const data = await r.json();
+          loadingView.hidden = true;
+          if (data.needsSetup) {
+            setupView.hidden = false;
+          } else {
+            loginView.hidden = false;
+          }
+        } catch {
+          loadingView.hidden = true;
+          loginView.hidden = false;
+        }
+      }
+
+      init();
+
+      loginForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        clearAlert();
+        loginBtn.disabled = true;
+        loginBtn.textContent = "Signing in…";
+        try {
+          await post("/api/admin/login", {
+            username: document.getElementById("loginUsername").value,
+            password: document.getElementById("loginPassword").value
+          });
+          location.replace(buildAppUrl("/admin.html"));
+        } catch (err) {
+          showAlert(err.message);
+          loginBtn.disabled = false;
+          loginBtn.textContent = "Sign in";
+        }
+      });
+
+      setupForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        clearAlert();
+        const password = document.getElementById("setupPassword").value;
+        const confirm = document.getElementById("setupPasswordConfirm").value;
+        if (password !== confirm) {
+          showAlert("Passwords do not match.");
+          return;
+        }
+        setupBtn.disabled = true;
+        setupBtn.textContent = "Creating account…";
+        try {
+          await post("/api/admin/setup", {
+            setupKey: document.getElementById("setupKey").value,
+            username: document.getElementById("setupUsername").value,
+            password
+          });
+          location.replace(buildAppUrl("/admin.html"));
+        } catch (err) {
+          showAlert(err.message);
+          setupBtn.disabled = false;
+          setupBtn.textContent = "Create account & sign in";
+        }
+      });
+    </script>
+  </body>
+</html>

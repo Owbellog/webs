@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NextIQ Admin</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="admin-shell">
+      <header class="brandbar">
+        <div class="brand">NextIQ Admin<span id="adminBreadcrumb" class="admin-breadcrumb"></span></div>
+        <div class="admin-user-bar" id="adminUserBar" hidden>
+          <span class="admin-user-name" id="adminUserName"></span>
+          <span class="admin-user-role" id="adminUserRole"></span>
+          <button type="button" id="logoutButton" class="admin-logout-btn">Sign out</button>
+        </div>
+      </header>
+
+      <p class="admin-status" id="adminStatus"></p>
+
+      <section class="admin-empty" id="adminLockedMessage">
+        Checking session…
+      </section>
+
+      <section class="admin-grid" id="adminGrid" hidden>
+        <aside class="admin-panel admin-sidebar">
+          <h2>Campaigns</h2>
+          <div class="admin-actions">
+            <button id="newCampaignButton" type="button" class="secondary">New campaign</button>
+            <button id="duplicateCampaignButton" type="button" class="secondary">Duplicate</button>
+          </div>
+          <input id="campaignSearch" class="admin-campaign-search" type="search" placeholder="Search campaigns…" />
+          <div class="admin-list" id="campaignList"></div>
+        </aside>
+
+        <section class="admin-panel">
+          <h1>Campaign details</h1>
+          <div class="admin-toggle-row">
+            <button type="button" id="collapseAllButton">Collapse all</button>
+            <button type="button" id="expandAllButton">Expand all</button>
+          </div>
+          <form class="admin-form" id="campaignForm">
+            <details class="admin-section" data-page="campaign" open>
+              <summary>Campaign <span class="chevron">▼</span></summary>
+              <div class="admin-section-grid">
+                <div class="admin-field">
+                  <label for="campaignId">Campaign ID</label>
+                  <input id="campaignId" name="id" type="text" placeholder="nextiva-es" required />
+                </div>
+
+                <div class="admin-field">
+                  <label for="campaignName">Display name</label>
+                  <input id="campaignName" name="name" type="text" placeholder="Nextiva ES" required />
+                </div>
+
+                <div class="admin-field">
+                  <label for="campaignDomain">Domain</label>
+                  <input id="campaignDomain" name="domain" type="text" placeholder="mancity.thrio.io" required />
+                </div>
+              </div>
+            </details>
+
+            <details class="admin-section" data-page="shared" open>
+              <summary>Shared <span class="chevron">▼</span></summary>
+              <div class="admin-section-grid">
+                <div class="admin-field">
+                  <label for="sharedLanguage">Language</label>
+                  <select id="sharedLanguage">
+                    <option value="en">English</option>
+                    <option value="es">Español</option>
+                  </select>
+                </div>
+
+                <div class="admin-field">
+                  <label for="sharedFontFamily">Font family</label>
+                  <input id="sharedFontFamily" type="text" placeholder="Manrope, sans-serif" />
+                </div>
+
+                <div class="admin-field">
+                  <label for="sharedBaseFontSize">Base font size</label>
+                  <input id="sharedBaseFontSize" type="text" placeholder="16px" />
+                </div>
+              </div>
+            </details>
+
+            <details class="admin-section" data-page="chat" open>
+              <summary>Chat Page <span class="chevron">▼</span></summary>
+              <div class="admin-section-grid">
+                <div class="admin-field">
+                  <label for="chatApiUrl">Prediction API URL</label>
+                  <input id="chatApiUrl" type="url" placeholder="https://mancity.thrio.io/data/api/ai/prediction" required />
+                </div>
+
+                <div class="admin-field">
+                  <label for="chatKbIds">Allowed KB IDs</label>
+                  <textarea id="chatKbIds" placeholder="One per line or comma-separated" required></textarea>
+                </div>
+
+                <div class="admin-field">
+                  <label for="chatTitleText">Title text</label>
+                  <input id="chatTitleText" type="text" placeholder="NextIQ" />
+                </div>
+
+                <div class="admin-field">
+                  <label for="chatTitleSize">Title size</label>
+                  <input id="chatTitleSize" type="text" placeholder="2rem" />
+                </div>
+
+                <div class="admin-field">
+                  <label for="chatMetaSize">Domain line size</label>
+                  <input id="chatMetaSize" type="text" placeholder="0.82rem" />
+                </div>
+
+                <div class="admin-field">
+                  <label for="chatEmbedMinHeight">Embed min height</label>
+                  <input id="chatEmbedMinHeight" type="text" placeholder="180px" />
+                </div>
+
+                <div class="admin-field">
+                  <label for="chatEmbedMaxHeight">Embed max height</label>
+                  <input id="chatEmbedMaxHeight" type="text" placeholder="520px" />
+                </div>
+
+                <div class="admin-field">
+                  <label><input id="chatShowTitle" type="checkbox" checked /> Show title</label>
+                </div>
+
+                <div class="admin-field">
+                  <label><input id="chatShowMeta" type="checkbox" checked /> Show domain / KB line</label>
+                </div>
+              </div>
+            </details>
+
+            <details class="admin-section" data-page="workitem">
+              <summary>Workitem Page <span class="chevron">▼</span></summary>
+              <div class="admin-section-grid">
+                <div class="admin-field">
+                  <label for="workitemApiUrl">Workitem API URL</label>
+                  <input id="workitemApiUrl" type="url" placeholder="https://mancity.thrio.io/users/api/workitems" required />
+                </div>
+
+                <div class="admin-field">
+                  <label for="agentChatApiUrl">Agent Chat API URL</label>
+                  <input id="agentChatApiUrl" type="url" placeholder="https://mancity.thrio.io/chats/api/agent/chats" />
+                </div>
+
+                <div class="admin-field">
+                  <label for="agentUserId">Agent User ID</label>
+                  <input id="agentUserId" type="text" placeholder="66f2921e6287b1561741a568" />
+                </div>
+
+                <div class="admin-field">
+                  <label for="workitemTitleText">Title text</label>
+                  <input id="workitemTitleText" type="text" placeholder="NextIQ Workitem" />
+                </div>
+
+                <div class="admin-field">
+                  <label for="workitemTitleSize">Title size</label>
+                  <input id="workitemTitleSize" type="text" placeholder="2rem" />
+                </div>
+
+                <div class="admin-field">
+                  <label for="workitemMetaSize">Domain line size</label>
+                  <input id="workitemMetaSize" type="text" placeholder="0.82rem" />
+                </div>
+
+                <div class="admin-field">
+                  <label for="workitemEmbedMinHeight">Embed min height</label>
+                  <input id="workitemEmbedMinHeight" type="text" placeholder="180px" />
+                </div>
+
+                <div class="admin-field">
+                  <label for="workitemEmbedMaxHeight">Embed max height</label>
+                  <input id="workitemEmbedMaxHeight" type="text" placeholder="520px" />
+                </div>
+
+                <div class="admin-field">
+                  <label><input id="workitemShowTitle" type="checkbox" checked /> Show title</label>
+                </div>
+
+                <div class="admin-field">
+                  <label><input id="workitemShowMeta" type="checkbox" checked /> Show domain / workitem line</label>
+                </div>
+              </div>
+            </details>
+
+            <details class="admin-section" data-page="sentiment">
+              <summary>Sentiment Page <span class="chevron">▼</span></summary>
+              <div class="admin-subsections">
+                <details class="admin-subsection" open>
+                  <summary>Provider <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
+                    <div class="admin-field">
+                      <label for="sentimentProvider">Sentiment provider</label>
+                      <select id="sentimentProvider">
+                        <option value="heuristic">Heuristic</option>
+                        <option value="gemini">Gemini</option>
+                      </select>
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="geminiApiKey">Gemini API key</label>
+                      <input id="geminiApiKey" type="password" placeholder="AIza..." />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="geminiModel">Gemini model</label>
+                      <input id="geminiModel" type="text" placeholder="gemini-2.5-flash" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="geminiApiUrl">Gemini API URL</label>
+                      <input id="geminiApiUrl" type="url" placeholder="https://generativelanguage.googleapis.com" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="geminiPrompt">Gemini prompt</label>
+                      <textarea id="geminiPrompt" placeholder="Optional custom instructions for sentiment analysis"></textarea>
+                    </div>
+                  </div>
+                </details>
+
+                <details class="admin-subsection" open>
+                  <summary>Structure <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
+                    <div class="admin-field">
+                      <label for="sentimentTitleText">Title text</label>
+                      <input id="sentimentTitleText" type="text" placeholder="Sentiment" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentTitleSize">Title size</label>
+                      <input id="sentimentTitleSize" type="text" placeholder="2rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentMetaSize">Domain line size</label>
+                      <input id="sentimentMetaSize" type="text" placeholder="0.82rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentEmbedMinHeight">Embed min height</label>
+                      <input id="sentimentEmbedMinHeight" type="text" placeholder="180px" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentEmbedMaxHeight">Embed max height</label>
+                      <input id="sentimentEmbedMaxHeight" type="text" placeholder="520px" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentLayout">Sentiment layout</label>
+                      <select id="sentimentLayout">
+                        <option value="centered">Centered</option>
+                        <option value="compact">Compact</option>
+                        <option value="wide">Wide</option>
+                      </select>
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentRefreshIntervalSeconds">Refresh interval (seconds)</label>
+                      <input id="sentimentRefreshIntervalSeconds" type="number" min="5" max="3600" step="1" placeholder="30" />
+                    </div>
+                  </div>
+                </details>
+
+                <details class="admin-subsection">
+                  <summary>Dual Panel <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
+                    <div class="admin-field">
+                      <label for="sentimentStylePreset">Sentiment style preset</label>
+                      <select id="sentimentStylePreset">
+                        <option value="stacked">Stacked</option>
+                        <option value="split">Text left / orb right</option>
+                        <option value="split-footer-top">Split + footer higher</option>
+                        <option value="dual-panels">Two panels</option>
+                      </select>
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentCardMaxWidth">Card max width</label>
+                      <input id="sentimentCardMaxWidth" type="text" placeholder="560px" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentCardMinHeight">Card min height</label>
+                      <input id="sentimentCardMinHeight" type="text" placeholder="0px" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentCardMaxHeight">Card max height</label>
+                      <input id="sentimentCardMaxHeight" type="text" placeholder="none" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentCardPadding">Card padding</label>
+                      <input id="sentimentCardPadding" type="text" placeholder="34px 40px 28px" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentCardRadius">Card radius</label>
+                      <input id="sentimentCardRadius" type="text" placeholder="38px" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentOrbSize">Orb size</label>
+                      <input id="sentimentOrbSize" type="text" placeholder="180px" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentDualPanelGlowSize">Orb glow size</label>
+                      <input id="sentimentDualPanelGlowSize" type="text" placeholder="180px" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentDualPanelSectionGap">Heart / chart gap</label>
+                      <input id="sentimentDualPanelSectionGap" type="text" placeholder="0px" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentDualPanelTextOrbGap">Text / orb gap</label>
+                      <input id="sentimentDualPanelTextOrbGap" type="text" placeholder="18px" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentDualPanelTextGap">Text vertical gap</label>
+                      <input id="sentimentDualPanelTextGap" type="text" placeholder="6px" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentDualPanelHeartSize">Heart size</label>
+                      <input id="sentimentDualPanelHeartSize" type="text" placeholder="68px" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentCardTitleFontSize">Title font size</label>
+                      <input id="sentimentCardTitleFontSize" type="text" placeholder="3.6rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentLabelFontSize">Status font size</label>
+                      <input id="sentimentLabelFontSize" type="text" placeholder="3rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentScoreFontSize">Score font size</label>
+                      <input id="sentimentScoreFontSize" type="text" placeholder="4rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentInsightTitleSize">Insight title size</label>
+                      <input id="sentimentInsightTitleSize" type="text" placeholder="1rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentInsightTextSize">Insight text size</label>
+                      <input id="sentimentInsightTextSize" type="text" placeholder="0.98rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentMetaFontSize">Meta font size</label>
+                      <input id="sentimentMetaFontSize" type="text" placeholder="0.82rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentDualPanelChartHeight">Chart height</label>
+                      <input id="sentimentDualPanelChartHeight" type="text" placeholder="92px" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentDualPanelChartTopGap">Top block / chart gap</label>
+                      <input id="sentimentDualPanelChartTopGap" type="text" placeholder="18px" />
+                    </div>
+                  </div>
+                </details>
+
+                <details class="admin-subsection">
+                  <summary>Small Viewport <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
+                    <div class="admin-field">
+                      <label for="sentimentCompactBreakpoint">Small viewport breakpoint</label>
+                      <input id="sentimentCompactBreakpoint" type="text" placeholder="560px" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentCompactCardPadding">Small viewport card padding</label>
+                      <input id="sentimentCompactCardPadding" type="text" placeholder="16px 14px 12px" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentCompactOrbSize">Small viewport orb size</label>
+                      <input id="sentimentCompactOrbSize" type="text" placeholder="126px" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentCompactTitleFontSize">Small viewport title size</label>
+                      <input id="sentimentCompactTitleFontSize" type="text" placeholder="2.4rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentCompactLabelFontSize">Small viewport status size</label>
+                      <input id="sentimentCompactLabelFontSize" type="text" placeholder="2rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentCompactScoreFontSize">Small viewport score size</label>
+                      <input id="sentimentCompactScoreFontSize" type="text" placeholder="2.8rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentCompactInsightTitleSize">Small viewport insight title size</label>
+                      <input id="sentimentCompactInsightTitleSize" type="text" placeholder="0.92rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentCompactInsightTextSize">Small viewport insight text size</label>
+                      <input id="sentimentCompactInsightTextSize" type="text" placeholder="0.88rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="sentimentCompactMetaFontSize">Small viewport meta size</label>
+                      <input id="sentimentCompactMetaFontSize" type="text" placeholder="0.72rem" />
+                    </div>
+                  </div>
+                </details>
+
+                <details class="admin-subsection">
+                  <summary>Visibility <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
+                    <div class="admin-field">
+                      <label><input id="sentimentShowTitle" type="checkbox" checked /> Show title</label>
+                    </div>
+
+                    <div class="admin-field">
+                      <label><input id="sentimentShowPageHeader" type="checkbox" checked /> Show top page header</label>
+                    </div>
+
+                    <div class="admin-field">
+                      <label><input id="sentimentShowMeta" type="checkbox" checked /> Show domain / workitem line</label>
+                    </div>
+                  </div>
+                </details>
+              </div>
+            </details>
+
+            <details class="admin-section" data-page="questions">
+              <summary>Questions Page <span class="chevron">▼</span></summary>
+              <div class="admin-subsections">
+                <details class="admin-subsection" open>
+                  <summary>Structure <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
+                    <div class="admin-field">
+                      <label for="questionsTitleText">Title text</label>
+                      <input id="questionsTitleText" type="text" placeholder="Checklist" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="questionsTitleSize">Title size</label>
+                      <input id="questionsTitleSize" type="text" placeholder="2rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="questionsMetaSize">Domain line size</label>
+                      <input id="questionsMetaSize" type="text" placeholder="0.82rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="questionsEmbedMinHeight">Embed min height</label>
+                      <input id="questionsEmbedMinHeight" type="text" placeholder="220px" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="questionsEmbedMaxHeight">Embed max height</label>
+                      <input id="questionsEmbedMaxHeight" type="text" placeholder="560px" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="questionsRefreshIntervalSeconds">Refresh interval (seconds)</label>
+                      <input id="questionsRefreshIntervalSeconds" type="number" min="5" max="3600" step="1" placeholder="30" />
+                    </div>
+                  </div>
+                </details>
+
+                <details class="admin-subsection" open>
+                  <summary>Questions <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
+                    <div class="question-items-list" id="questionItemsContainer"></div>
+                    <button type="button" class="question-items-add" id="addQuestionButton">+ Add question</button>
+                  </div>
+                </details>
+
+                <details class="admin-subsection">
+                  <summary>Typography <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
+                    <div class="admin-field">
+                      <label for="questionsQuestionSize">Question font size</label>
+                      <input id="questionsQuestionSize" type="text" placeholder="1rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="questionsEvidenceSize">Evidence font size</label>
+                      <input id="questionsEvidenceSize" type="text" placeholder="1rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="questionsMetaFontSize">Footer meta font size</label>
+                      <input id="questionsMetaFontSize" type="text" placeholder="0.82rem" />
+                    </div>
+                  </div>
+                </details>
+
+                <details class="admin-subsection" open>
+                  <summary>Gemini <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
+                    <div class="admin-field">
+                      <label><input id="questionsUseGemini" type="checkbox" checked /> Use Gemini for checklist</label>
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="questionsGeminiApiKey">Gemini API key</label>
+                      <input id="questionsGeminiApiKey" type="password" placeholder="AIza..." />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="questionsGeminiModel">Gemini model</label>
+                      <input id="questionsGeminiModel" type="text" placeholder="gemini-2.5-flash" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="questionsGeminiApiUrl">Gemini API URL</label>
+                      <input id="questionsGeminiApiUrl" type="url" placeholder="https://generativelanguage.googleapis.com" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="questionsGeminiPrompt">Gemini prompt</label>
+                      <textarea id="questionsGeminiPrompt" placeholder="Optional custom instructions for checklist validation"></textarea>
+                    </div>
+                  </div>
+                </details>
+
+                <details class="admin-subsection">
+                  <summary>Visibility <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
+                    <div class="admin-field">
+                      <label><input id="questionsShowTitle" type="checkbox" checked /> Show title</label>
+                    </div>
+
+                    <div class="admin-field">
+                      <label><input id="questionsShowPageHeader" type="checkbox" checked /> Show top page header</label>
+                    </div>
+
+                    <div class="admin-field">
+                      <label><input id="questionsShowMeta" type="checkbox" checked /> Show domain / workitem line</label>
+                    </div>
+
+                    <div class="admin-field">
+                      <label><input id="questionsShowEvidence" type="checkbox" checked /> Show Gemini evidence</label>
+                    </div>
+
+                    <div class="admin-field">
+                      <label><input id="questionsShowCardShadow" type="checkbox" checked /> Show card shadow</label>
+                    </div>
+                  </div>
+                </details>
+              </div>
+            </details>
+
+            <details class="admin-section" data-page="secrets">
+              <summary>Secrets <span class="chevron">▼</span></summary>
+              <div class="admin-section-grid">
+                <div class="admin-field">
+                  <label for="campaignToken">Token</label>
+                  <textarea id="campaignToken" name="token" placeholder="Paste the authorization token" required></textarea>
+                </div>
+
+                <div class="admin-field">
+                  <label for="campaignCookie">Cookie</label>
+                  <textarea id="campaignCookie" name="cookie" placeholder="Optional cookie"></textarea>
+                </div>
+              </div>
+            </details>
+
+            <details class="admin-section" data-page="nextstep">
+              <summary>Agent Next Step <span class="chevron">▼</span></summary>
+              <div class="admin-subsections">
+                <details class="admin-subsection" open>
+                  <summary>Structure <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
+                    <div class="admin-field">
+                      <label for="nextStepTitleText">Title text</label>
+                      <input id="nextStepTitleText" type="text" placeholder="NextIQ Assistant" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="nextStepTitleSize">Title size</label>
+                      <input id="nextStepTitleSize" type="text" placeholder="2rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="nextStepMetaSize">Meta size</label>
+                      <input id="nextStepMetaSize" type="text" placeholder="0.82rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="nextStepEmbedMinHeight">Embed min height</label>
+                      <input id="nextStepEmbedMinHeight" type="text" placeholder="220px" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="nextStepEmbedMaxHeight">Embed max height</label>
+                      <input id="nextStepEmbedMaxHeight" type="text" placeholder="280px" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="nextStepRefreshIntervalSeconds">Refresh interval (seconds)</label>
+                      <input id="nextStepRefreshIntervalSeconds" type="number" min="5" max="3600" step="1" placeholder="30" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label><input id="nextStepShowCardShadow" type="checkbox" checked /> Show card shadow</label>
+                    </div>
+                  </div>
+                </details>
+
+                <details class="admin-subsection">
+                  <summary>Typography <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
+                    <div class="admin-field">
+                      <label for="nextStepLiveSize">Live status size</label>
+                      <input id="nextStepLiveSize" type="text" placeholder="1rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="nextStepBadgeSize">Badge size</label>
+                      <input id="nextStepBadgeSize" type="text" placeholder="0.82rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="nextStepKickerSize">Section label size</label>
+                      <input id="nextStepKickerSize" type="text" placeholder="0.86rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="nextStepActionTitleSize">Action title size</label>
+                      <input id="nextStepActionTitleSize" type="text" placeholder="1.6rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="nextStepActionTextSize">Action text size</label>
+                      <input id="nextStepActionTextSize" type="text" placeholder="1rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="nextStepSuggestedLabelSize">Suggested label size</label>
+                      <input id="nextStepSuggestedLabelSize" type="text" placeholder="0.84rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="nextStepSuggestedTextSize">Suggested text size</label>
+                      <input id="nextStepSuggestedTextSize" type="text" placeholder="1.35rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="nextStepButtonTextSize">Button text size</label>
+                      <input id="nextStepButtonTextSize" type="text" placeholder="1rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="nextStepArticleTitleSize">Article title size</label>
+                      <input id="nextStepArticleTitleSize" type="text" placeholder="1rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="nextStepArticleTextSize">Article text size</label>
+                      <input id="nextStepArticleTextSize" type="text" placeholder="0.84rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="nextStepChipSize">Quick action size</label>
+                      <input id="nextStepChipSize" type="text" placeholder="0.84rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="nextStepReasonSize">Reason text size</label>
+                      <input id="nextStepReasonSize" type="text" placeholder="0.92rem" />
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="nextStepMetaFontSize">Footer meta size</label>
+                      <input id="nextStepMetaFontSize" type="text" placeholder="0.8rem" />
+                    </div>
+                  </div>
+                </details>
+
+                <details class="admin-subsection" open>
+                  <summary>Gemini <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
+                    <div class="admin-field">
+                      <label><input id="nextStepUseGemini" type="checkbox" checked /> Use Gemini for next step</label>
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="nextStepGeminiPrompt">Gemini prompt</label>
+                      <textarea id="nextStepGeminiPrompt" placeholder="Optional custom instructions for agent next-step guidance"></textarea>
+                    </div>
+                  </div>
+                </details>
+              </div>
+            </details>
+
+            <details class="admin-section" data-page="users" id="usersSection" hidden>
+              <summary>Users <span class="chevron">▼</span></summary>
+              <div class="admin-section-grid">
+                <div class="admin-field admin-field--full">
+                  <div class="admin-users-toolbar">
+                    <button type="button" id="addUserButton" class="secondary">Add user</button>
+                  </div>
+                  <div class="admin-user-list" id="userList"></div>
+                </div>
+
+                <div class="admin-user-form admin-field--full" id="userFormWrap" hidden>
+                  <div class="admin-subsection">
+                    <div class="admin-subsection-grid" style="display:grid;gap:14px;padding:14px;">
+                      <div class="admin-field">
+                        <label for="newUsername">Username</label>
+                        <input id="newUsername" type="text" placeholder="e.g. maria.lopez@example.com" autocomplete="username" />
+                      </div>
+                      <div class="admin-field">
+                        <label for="newUserRole">Role</label>
+                        <select id="newUserRole">
+                          <option value="editor">Editor — custom campaign permissions</option>
+                          <option value="admin">Admin — campaigns + users</option>
+                        </select>
+                      </div>
+                      <div class="admin-field admin-field--full" id="newUserPermissionsWrap">
+                        <label>Campaign permissions</label>
+                        <label><input id="newUserCanCreateCampaign" type="checkbox" /> Create campaigns</label>
+                        <label><input id="newUserCanEditCampaign" type="checkbox" checked /> Edit campaigns</label>
+                        <label><input id="newUserCanDeleteCampaign" type="checkbox" /> Delete campaigns</label>
+                      </div>
+                      <div class="admin-field">
+                        <label for="newUserPassword">Password</label>
+                        <input id="newUserPassword" type="password" placeholder="At least 8 characters" />
+                      </div>
+                      <div class="admin-field">
+                        <label for="newUserPasswordConfirm">Confirm password</label>
+                        <input id="newUserPasswordConfirm" type="password" placeholder="Repeat password" />
+                      </div>
+                      <div class="admin-actions" style="padding:0;">
+                        <button type="button" id="saveUserButton">Save user</button>
+                        <button type="button" id="cancelUserButton" class="secondary">Cancel</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </details>
+
+            <details class="admin-section" data-page="simulator">
+              <summary>Simulator <span class="chevron">▼</span></summary>
+              <div class="admin-section-grid">
+                <div class="admin-preview-toolbar">
+                  <div class="admin-field">
+                    <label for="previewPageType">Preview page</label>
+                    <select id="previewPageType">
+                      <option value="sentiment">Sentiment</option>
+                      <option value="sentiment-chip">Sentiment Chip</option>
+                      <option value="agent-next-step">Agent Next Step</option>
+                      <option value="agent-quality-board">Agent Quality Board</option>
+                      <option value="smart-checklist">Smart Checklist</option>
+                      <option value="questions">Questions</option>
+                      <option value="workitem">Workitem</option>
+                      <option value="chat">Chat</option>
+                    </select>
+                  </div>
+
+                  <div class="admin-field">
+                    <label for="previewViewportWidth">Viewport width</label>
+                    <input id="previewViewportWidth" type="text" placeholder="960px" value="960px" />
+                  </div>
+
+                  <div class="admin-field">
+                    <label for="previewViewportHeight">Viewport height</label>
+                    <input id="previewViewportHeight" type="text" placeholder="540px" value="540px" />
+                  </div>
+
+                  <div class="admin-field">
+                    <label for="previewScale">Zoom</label>
+                    <select id="previewScale">
+                      <option value="1">100%</option>
+                      <option value="0.9">90%</option>
+                      <option value="0.8">80%</option>
+                      <option value="0.75">75%</option>
+                      <option value="0.67">67%</option>
+                      <option value="0.5">50%</option>
+                    </select>
+                  </div>
+                </div>
+
+                <p class="admin-section-note">
+                  The simulator uses the current form values without saving. Scroll inside the preview area to inspect
+                  long or tall layouts before publishing.
+                </p>
+
+                <div class="admin-preview-shell">
+                  <div class="admin-preview-stage" id="previewStage">
+                    <iframe id="previewFrame" class="admin-preview-frame" title="Campaign preview" scrolling="yes"></iframe>
+                  </div>
+                </div>
+              </div>
+            </details>
+
+            <div class="admin-save-bar">
+              <button type="submit" id="saveCampaignButton">Save campaign</button>
+              <button id="deleteCampaignButton" type="button" class="danger">Delete campaign</button>
+            </div>
+          </form>
+        </section>
+      </section>
+    </main>
+
+    <div class="admin-toast" id="adminToast"></div>
+
+    <script src="./i18n.js"></script>
+    <script src="./admin.js"></script>
+  </body>
+</html>

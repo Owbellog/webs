@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NextIQ Agent Chat</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="agent-chat-shell">
+      <header class="agent-chat-header">
+        <div>
+          <p class="agent-chat-kicker" id="agentChatKicker">Agent Chat</p>
+          <h1 id="agentChatTitle">Loading chats...</h1>
+          <p class="agent-chat-subtitle" id="agentChatSubtitle">Select a workitem to reply.</p>
+        </div>
+        <div class="agent-chat-header-actions">
+          <button class="agent-chat-refresh" id="agentChatAcdToggle" type="button" hidden>ACD: false</button>
+          <button class="agent-chat-refresh" id="agentChatRefresh" type="button">Refresh</button>
+          <button class="agent-chat-refresh" id="agentChatLogout" type="button" hidden>Logout</button>
+        </div>
+      </header>
+
+      <section class="agent-chat-auth" id="agentChatAuth">
+        <form class="agent-chat-auth-card" id="agentChatLoginForm">
+          <p class="agent-chat-auth-kicker" id="agentChatAuthKicker">Sign in</p>
+          <h2 id="agentChatAuthTitle">Use your NCC credentials</h2>
+          <p class="agent-chat-auth-copy" id="agentChatAuthCopy">Sign in to load only your chats and send replies with your own user token.</p>
+          <label class="agent-chat-auth-field">
+            <span id="agentChatUsernameLabel">Username</span>
+            <input id="agentChatUsername" name="username" type="text" autocomplete="username" required />
+          </label>
+          <label class="agent-chat-auth-field">
+            <span id="agentChatPasswordLabel">Password</span>
+            <input id="agentChatPassword" name="password" type="password" autocomplete="current-password" required />
+          </label>
+          <div class="agent-chat-auth-actions">
+            <span class="agent-chat-status" id="agentChatLoginStatus"></span>
+            <button type="submit" id="agentChatLoginButton">Sign in</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="agent-chat-layout" id="agentChatWorkspace" hidden>
+        <aside class="agent-chat-sidebar">
+          <div class="agent-chat-sidebar-head">
+            <strong id="agentChatListTitle">Open chats</strong>
+            <span id="agentChatListMeta"></span>
+          </div>
+          <div class="agent-chat-list" id="agentChatList" aria-live="polite">
+            <article class="empty-state">Loading workitems...</article>
+          </div>
+        </aside>
+
+        <section class="agent-chat-panel">
+          <div class="agent-chat-summary" id="agentChatSummary"></div>
+          <div class="agent-chat-messages" id="agentChatMessages" aria-live="polite">
+            <article class="empty-state">Select a chat to load messages.</article>
+          </div>
+          <form class="agent-chat-composer" id="agentChatForm">
+            <label class="sr-only" for="agentChatInput">Reply</label>
+            <textarea id="agentChatInput" rows="3" placeholder="Write a reply..." required></textarea>
+            <div class="agent-chat-composer-actions">
+              <span class="agent-chat-status" id="agentChatStatus"></span>
+              <button type="submit" id="agentChatSend">Send</button>
+            </div>
+          </form>
+        </section>
+      </section>
+    </main>
+
+    <script src="./i18n.js"></script>
+    <script src="./agent-chat.js"></script>
+  </body>
+</html>

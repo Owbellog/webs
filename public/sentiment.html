@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NextIQ Sentiment</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell sentiment-shell">
+      <header class="brandbar" id="brandbar">
+        <div class="brand" id="brandTitle">Sentiment</div>
+        <div class="campaign-badge" id="campaignBadge" hidden></div>
+      </header>
+
+      <section class="frame frame-static sentiment-frame">
+        <div class="sentiment-board" id="sentimentBoard">
+          <article class="welcome-card welcome-card-left" id="welcomeCard">
+            <p class="welcome-kicker">Sentiment</p>
+            <h1>Pass `campaign` and `workitemid` in the URL to monitor the customer transcript.</h1>
+          </article>
+        </div>
+      </section>
+    </main>
+    <script src="./i18n.js"></script>
+    <script src="./sentiment.js"></script>
+  </body>
+  </html>
