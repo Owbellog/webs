@@ -24,6 +24,8 @@ const USERS_COLLECTION = `${FIRESTORE_PREFIX}_users`;
 const WIELAND_CONTACTS_COLLECTION = `${FIRESTORE_PREFIX}_wieland_contacts`;
 const SESSION_EXPIRY_SECONDS = 8 * 60 * 60; // 8 hours
 const SESSION_COOKIE_NAME = "niq_sess";
+const WIELAND_SESSION_COOKIE_NAME = "niq_w_sess";
+const WIELAND_SESSION_EXPIRY_SECONDS = 4 * 60 * 60; // 4 hours
 const CAMPAIGN_PERMISSIONS = ["createCampaign", "editCampaign", "deleteCampaign"];
 
 const firestore = createFirestoreClient();
@@ -204,6 +206,145 @@ function clearSessionCookie(res) {
     `${SESSION_COOKIE_NAME}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`
   );
 }
+
+// ── Wieland SSO session (NCC JWT → short-lived cookie) ───────────────────────
+function decodeJwtPayload(token) {
+  try {
+    const parts = String(token || "").split(".");
+    if (parts.length !== 3) return null;
+    return JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+  } catch { return null; }
+}
+
+function getWielandSessionSecret() {
+  if (!ADMIN_PASSWORD) throw new Error("ADMIN_PASSWORD required for Wieland sessions.");
+  return crypto.createHmac("sha256", ADMIN_PASSWORD + ENCRYPTION_SALT)
+    .update("nextiq-wieland-session-v1")
+    .digest();
+}
+
+function createWielandSessionToken(user) {
+  const payload = Buffer.from(JSON.stringify({
+    sub: user.userId,
+    name: user.username,
+    tenant: user.tenantId,
+    exp: Math.floor(Date.now() / 1000) + WIELAND_SESSION_EXPIRY_SECONDS
+  })).toString("base64url");
+  const sig = crypto.createHmac("sha256", getWielandSessionSecret()).update(payload).digest("hex");
+  return `${payload}.${sig}`;
+}
+
+function verifyWielandSessionToken(token) {
+  if (!token || typeof token !== "string") return null;
+  const dot = token.lastIndexOf(".");
+  if (dot === -1) return null;
+  const payload = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  let expectedSig;
+  try {
+    expectedSig = crypto.createHmac("sha256", getWielandSessionSecret()).update(payload).digest("hex");
+  } catch { return null; }
+  try {
+    if (sig.length !== expectedSig.length) return null;
+    if (!crypto.timingSafeEqual(Buffer.from(sig, "hex"), Buffer.from(expectedSig, "hex"))) return null;
+  } catch { return null; }
+  try {
+    const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (!data.sub || !data.exp || Math.floor(Date.now() / 1000) > data.exp) return null;
+    return data;
+  } catch { return null; }
+}
+
+function getWielandSessionFromRequest(req) {
+  return verifyWielandSessionToken(parseCookies(req)[WIELAND_SESSION_COOKIE_NAME]);
+}
+
+// SameSite=None is required for cross-site iframes (NCC embeds our page)
+function setWielandCookie(res, token) {
+  res.setHeader("Set-Cookie",
+    `${WIELAND_SESSION_COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=${WIELAND_SESSION_EXPIRY_SECONDS}`
+  );
+}
+
+function clearWielandCookie(res) {
+  res.setHeader("Set-Cookie",
+    `${WIELAND_SESSION_COOKIE_NAME}=; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=0`
+  );
+}
+
+function isAuthorizedWieland(req) {
+  return Boolean(getWielandSessionFromRequest(req)) || isAuthorizedAdmin(req);
+}
+
+async function handleWielandAuth(req, res, url) {
+  const campaignParam = url.searchParams.get("campaign") || "";
+  if (!campaignParam) {
+    sendJson(res, 400, { error: "Missing ?campaign= parameter." });
+    return;
+  }
+
+  let body;
+  try { body = await readJson(req); } catch {
+    sendJson(res, 400, { error: "Invalid JSON." }); return;
+  }
+
+  const nccToken = String(body.nccToken || "").trim();
+  if (!nccToken) {
+    sendJson(res, 400, { error: "nccToken is required." }); return;
+  }
+
+  // Decode payload without signature (we verify via NCC API call below)
+  const jwtPayload = decodeJwtPayload(nccToken);
+  if (!jwtPayload) {
+    sendJson(res, 401, { error: "Invalid token format." }); return;
+  }
+  if (jwtPayload.exp && Math.floor(Date.now() / 1000) > jwtPayload.exp) {
+    sendJson(res, 401, { error: "NCC token has expired." }); return;
+  }
+
+  // Find campaign to get the NCC domain
+  const campaigns = await readCampaigns();
+  const campaign = campaigns.find(c => c.id === campaignParam);
+  if (!campaign) {
+    sendJson(res, 404, { error: `Campaign "${campaignParam}" not found.` }); return;
+  }
+
+  // Validate token against NCC API (lightweight call)
+  const nccBase = `https://${campaign.domain}/data/api/types`;
+  try {
+    const testRes = await fetch(`${nccBase}/contact?pageSize=1`, {
+      headers: { "Authorization": `Bearer ${nccToken}` }
+    });
+    if (!testRes.ok) {
+      sendJson(res, 401, { error: "NCC token is invalid or unauthorized." }); return;
+    }
+  } catch (err) {
+    sendJson(res, 502, { error: "Could not verify token with NCC.", details: err.message }); return;
+  }
+
+  // Token is valid — create Wieland session
+  const userId = jwtPayload.sub || jwtPayload.userId || "ncc-user";
+  const username = jwtPayload.username || jwtPayload.sub || "ncc-user";
+  const tenantId = jwtPayload.tenantId || "";
+  const sessionToken = createWielandSessionToken({ userId, username, tenantId });
+  setWielandCookie(res, sessionToken);
+  sendJson(res, 200, { ok: true, user: { username, tenantId } });
+}
+
+function handleWielandMe(req, res) {
+  const ws = getWielandSessionFromRequest(req);
+  if (ws) {
+    sendJson(res, 200, { user: { username: ws.name, tenantId: ws.tenant } });
+    return;
+  }
+  if (isAuthorizedAdmin(req)) {
+    const as = getSessionFromRequest(req);
+    sendJson(res, 200, { user: { username: as?.name || "admin" } });
+    return;
+  }
+  sendJson(res, 401, { error: "Not authenticated." });
+}
+// ──────────────────────────────────────────────────────────────────────────
 
 // ── User management ────────────────────────────────────────────────────────
 function hashPassword(password) {
@@ -509,6 +650,21 @@ async function handleRequest(req, res) {
 
   if (url.pathname.startsWith("/api/admin/")) {
     await handleAdmin(req, res, url);
+    return;
+  }
+
+  // Public Wieland auth routes (no session required)
+  if (req.method === "POST" && url.pathname === "/api/wieland/auth") {
+    await handleWielandAuth(req, res, url);
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/api/wieland/me") {
+    handleWielandMe(req, res);
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/api/wieland/logout") {
+    clearWielandCookie(res);
+    sendJson(res, 200, { ok: true });
     return;
   }
 
@@ -3533,7 +3689,7 @@ async function mergeWielandContacts(rawContacts, localMap) {
 }
 
 async function handleWieland(req, res, url) {
-  if (!isAuthorizedAdmin(req)) {
+  if (!isAuthorizedWieland(req)) {
     sendJson(res, 401, { error: "Unauthorized" });
     return;
   }

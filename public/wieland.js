@@ -20,7 +20,7 @@ async function api(path, options = {}) {
     headers: { "Content-Type": "application/json", ...(options.headers || {}) }
   });
   if (res.status === 401) {
-    location.replace(buildUrl("/login.html"));
+    showAuthError("Session expired. Reload from NCC.");
     throw new Error("Session expired.");
   }
   const data = await res.json();
@@ -54,31 +54,64 @@ let currentFilter = "all";
 let contactSearchValue = "";
 let session = null;
 
+// ── Auth helpers ──────────────────────────────────────────────────────────────
+function showAuthError(msg) {
+  const el = document.getElementById("initMessage");
+  el.textContent = msg;
+  el.hidden = false;
+}
+
 // ── Auth + campaign check ──────────────────────────────────────────────────────
-async function initSession() {
-  // Check session
-  try {
-    const data = await fetch(buildUrl("/api/admin/me"), { credentials: "include" }).then(r => r.json());
-    if (!data.user) { location.replace(buildUrl("/login.html")); return false; }
-    session = data.user;
-    const userBar = document.getElementById("userBar");
-    document.getElementById("userName").textContent = session.username;
-    document.getElementById("userRole").textContent = session.role;
-    userBar.hidden = false;
-    document.getElementById("logoutBtn").addEventListener("click", async () => {
-      await fetch(buildUrl("/api/admin/logout"), { method: "POST", credentials: "include" });
-      location.replace(buildUrl("/login.html"));
-    });
-  } catch {
-    location.replace(buildUrl("/login.html"));
+async function initAuth() {
+  // Validate campaign param first
+  if (!campaignId) {
+    showAuthError("Missing ?campaign= parameter. Access this page from the Admin panel.");
     return false;
   }
 
-  // Validate campaign param
-  if (!campaignId) {
-    document.getElementById("initMessage").textContent = "Missing ?campaign= parameter. Access this page from the Admin panel.";
+  // If NCC passed a token in the URL, exchange it for a Wieland session cookie
+  const params = new URLSearchParams(window.location.search);
+  const nccToken = params.get("ncc_token") || "";
+  if (nccToken) {
+    const res = await fetch(buildUrl(withCampaign("/api/wieland/auth")), {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nccToken })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showAuthError(err.error || "Authentication failed. Reload from NCC.");
+      return false;
+    }
+    // Remove ncc_token from URL without reloading
+    params.delete("ncc_token");
+    const clean = params.toString()
+      ? `${window.location.pathname}?${params.toString()}`
+      : window.location.pathname;
+    history.replaceState({}, "", clean);
+  }
+
+  // Check existing session (Wieland or admin)
+  const meRes = await fetch(buildUrl("/api/wieland/me"), { credentials: "include" });
+  if (!meRes.ok) {
+    showAuthError("Session expired. Reload from NCC.");
     return false;
   }
+  const meData = await meRes.json();
+  session = meData.user;
+
+  document.getElementById("userName").textContent = session.username || "";
+  const roleEl = document.getElementById("userRole");
+  if (roleEl) roleEl.textContent = session.role || "";
+  document.getElementById("userBar").hidden = false;
+
+  document.getElementById("logoutBtn").addEventListener("click", async () => {
+    await fetch(buildUrl("/api/wieland/logout"), { method: "POST", credentials: "include" });
+    showAuthError("You have been signed out. Reload from NCC to continue.");
+    document.getElementById("userBar").hidden = true;
+    document.getElementById("initMessage").hidden = false;
+  });
 
   document.getElementById("campaignLabel").textContent = `— ${campaignId}`;
   return true;
@@ -535,7 +568,7 @@ tabs.forEach(tab => {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 (async () => {
-  const ok = await initSession();
+  const ok = await initAuth();
   if (!ok) return;
 
   document.getElementById("initMessage").hidden = true;
