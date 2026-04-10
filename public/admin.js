@@ -51,6 +51,8 @@ const fields = {
   geminiPrompt: document.getElementById("geminiPrompt"),
   wielandNccCampaignId: document.getElementById("wielandNccCampaignId"),
   wielandSlotsNeeded: document.getElementById("wielandSlotsNeeded"),
+  wielandNccAuthType: document.getElementById("wielandNccAuthType"),
+  wielandNccCredential: document.getElementById("wielandNccCredential"),
   token: document.getElementById("campaignToken"),
   cookie: document.getElementById("campaignCookie"),
   allowedKbIds: document.getElementById("chatKbIds"),
@@ -502,6 +504,9 @@ function fillForm(campaign) {
   fields.geminiPrompt.value = campaign.geminiPrompt || "";
   fields.wielandNccCampaignId.value = campaign.wieland?.nccCampaignId || "";
   fields.wielandSlotsNeeded.value = campaign.wieland?.slotsNeeded || 8;
+  fields.wielandNccAuthType.value = campaign.wieland?.nccAuthType || "token";
+  fields.wielandNccCredential.value = campaign.wielandNccCredential || "";
+  updateWielandCredentialField(fields.wielandNccAuthType.value);
   const wielandLink = document.getElementById("wielandOpenLink");
   if (campaign.id) {
     wielandLink.href = `./wieland.html?campaign=${encodeURIComponent(campaign.id)}`;
@@ -636,8 +641,10 @@ function readForm() {
     nextStepGeminiPrompt: fields.nextStepGeminiPrompt.value.trim(),
     wieland: {
       nccCampaignId: fields.wielandNccCampaignId.value.trim(),
-      slotsNeeded: parseInt(fields.wielandSlotsNeeded.value) || 8
+      slotsNeeded: parseInt(fields.wielandSlotsNeeded.value) || 8,
+      nccAuthType: fields.wielandNccAuthType.value || "token"
     },
+    wielandNccCredential: fields.wielandNccCredential.value.trim(),
     token: fields.token.value.trim(),
     cookie: fields.cookie.value.trim(),
     allowedKbIds: fields.allowedKbIds.value
@@ -755,9 +762,33 @@ function readForm() {
   };
 }
 
+function updateWielandCredentialField(authType) {
+  const row = document.getElementById("wielandCredentialField");
+  const label = document.getElementById("wielandCredentialLabel");
+  const note = document.getElementById("wielandCredentialNote");
+  const input = fields.wielandNccCredential;
+  if (authType === "none") {
+    row.hidden = true;
+    return;
+  }
+  row.hidden = false;
+  if (authType === "key") {
+    label.textContent = "NCC API Key";
+    input.placeholder = "your-api-key";
+    note.innerHTML = "Sent as <code>Authorization: &lt;key&gt;</code> (raw value).";
+  } else {
+    label.textContent = "NCC Token";
+    input.placeholder = "eyJ0eXAiOiJKV1Qi\u2026";
+    note.innerHTML = "Sent as <code>Authorization: Bearer &lt;token&gt;</code>.";
+  }
+}
+
 function applyDefaultUiValues() {
   fields.wielandNccCampaignId.value = "";
   fields.wielandSlotsNeeded.value = 8;
+  fields.wielandNccAuthType.value = "token";
+  fields.wielandNccCredential.value = "";
+  updateWielandCredentialField("token");
   document.getElementById("wielandOpenLink").hidden = true;
   fields.apiUrl.value = "https://mancity.thrio.io/data/api/ai/prediction";
   fields.workitemApiUrl.value = "https://mancity.thrio.io/users/api/workitems";
@@ -1684,6 +1715,8 @@ function normalizeLanguage(value) {
 function translate(language, key) {
   return window.NextI18n?.t ? window.NextI18n.t(language, key) : key;
 }
+
+fields.wielandNccAuthType.addEventListener("change", e => updateWielandCredentialField(e.target.value));
 
 applyDefaultUiValues();
 initSession();

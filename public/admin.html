@@ -587,6 +587,22 @@
                   <span class="admin-field-note">Number of overtime slots to fill per call run.</span>
                 </div>
 
+                <div class="admin-field">
+                  <label for="wielandNccAuthType">NCC Auth type</label>
+                  <select id="wielandNccAuthType">
+                    <option value="token">Token (Bearer JWT)</option>
+                    <option value="key">Key (API Key)</option>
+                    <option value="none">None (no auth)</option>
+                  </select>
+                  <span class="admin-field-note">How to authenticate backend calls to the NCC API.</span>
+                </div>
+
+                <div class="admin-field" id="wielandCredentialField">
+                  <label for="wielandNccCredential" id="wielandCredentialLabel">NCC Token</label>
+                  <input id="wielandNccCredential" type="password" autocomplete="off" placeholder="eyJ0eXAiOiJKV1Qi…" />
+                  <span class="admin-field-note" id="wielandCredentialNote">Bearer token sent as <code>Authorization: Bearer &lt;token&gt;</code>.</span>
+                </div>
+
                 <div class="admin-field admin-field--full">
                   <a id="wielandOpenLink" href="./wieland.html" target="_blank" class="admin-wieland-link" hidden>Open Wieland Manager →</a>
                   <span class="admin-field-note">Save the campaign first, then open the manager.</span>

@@ -114,7 +114,7 @@ function decryptSecret(value) {
 }
 
 // Fields that must be encrypted at rest
-const SECRET_FIELDS = ["token", "cookie", "geminiApiKey", "questionsGeminiApiKey"];
+const SECRET_FIELDS = ["token", "cookie", "geminiApiKey", "questionsGeminiApiKey", "wielandNccCredential"];
 
 function encryptCampaignSecrets(campaign) {
   const result = { ...campaign };
@@ -309,18 +309,22 @@ async function handleWielandAuth(req, res, url) {
     sendJson(res, 404, { error: `Campaign "${campaignParam}" not found.` }); return;
   }
 
-  // Validate token against NCC API (lightweight call)
-  const nccBase = `https://${campaign.domain}/data/api/types`;
-  try {
-    const testRes = await fetch(`${nccBase}/contact?pageSize=1`, {
-      headers: { "Authorization": `Bearer ${nccToken}` }
-    });
-    if (!testRes.ok) {
-      sendJson(res, 401, { error: "NCC token is invalid or unauthorized." }); return;
+  // For token auth mode: validate the user's JWT by calling NCC API with it
+  const campaignAuthType = campaign.wieland?.nccAuthType || "token";
+  if (campaignAuthType === "token") {
+    const nccBase = `https://${campaign.domain}/data/api/types`;
+    try {
+      const testRes = await fetch(`${nccBase}/contact?pageSize=1`, {
+        headers: { "Authorization": `Bearer ${nccToken}` }
+      });
+      if (!testRes.ok) {
+        sendJson(res, 401, { error: "NCC token is invalid or unauthorized." }); return;
+      }
+    } catch (err) {
+      sendJson(res, 502, { error: "Could not verify token with NCC.", details: err.message }); return;
     }
-  } catch (err) {
-    sendJson(res, 502, { error: "Could not verify token with NCC.", details: err.message }); return;
   }
+  // For key/none modes: trust the JWT's own expiry (already checked above)
 
   // Token is valid — create Wieland session
   const userId = jwtPayload.sub || jwtPayload.userId || "ncc-user";
@@ -1880,8 +1884,11 @@ function normalizeCampaign(input) {
     allowedKbIds: normalizeKbIds(input.allowedKbIds || input.allowed_kb_ids || input.kbIds || ""),
     wieland: {
       nccCampaignId: String(input.wieland?.nccCampaignId || input.wielandNccCampaignId || "").trim(),
-      slotsNeeded: Math.max(1, parseInt(input.wieland?.slotsNeeded ?? input.wielandSlotsNeeded ?? 0) || 8)
+      slotsNeeded: Math.max(1, parseInt(input.wieland?.slotsNeeded ?? input.wielandSlotsNeeded ?? 0) || 8),
+      nccAuthType: (["token", "key", "none"].includes(input.wieland?.nccAuthType) ? input.wieland.nccAuthType : null)
+        || (["token", "key", "none"].includes(input.wielandNccAuthType) ? input.wielandNccAuthType : "token")
     },
+    wielandNccCredential: String(input.wielandNccCredential || "").trim(),
     ui: normalizeUiConfig(input.ui || input)
   };
 }
@@ -3657,12 +3664,20 @@ function generateWielandCSV(contacts) {
   return rows.join("\n");
 }
 
+function buildNccAuthHeader(nccConfig) {
+  const type = nccConfig.nccAuthType || "token";
+  const cred = nccConfig.nccCredential || "";
+  if (type === "key" && cred) return { "Authorization": cred };
+  if (type === "token" && cred) return { "Authorization": `Bearer ${cred}` };
+  return {};
+}
+
 async function nccFetch(nccConfig, nccPath, method = "GET", body = null) {
   const baseUrl = (nccConfig.nccBaseUrl || "https://mancity.thrio.io/data/api/types").replace(/\/$/, "");
   const url = `${baseUrl}${nccPath}`;
   const opts = {
     method,
-    headers: { "Authorization": `Bearer ${nccConfig.nccToken}`, "Content-Type": "application/json" }
+    headers: { ...buildNccAuthHeader(nccConfig), "Content-Type": "application/json" }
   };
   if (body !== null && method !== "GET") opts.body = JSON.stringify(body);
   const res = await fetch(url, opts);
@@ -3706,14 +3721,17 @@ async function handleWieland(req, res, url) {
     sendJson(res, 404, { error: `Campaign "${campaignParam}" not found.` });
     return;
   }
-  if (!campaign.token) {
-    sendJson(res, 400, { error: `Campaign "${campaign.id}" has no token configured. Add it in Admin.` });
+  const nccAuthType = campaign.wieland?.nccAuthType || "token";
+  const nccCredential = campaign.wielandNccCredential || (nccAuthType === "token" ? campaign.token : "");
+  if (nccAuthType !== "none" && !nccCredential) {
+    sendJson(res, 400, { error: `Campaign "${campaign.id}" has no NCC credentials configured. Add them in Admin.` });
     return;
   }
 
   const nccConfig = {
     nccBaseUrl: `https://${campaign.domain}/data/api/types`,
-    nccToken: campaign.token,
+    nccAuthType,
+    nccCredential,
     campaignId: campaign.wieland?.nccCampaignId || "",
     slotsNeeded: campaign.wieland?.slotsNeeded || 8
   };
@@ -3820,7 +3838,7 @@ async function handleWieland(req, res, url) {
     try {
       createRes = await fetch(`${baseUrl}/outboundlist`, {
         method: "POST",
-        headers: { "Authorization": `Bearer ${nccConfig.nccToken}` },
+        headers: { ...buildNccAuthHeader(nccConfig) },
         body: formData
       });
     } catch (err) {
