@@ -272,8 +272,22 @@ function clearWielandCookie(res) {
   );
 }
 
+function getWielandTokenFromHeader(req) {
+  const auth = req.headers["authorization"] || "";
+  if (!auth.startsWith("Bearer ")) return null;
+  const token = auth.slice(7).trim();
+  return verifyWielandSessionToken(token) ? token : null;
+}
+
 function isAuthorizedWieland(req) {
-  return Boolean(getWielandSessionFromRequest(req)) || isAuthorizedAdmin(req);
+  return Boolean(getWielandSessionFromRequest(req))
+    || Boolean(getWielandTokenFromHeader(req))
+    || isAuthorizedAdmin(req);
+}
+
+function getWielandUser(req) {
+  return getWielandSessionFromRequest(req)
+    || (getWielandTokenFromHeader(req) ? verifyWielandSessionToken(getWielandTokenFromHeader(req)) : null);
 }
 
 async function handleWielandAuth(req, res, url) {
@@ -332,13 +346,15 @@ async function handleWielandAuth(req, res, url) {
   const tenantId = jwtPayload.tenantId || "";
   const sessionToken = createWielandSessionToken({ userId, username, tenantId });
   setWielandCookie(res, sessionToken);
-  sendJson(res, 200, { ok: true, user: { username, tenantId } });
+  // Also return the token in the body so the client can store it in sessionStorage
+  // (fallback for browsers that block third-party cookies in iframes)
+  sendJson(res, 200, { ok: true, sessionToken, user: { username, tenantId } });
 }
 
 function handleWielandMe(req, res) {
-  const ws = getWielandSessionFromRequest(req);
+  const ws = getWielandSessionFromRequest(req) || getWielandUser(req);
   if (ws) {
-    sendJson(res, 200, { user: { username: ws.name, tenantId: ws.tenant } });
+    sendJson(res, 200, { user: { username: ws.name || ws.username, tenantId: ws.tenant || ws.tenantId } });
     return;
   }
   if (isAuthorizedAdmin(req)) {
@@ -3902,6 +3918,15 @@ async function handleWieland(req, res, url) {
     }
     const result = await nccFetch(nccConfig, `/outboundlist/${listId}/lead/${leadId}`, "PATCH", body);
     sendJson(res, result.ok ? 200 : result.status, result.ok ? { ok: true } : { error: "NCC API error" });
+    return;
+  }
+
+  // DELETE /api/wieland/lists/:id
+  const listDeleteMatch = url.pathname.match(/^\/api\/wieland\/lists\/([^/]+)$/);
+  if (req.method === "DELETE" && listDeleteMatch) {
+    const listId = listDeleteMatch[1];
+    const result = await nccFetch(nccConfig, `/outboundlist/${listId}`, "DELETE");
+    sendJson(res, result.ok ? 200 : result.status, result.ok ? { ok: true } : { error: "NCC API error", details: result.data });
     return;
   }
 

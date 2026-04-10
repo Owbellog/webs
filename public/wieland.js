@@ -12,14 +12,26 @@ function withCampaign(path) {
   return `${path}${sep}campaign=${encodeURIComponent(campaignId)}`;
 }
 
+// ── Session token (sessionStorage fallback for when cookies are blocked) ──────
+const SESSION_KEY = "niq_w_tok";
+function saveSessionToken(t) { try { sessionStorage.setItem(SESSION_KEY, t); } catch {} }
+function loadSessionToken() { try { return sessionStorage.getItem(SESSION_KEY) || ""; } catch { return ""; } }
+function clearSessionToken() { try { sessionStorage.removeItem(SESSION_KEY); } catch {} }
+
+function authHeaders() {
+  const t = loadSessionToken();
+  return t ? { "Authorization": `Bearer ${t}` } : {};
+}
+
 // ── API ───────────────────────────────────────────────────────────────────────
 async function api(path, options = {}) {
   const res = await fetch(buildUrl(withCampaign(path)), {
     ...options,
     credentials: "include",
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) }
+    headers: { "Content-Type": "application/json", ...authHeaders(), ...(options.headers || {}) }
   });
   if (res.status === 401) {
+    clearSessionToken();
     showAuthError("Session expired. Reload from NCC.");
     throw new Error("Session expired.");
   }
@@ -37,6 +49,10 @@ function apiPost(path, body) {
 
 function apiPatch(path, body) {
   return api(path, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+function apiDelete(path) {
+  return api(path, { method: "DELETE" });
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
@@ -75,6 +91,9 @@ async function exchangeNccToken(nccToken) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || "Authentication failed.");
   }
+  const data = await res.json();
+  // Store session token in sessionStorage as fallback when browser blocks third-party cookies
+  if (data.sessionToken) saveSessionToken(data.sessionToken);
   // Remove ncc_token from URL without reloading
   const params = new URLSearchParams(window.location.search);
   params.delete("ncc_token");
@@ -429,6 +448,7 @@ function renderLists() {
         <div class="w-list-toolbar">
           <button class="w-btn w-btn-secondary w-btn-sm" onclick="openAssignModal('${escHtml(listId)}')">Assign contacts</button>
           <button class="w-btn w-btn-secondary w-btn-sm" onclick="loadListLeads('${escHtml(listId)}')">Refresh leads</button>
+          <button class="w-btn w-btn-danger w-btn-sm" onclick="deleteList('${escHtml(listId)}', '${escHtml(name)}')">Delete</button>
         </div>
         <div id="leads-${escHtml(listId)}" style="padding:12px 20px;">
           <span style="color:var(--muted);font-size:0.85rem;">Click "Refresh leads" to load.</span>
@@ -440,6 +460,18 @@ function renderLists() {
 
 window.toggleList = function(listId) {
   document.getElementById(`list-${listId}`)?.classList.toggle("open");
+};
+
+window.deleteList = async function(listId, name) {
+  if (!confirm(`Delete list "${name}"? This cannot be undone.`)) return;
+  try {
+    await apiDelete(`/api/wieland/lists/${encodeURIComponent(listId)}`);
+    allLists = allLists.filter(l => (l.id || l._id) !== listId);
+    renderLists();
+    showToast("List deleted.");
+  } catch (err) {
+    showToast(err.message, "error");
+  }
 };
 
 window.loadListLeads = async function(listId) {
