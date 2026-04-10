@@ -531,7 +531,7 @@
     <div class="w-shell">
       <!-- Header -->
       <header class="w-header">
-        <div class="w-header-brand">Wieland OT Dialer Manager</div>
+        <div class="w-header-brand">Wieland OT Dialer <span id="campaignLabel" style="font-weight:500;color:var(--muted);font-size:0.9rem;margin-left:6px;"></span></div>
         <div class="admin-user-bar" id="userBar" hidden>
           <span class="admin-user-name" id="userName"></span>
           <span class="admin-user-role" id="userRole"></span>
@@ -546,7 +546,6 @@
         <button class="w-tab" data-tab="lists">Lists</button>
         <button class="w-tab" data-tab="campaign">Campaign</button>
         <button class="w-tab" data-tab="mapping">Field Mapping</button>
-        <button class="w-tab" data-tab="settings" id="settingsTab">Settings</button>
       </nav>
 
       <!-- Loading / error state -->
@@ -713,34 +712,6 @@ ORDER BY call_priority ASC</pre>
 eligible.sort((a, b) => b.seniority_years - a.seniority_years)
 eligible.forEach((c, i) => c.call_priority = i + 1)
 nonEligible.forEach(c => c.call_priority = 9999)</pre>
-        </div>
-
-        <!-- ─── Settings tab ───────────────────────────────────────────── -->
-        <div class="w-panel" id="panel-settings">
-          <div class="w-settings-card">
-            <div class="w-settings-title">NCC / Thrio Connection</div>
-            <div class="w-alert" id="settingsAlert"></div>
-
-            <div class="w-field">
-              <label for="settingsBaseUrl">NCC Base URL</label>
-              <input id="settingsBaseUrl" type="url" placeholder="https://mancity.thrio.io/data/api/types" />
-            </div>
-            <div class="w-field">
-              <label for="settingsToken">NCC Token <span style="font-weight:400;color:var(--muted)">(leave blank to keep existing)</span></label>
-              <input id="settingsToken" type="password" placeholder="Paste new token to update…" autocomplete="off" />
-            </div>
-            <div class="w-field">
-              <label for="settingsCampaignId">Campaign ID (NCC)</label>
-              <input id="settingsCampaignId" type="text" placeholder="69d6dca2753ac319b7d6560f" />
-            </div>
-            <div class="w-field">
-              <label for="settingsSlotsNeeded">Slots needed</label>
-              <input id="settingsSlotsNeeded" type="number" min="1" max="500" placeholder="8" />
-            </div>
-            <div style="display:flex;gap:10px;margin-top:4px;">
-              <button class="w-btn w-btn-primary" id="saveSettingsBtn">Save settings</button>
-            </div>
-          </div>
         </div>
 
       </main>

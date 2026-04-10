@@ -5313,3 +5313,30 @@ body.embedded .copilot-shell {
 .admin-tool-link:hover {
   background: rgba(28, 40, 83, 0.12);
 }
+
+/* ── Admin Wieland section ───────────────────────────────────────────────── */
+.admin-field-note {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+.admin-wieland-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 16px;
+  border-radius: 10px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--brand);
+  text-decoration: none;
+  background: rgba(28, 40, 83, 0.07);
+  border: 1px solid rgba(28, 40, 83, 0.14);
+  transition: background 0.15s;
+}
+
+.admin-wieland-link:hover {
+  background: rgba(28, 40, 83, 0.13);
+}

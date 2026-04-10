@@ -38,9 +38,6 @@
           </div>
           <input id="campaignSearch" class="admin-campaign-search" type="search" placeholder="Search campaigns…" />
           <div class="admin-list" id="campaignList"></div>
-          <div class="admin-sidebar-tools">
-            <a href="./wieland.html" class="admin-tool-link">Wieland OT Dialer →</a>
-          </div>
         </aside>
 
         <section class="admin-panel">
@@ -572,6 +569,28 @@
                     </div>
                   </div>
                 </details>
+              </div>
+            </details>
+
+            <details class="admin-section" data-page="wieland">
+              <summary>Wieland OT Dialer <span class="chevron">▼</span></summary>
+              <div class="admin-section-grid">
+                <div class="admin-field">
+                  <label for="wielandNccCampaignId">NCC Campaign ID</label>
+                  <input id="wielandNccCampaignId" type="text" placeholder="69d6dca2753ac319b7d6560f" />
+                  <span class="admin-field-note">The outbound campaign ID from NCC / Thrio.</span>
+                </div>
+
+                <div class="admin-field">
+                  <label for="wielandSlotsNeeded">Slots needed</label>
+                  <input id="wielandSlotsNeeded" type="number" min="1" max="500" placeholder="8" />
+                  <span class="admin-field-note">Number of overtime slots to fill per call run.</span>
+                </div>
+
+                <div class="admin-field admin-field--full">
+                  <a id="wielandOpenLink" href="./wieland.html" target="_blank" class="admin-wieland-link" hidden>Open Wieland Manager →</a>
+                  <span class="admin-field-note">Save the campaign first, then open the manager.</span>
+                </div>
               </div>
             </details>
 

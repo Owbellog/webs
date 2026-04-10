@@ -1,14 +1,20 @@
-// ── URL helpers ──────────────────────────────────────────────────────────────
+// ── Campaign param ────────────────────────────────────────────────────────────
 const appBase = new URL(".", window.location.href);
+const campaignId = new URLSearchParams(window.location.search).get("campaign") || "";
 
 function buildUrl(pathname) {
   const p = pathname.startsWith("/") ? pathname.slice(1) : pathname;
   return new URL(p, appBase).toString();
 }
 
+function withCampaign(path) {
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${sep}campaign=${encodeURIComponent(campaignId)}`;
+}
+
 // ── API ───────────────────────────────────────────────────────────────────────
 async function api(path, options = {}) {
-  const res = await fetch(buildUrl(path), {
+  const res = await fetch(buildUrl(withCampaign(path)), {
     ...options,
     credentials: "include",
     headers: { "Content-Type": "application/json", ...(options.headers || {}) }
@@ -42,40 +48,40 @@ function showToast(msg, type = "") {
 }
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let allContacts = [];   // merged contacts with call_priority
+let allContacts = [];
 let allLists = [];
 let currentFilter = "all";
 let contactSearchValue = "";
 let session = null;
 
-// ── Auth ──────────────────────────────────────────────────────────────────────
+// ── Auth + campaign check ──────────────────────────────────────────────────────
 async function initSession() {
+  // Check session
   try {
     const data = await fetch(buildUrl("/api/admin/me"), { credentials: "include" }).then(r => r.json());
     if (!data.user) { location.replace(buildUrl("/login.html")); return false; }
     session = data.user;
     const userBar = document.getElementById("userBar");
     document.getElementById("userName").textContent = session.username;
-    const roleEl = document.getElementById("userRole");
-    roleEl.textContent = session.role;
-    roleEl.className = `admin-user-role ${session.role === "admin" ? "" : ""}`;
+    document.getElementById("userRole").textContent = session.role;
     userBar.hidden = false;
-
-    // Hide settings tab for non-admins
-    if (session.role !== "admin") {
-      document.getElementById("settingsTab").hidden = true;
-    }
-
     document.getElementById("logoutBtn").addEventListener("click", async () => {
       await fetch(buildUrl("/api/admin/logout"), { method: "POST", credentials: "include" });
       location.replace(buildUrl("/login.html"));
     });
-
-    return true;
   } catch {
     location.replace(buildUrl("/login.html"));
     return false;
   }
+
+  // Validate campaign param
+  if (!campaignId) {
+    document.getElementById("initMessage").textContent = "Missing ?campaign= parameter. Access this page from the Admin panel.";
+    return false;
+  }
+
+  document.getElementById("campaignLabel").textContent = `— ${campaignId}`;
+  return true;
 }
 
 // ── Tab navigation ────────────────────────────────────────────────────────────
@@ -101,8 +107,7 @@ function priorityChip(p) {
 // ── Status badge ──────────────────────────────────────────────────────────────
 function statusBadge(status) {
   const map = { Active: "active", LOA: "loa", Terminated: "terminated" };
-  const cls = map[status] || "loa";
-  return `<span class="w-badge ${cls}">${status || "Unknown"}</span>`;
+  return `<span class="w-badge ${map[status] || "loa"}">${status || "Unknown"}</span>`;
 }
 
 // ── Contacts ──────────────────────────────────────────────────────────────────
@@ -152,6 +157,7 @@ function renderContactsTable() {
     const name = `${c.firstName || ""} ${c.lastName || ""}`.trim() || "—";
     const unionBadge = c.union_eligible ? `<span class="w-badge union">Union</span>` : "";
     const dncBadge = c.do_not_call ? `<span class="w-badge dnc">DNC</span>` : "";
+    const cid = escHtml(c.externalId || c.id || "");
     return `<tr>
       <td>${priorityChip(c.call_priority || 9999)}</td>
       <td>${escHtml(c.externalId || "—")}</td>
@@ -163,7 +169,7 @@ function renderContactsTable() {
       <td>${escHtml(c.phone || "—")}</td>
       <td>${dncBadge}</td>
       <td>${escHtml(c.seniority_years != null ? c.seniority_years + "y" : "—")}</td>
-      <td><button class="w-btn w-btn-secondary w-btn-sm" onclick="openEditContact('${escHtml(c.externalId || c.id || "")}')">Edit</button></td>
+      <td><button class="w-btn w-btn-secondary w-btn-sm" onclick="openEditContact('${cid}')">Edit</button></td>
     </tr>`;
   }).join("");
 
@@ -192,7 +198,6 @@ async function loadContacts() {
   document.getElementById("contactsLoading").style.display = "none";
 }
 
-// Search + filter wiring
 document.getElementById("contactSearch").addEventListener("input", (e) => {
   contactSearchValue = e.target.value;
   renderContactsTable();
@@ -212,7 +217,7 @@ const contactModal = document.getElementById("contactModal");
 const contactModalAlert = document.getElementById("contactModalAlert");
 
 document.getElementById("newContactBtn").addEventListener("click", () => openNewContact());
-document.getElementById("contactModalCancel").addEventListener("click", () => { contactModal.classList.add("hidden"); });
+document.getElementById("contactModalCancel").addEventListener("click", () => contactModal.classList.add("hidden"));
 document.getElementById("contactModalSave").addEventListener("click", saveContact);
 
 function openNewContact() {
@@ -243,7 +248,6 @@ function openEditContact(externalId) {
   contactModal.classList.remove("hidden");
 }
 
-// Make accessible globally for inline onclick handlers
 window.openEditContact = openEditContact;
 
 function clearContactForm() {
@@ -321,7 +325,6 @@ function renderLists() {
     container.innerHTML = `<div class="w-empty"><div class="w-empty-icon">📋</div>No outbound lists yet. Create one to get started.</div>`;
     return;
   }
-
   container.innerHTML = allLists.map(list => {
     const listId = list.id || list._id || "";
     const name = list.name || list.localizations?.name?.en?.value || listId;
@@ -348,8 +351,7 @@ function renderLists() {
 }
 
 window.toggleList = function(listId) {
-  const card = document.getElementById(`list-${listId}`);
-  if (card) card.classList.toggle("open");
+  document.getElementById(`list-${listId}`)?.classList.toggle("open");
 };
 
 window.loadListLeads = async function(listId) {
@@ -485,8 +487,8 @@ async function loadCampaignStatus() {
   try {
     const data = await api("/api/wieland/campaign/status");
     const slotsNeeded = data.slotsNeeded || 8;
-    const campaign = data.campaign || {};
-    const accepted = campaign.acceptedCount || campaign.accepted || 0;
+    const c = data.campaign || {};
+    const accepted = c.acceptedCount || c.accepted || 0;
     const pct = Math.min(100, Math.round((accepted / slotsNeeded) * 100));
     slotsInfo.innerHTML = `
       <div style="font-size:1.5rem;font-weight:800;color:var(--brand)">${accepted} / ${slotsNeeded}</div>
@@ -497,45 +499,6 @@ async function loadCampaignStatus() {
     slotsInfo.innerHTML = `<span style="color:var(--muted);font-size:0.85rem;">Campaign status unavailable.</span>`;
   }
 }
-
-// ── Settings ──────────────────────────────────────────────────────────────────
-async function loadSettings() {
-  try {
-    const data = await api("/api/wieland/config");
-    const cfg = data.config || {};
-    document.getElementById("settingsBaseUrl").value = cfg.nccBaseUrl || "";
-    document.getElementById("settingsCampaignId").value = cfg.campaignId || "";
-    document.getElementById("settingsSlotsNeeded").value = cfg.slotsNeeded || 8;
-    if (cfg.hasToken) {
-      document.getElementById("settingsToken").placeholder = "Token set — paste new value to update";
-    }
-  } catch { /* non-fatal */ }
-}
-
-const settingsAlert = document.getElementById("settingsAlert");
-
-document.getElementById("saveSettingsBtn").addEventListener("click", async () => {
-  const btn = document.getElementById("saveSettingsBtn");
-  clearModalAlert(settingsAlert);
-  btn.disabled = true;
-  btn.textContent = "Saving…";
-  try {
-    await apiPost("/api/wieland/config", {
-      nccBaseUrl: document.getElementById("settingsBaseUrl").value.trim(),
-      nccToken: document.getElementById("settingsToken").value.trim(),
-      campaignId: document.getElementById("settingsCampaignId").value.trim(),
-      slotsNeeded: parseInt(document.getElementById("settingsSlotsNeeded").value) || 8
-    });
-    document.getElementById("settingsToken").value = "";
-    document.getElementById("settingsToken").placeholder = "Token set — paste new value to update";
-    showToast("Settings saved.");
-  } catch (err) {
-    showModalAlert(settingsAlert, err.message);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "Save settings";
-  }
-});
 
 // ── Modal helpers ─────────────────────────────────────────────────────────────
 function showModalAlert(el, msg) {
@@ -548,7 +511,6 @@ function clearModalAlert(el) {
   el.className = "w-alert";
 }
 
-// Close modals on backdrop click
 [contactModal, listModal, assignModal].forEach(modal => {
   modal.addEventListener("click", (e) => {
     if (e.target === modal) modal.classList.add("hidden");
@@ -560,15 +522,14 @@ function escHtml(str) {
   return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-// ── Tab-aware loading ─────────────────────────────────────────────────────────
-let loaded = { contacts: false, lists: false, campaign: false, settings: false };
+// ── Tab-aware lazy loading ────────────────────────────────────────────────────
+let loaded = { contacts: false, lists: false, campaign: false };
 
 tabs.forEach(tab => {
   tab.addEventListener("click", () => {
     const name = tab.dataset.tab;
     if (name === "lists" && !loaded.lists) { loaded.lists = true; loadLists(); }
     if (name === "campaign" && !loaded.campaign) { loaded.campaign = true; loadCampaignStatus(); }
-    if (name === "settings" && !loaded.settings) { loaded.settings = true; loadSettings(); }
   });
 });
 
@@ -580,7 +541,6 @@ tabs.forEach(tab => {
   document.getElementById("initMessage").hidden = true;
   document.getElementById("mainBody").hidden = false;
 
-  // Load contacts (default tab)
   loaded.contacts = true;
   await loadContacts();
 })();

@@ -49,6 +49,8 @@ const fields = {
   geminiModel: document.getElementById("geminiModel"),
   geminiApiUrl: document.getElementById("geminiApiUrl"),
   geminiPrompt: document.getElementById("geminiPrompt"),
+  wielandNccCampaignId: document.getElementById("wielandNccCampaignId"),
+  wielandSlotsNeeded: document.getElementById("wielandSlotsNeeded"),
   token: document.getElementById("campaignToken"),
   cookie: document.getElementById("campaignCookie"),
   allowedKbIds: document.getElementById("chatKbIds"),
@@ -498,6 +500,15 @@ function fillForm(campaign) {
   fields.geminiModel.value = campaign.geminiModel || "gemini-2.5-flash";
   fields.geminiApiUrl.value = campaign.geminiApiUrl || "https://generativelanguage.googleapis.com";
   fields.geminiPrompt.value = campaign.geminiPrompt || "";
+  fields.wielandNccCampaignId.value = campaign.wieland?.nccCampaignId || "";
+  fields.wielandSlotsNeeded.value = campaign.wieland?.slotsNeeded || 8;
+  const wielandLink = document.getElementById("wielandOpenLink");
+  if (campaign.id) {
+    wielandLink.href = `./wieland.html?campaign=${encodeURIComponent(campaign.id)}`;
+    wielandLink.hidden = false;
+  } else {
+    wielandLink.hidden = true;
+  }
   fields.token.value = campaign.token || "";
   fields.cookie.value = campaign.cookie || "";
   fields.allowedKbIds.value = (campaign.allowedKbIds || []).join("\n");
@@ -623,6 +634,10 @@ function readForm() {
     questionsGeminiApiUrl: fields.questionsGeminiApiUrl.value.trim(),
     questionsGeminiPrompt: fields.questionsGeminiPrompt.value.trim(),
     nextStepGeminiPrompt: fields.nextStepGeminiPrompt.value.trim(),
+    wieland: {
+      nccCampaignId: fields.wielandNccCampaignId.value.trim(),
+      slotsNeeded: parseInt(fields.wielandSlotsNeeded.value) || 8
+    },
     token: fields.token.value.trim(),
     cookie: fields.cookie.value.trim(),
     allowedKbIds: fields.allowedKbIds.value
@@ -741,6 +756,9 @@ function readForm() {
 }
 
 function applyDefaultUiValues() {
+  fields.wielandNccCampaignId.value = "";
+  fields.wielandSlotsNeeded.value = 8;
+  document.getElementById("wielandOpenLink").hidden = true;
   fields.apiUrl.value = "https://mancity.thrio.io/data/api/ai/prediction";
   fields.workitemApiUrl.value = "https://mancity.thrio.io/users/api/workitems";
   fields.agentChatApiUrl.value = "https://mancity.thrio.io/chats/api/agent/chats";

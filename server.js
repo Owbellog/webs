@@ -9,7 +9,6 @@ const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, "public");
 const CAMPAIGNS_FILE = path.join(ROOT, "campaigns.json");
 const USERS_FILE = path.join(ROOT, "users.json");
-const WIELAND_CONFIG_FILE = path.join(ROOT, "wieland-config.json");
 const WIELAND_CONTACTS_FILE = path.join(ROOT, "wieland-contacts.json");
 
 loadEnv(path.join(ROOT, ".env"));
@@ -22,9 +21,7 @@ const ENCRYPTION_SALT = process.env.ENCRYPTION_SALT || "nextiq-campaigns-salt-v1
 const FIRESTORE_PREFIX = sanitizeFirestorePrefix(process.env.FIRESTORE_PREFIX || "nextiq");
 const FIRESTORE_COLLECTION = process.env.FIRESTORE_COLLECTION || `${FIRESTORE_PREFIX}_campaigns`;
 const USERS_COLLECTION = `${FIRESTORE_PREFIX}_users`;
-const WIELAND_CONFIG_COLLECTION = `${FIRESTORE_PREFIX}_wieland_config`;
 const WIELAND_CONTACTS_COLLECTION = `${FIRESTORE_PREFIX}_wieland_contacts`;
-const WIELAND_CONFIG_DOC_ID = "settings";
 const SESSION_EXPIRY_SECONDS = 8 * 60 * 60; // 8 hours
 const SESSION_COOKIE_NAME = "niq_sess";
 const CAMPAIGN_PERMISSIONS = ["createCampaign", "editCampaign", "deleteCampaign"];
@@ -1725,6 +1722,10 @@ function normalizeCampaign(input) {
       3
     ),
     allowedKbIds: normalizeKbIds(input.allowedKbIds || input.allowed_kb_ids || input.kbIds || ""),
+    wieland: {
+      nccCampaignId: String(input.wieland?.nccCampaignId || input.wielandNccCampaignId || "").trim(),
+      slotsNeeded: Math.max(1, parseInt(input.wieland?.slotsNeeded ?? input.wielandSlotsNeeded ?? 0) || 8)
+    },
     ui: normalizeUiConfig(input.ui || input)
   };
 }
@@ -3435,23 +3436,6 @@ function normalizeSentimentColor(color, label, score) {
 
 // ── Wieland Dialer ─────────────────────────────────────────────────────────
 
-async function readWielandConfig() {
-  if (firestore) {
-    const doc = await firestore.collection(WIELAND_CONFIG_COLLECTION).doc(WIELAND_CONFIG_DOC_ID).get();
-    return doc.exists ? doc.data() : {};
-  }
-  if (!fs.existsSync(WIELAND_CONFIG_FILE)) return {};
-  try { return JSON.parse(fs.readFileSync(WIELAND_CONFIG_FILE, "utf8")); } catch { return {}; }
-}
-
-async function writeWielandConfig(config) {
-  if (firestore) {
-    await firestore.collection(WIELAND_CONFIG_COLLECTION).doc(WIELAND_CONFIG_DOC_ID).set(config);
-    return;
-  }
-  fs.writeFileSync(WIELAND_CONFIG_FILE, `${JSON.stringify(config, null, 2)}\n`, "utf8");
-}
-
 async function readWielandContactsLocal() {
   if (firestore) {
     const snapshot = await firestore.collection(WIELAND_CONTACTS_COLLECTION).get();
@@ -3532,15 +3516,6 @@ async function nccFetch(nccConfig, nccPath, method = "GET", body = null) {
   return { ok: res.ok, status: res.status, data };
 }
 
-function sanitizeWielandConfig(config) {
-  return {
-    nccBaseUrl: config.nccBaseUrl || "",
-    hasToken: Boolean(config.nccToken),
-    campaignId: config.campaignId || "",
-    slotsNeeded: Number(config.slotsNeeded) || 8
-  };
-}
-
 async function mergeWielandContacts(rawContacts, localMap) {
   return rawContacts.map(c => {
     const key = c.externalId || c.id || c._id || "";
@@ -3563,43 +3538,29 @@ async function handleWieland(req, res, url) {
     return;
   }
 
-  const session = getSessionFromRequest(req);
-
-  // ── Config (admin only) ──────────────────────────────────────────────────
-  if (req.method === "GET" && url.pathname === "/api/wieland/config") {
-    const config = await readWielandConfig();
-    sendJson(res, 200, { config: sanitizeWielandConfig(config) });
+  // ── Resolve campaign from ?campaign= param ────────────────────────────────
+  const campaignParam = url.searchParams.get("campaign") || "";
+  if (!campaignParam) {
+    sendJson(res, 400, { error: "Missing ?campaign= parameter." });
+    return;
+  }
+  const campaigns = await readCampaigns();
+  const campaign = campaigns.find(c => c.id === campaignParam);
+  if (!campaign) {
+    sendJson(res, 404, { error: `Campaign "${campaignParam}" not found.` });
+    return;
+  }
+  if (!campaign.token) {
+    sendJson(res, 400, { error: `Campaign "${campaign.id}" has no token configured. Add it in Admin.` });
     return;
   }
 
-  if (req.method === "POST" && url.pathname === "/api/wieland/config") {
-    if (session && session.role !== "admin") {
-      sendJson(res, 403, { error: "Admin role required." });
-      return;
-    }
-    let body;
-    try { body = await readJson(req); } catch {
-      sendJson(res, 400, { error: "Invalid JSON." }); return;
-    }
-    const existing = await readWielandConfig();
-    const newToken = body.nccToken ? encryptSecret(String(body.nccToken).trim()) : (existing.nccToken || "");
-    const newConfig = {
-      nccBaseUrl: String(body.nccBaseUrl || "").trim(),
-      nccToken: newToken,
-      campaignId: String(body.campaignId || "").trim(),
-      slotsNeeded: Math.max(1, parseInt(body.slotsNeeded) || 8)
-    };
-    await writeWielandConfig(newConfig);
-    sendJson(res, 200, { ok: true, config: sanitizeWielandConfig(newConfig) });
-    return;
-  }
-
-  const config = await readWielandConfig();
-  if (!config.nccToken) {
-    sendJson(res, 400, { error: "Wieland NCC token not configured. Go to Settings tab to set it up." });
-    return;
-  }
-  const nccConfig = { ...config, nccToken: decryptSecret(config.nccToken) };
+  const nccConfig = {
+    nccBaseUrl: `https://${campaign.domain}/data/api/types`,
+    nccToken: campaign.token,
+    campaignId: campaign.wieland?.nccCampaignId || "",
+    slotsNeeded: campaign.wieland?.slotsNeeded || 8
+  };
 
   // ── Contacts ─────────────────────────────────────────────────────────────
   if (req.method === "GET" && url.pathname === "/api/wieland/contacts") {
