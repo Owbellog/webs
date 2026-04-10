@@ -24,7 +24,10 @@ async function api(path, options = {}) {
     throw new Error("Session expired.");
   }
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || "Request failed.");
+  if (!res.ok) {
+    const detail = data.details ? ` — ${typeof data.details === "string" ? data.details : JSON.stringify(data.details)}` : "";
+    throw new Error(`[${res.status}] ${data.error || "Request failed."}${detail}`);
+  }
   return data;
 }
 
@@ -61,6 +64,84 @@ function showAuthError(msg) {
   el.hidden = false;
 }
 
+async function exchangeNccToken(nccToken) {
+  const res = await fetch(buildUrl(withCampaign("/api/wieland/auth")), {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ nccToken })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Authentication failed.");
+  }
+  // Remove ncc_token from URL without reloading
+  const params = new URLSearchParams(window.location.search);
+  params.delete("ncc_token");
+  const clean = params.toString()
+    ? `${window.location.pathname}?${params.toString()}`
+    : window.location.pathname;
+  history.replaceState({}, "", clean);
+}
+
+function showTokenFallback() {
+  document.getElementById("initMessage").hidden = true;
+  const fallback = document.getElementById("tokenFallback");
+  fallback.hidden = false;
+
+  const btn = document.getElementById("tokenFallbackBtn");
+  const input = document.getElementById("tokenFallbackInput");
+  const errEl = document.getElementById("tokenFallbackError");
+
+  btn.addEventListener("click", async () => {
+    const token = input.value.trim();
+    if (!token) return;
+    btn.disabled = true;
+    btn.textContent = "Verificando…";
+    errEl.hidden = true;
+    try {
+      await exchangeNccToken(token);
+      fallback.hidden = true;
+      const ok = await applySession();
+      if (ok) finishInit();
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.hidden = false;
+      btn.disabled = false;
+      btn.textContent = "Continuar";
+    }
+  });
+
+  input.addEventListener("keydown", e => { if (e.key === "Enter") btn.click(); });
+}
+
+async function applySession() {
+  const meRes = await fetch(buildUrl("/api/wieland/me"), { credentials: "include" });
+  if (!meRes.ok) return false;
+  const meData = await meRes.json();
+  session = meData.user;
+  document.getElementById("userName").textContent = session.username || "";
+  const roleEl = document.getElementById("userRole");
+  if (roleEl) roleEl.textContent = session.role || "";
+  document.getElementById("userBar").hidden = false;
+  document.getElementById("campaignLabel").textContent = `— ${campaignId}`;
+  document.getElementById("logoutBtn").addEventListener("click", async () => {
+    await fetch(buildUrl("/api/wieland/logout"), { method: "POST", credentials: "include" });
+    document.getElementById("userBar").hidden = true;
+    document.getElementById("mainBody").hidden = true;
+    document.getElementById("initMessage").hidden = true;
+    showTokenFallback();
+  });
+  return true;
+}
+
+function finishInit() {
+  document.getElementById("initMessage").hidden = true;
+  document.getElementById("mainBody").hidden = false;
+  loaded.contacts = true;
+  loadContacts();
+}
+
 // ── Auth + campaign check ──────────────────────────────────────────────────────
 async function initAuth() {
   // Validate campaign param first
@@ -73,47 +154,21 @@ async function initAuth() {
   const params = new URLSearchParams(window.location.search);
   const nccToken = params.get("ncc_token") || "";
   if (nccToken) {
-    const res = await fetch(buildUrl(withCampaign("/api/wieland/auth")), {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ nccToken })
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      showAuthError(err.error || "Authentication failed. Reload from NCC.");
+    try {
+      await exchangeNccToken(nccToken);
+    } catch (err) {
+      showAuthError(err.message);
       return false;
     }
-    // Remove ncc_token from URL without reloading
-    params.delete("ncc_token");
-    const clean = params.toString()
-      ? `${window.location.pathname}?${params.toString()}`
-      : window.location.pathname;
-    history.replaceState({}, "", clean);
   }
 
   // Check existing session (Wieland or admin)
-  const meRes = await fetch(buildUrl("/api/wieland/me"), { credentials: "include" });
-  if (!meRes.ok) {
-    showAuthError("Session expired. Reload from NCC.");
+  const ok = await applySession();
+  if (!ok) {
+    // No token in URL, no valid session → show manual input fallback
+    showTokenFallback();
     return false;
   }
-  const meData = await meRes.json();
-  session = meData.user;
-
-  document.getElementById("userName").textContent = session.username || "";
-  const roleEl = document.getElementById("userRole");
-  if (roleEl) roleEl.textContent = session.role || "";
-  document.getElementById("userBar").hidden = false;
-
-  document.getElementById("logoutBtn").addEventListener("click", async () => {
-    await fetch(buildUrl("/api/wieland/logout"), { method: "POST", credentials: "include" });
-    showAuthError("You have been signed out. Reload from NCC to continue.");
-    document.getElementById("userBar").hidden = true;
-    document.getElementById("initMessage").hidden = false;
-  });
-
-  document.getElementById("campaignLabel").textContent = `— ${campaignId}`;
   return true;
 }
 
@@ -569,11 +624,5 @@ tabs.forEach(tab => {
 // ── Init ──────────────────────────────────────────────────────────────────────
 (async () => {
   const ok = await initAuth();
-  if (!ok) return;
-
-  document.getElementById("initMessage").hidden = true;
-  document.getElementById("mainBody").hidden = false;
-
-  loaded.contacts = true;
-  await loadContacts();
+  if (ok) finishInit();
 })();

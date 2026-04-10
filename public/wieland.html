@@ -361,6 +361,67 @@
         font-size: 0.9rem;
       }
 
+      /* ── Token fallback ────────────────────────────────────────────────── */
+      .w-token-fallback {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 20px;
+      }
+      .w-token-box {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 32px 28px;
+        width: 100%;
+        max-width: 400px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .w-token-title {
+        font-size: 1rem;
+        font-weight: 700;
+        color: var(--text);
+        margin: 0;
+      }
+      .w-token-desc {
+        font-size: 0.85rem;
+        color: var(--muted);
+        margin: 0;
+      }
+      .w-token-input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 9px 12px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font-size: 0.9rem;
+        font-family: monospace;
+        background: var(--bg);
+        color: var(--text);
+      }
+      .w-token-input:focus { outline: none; border-color: var(--brand); }
+      .w-token-btn {
+        align-self: flex-end;
+        background: var(--brand);
+        color: #fff;
+        border: none;
+        border-radius: 8px;
+        padding: 8px 20px;
+        font-size: 0.9rem;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .w-token-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+      .w-token-error {
+        font-size: 0.83rem;
+        color: #c0392b;
+        background: #fdf0f0;
+        border-radius: 6px;
+        padding: 8px 10px;
+      }
+
       /* ── Lists ─────────────────────────────────────────────────────────── */
       .w-list-card {
         background: white;
@@ -550,6 +611,17 @@
 
       <!-- Loading / error state -->
       <div id="initMessage" class="w-loading">Loading…</div>
+
+      <!-- Manual token fallback (shown when NCC doesn't pass ncc_token in URL) -->
+      <div id="tokenFallback" class="w-token-fallback" hidden>
+        <div class="w-token-box">
+          <p class="w-token-title">Autenticación requerida</p>
+          <p class="w-token-desc">Pega tu token de sesión de NCC para continuar.</p>
+          <input id="tokenFallbackInput" type="password" class="w-token-input" placeholder="eyJ0eXAiOiJKV1Qi…" autocomplete="off" />
+          <div id="tokenFallbackError" class="w-token-error" hidden></div>
+          <button id="tokenFallbackBtn" class="w-token-btn">Continuar</button>
+        </div>
+      </div>
 
       <!-- Main content -->
       <main class="w-body" id="mainBody" hidden>
