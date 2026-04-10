@@ -307,43 +307,54 @@ async function handleWielandAuth(req, res, url) {
     sendJson(res, 400, { error: "nccToken is required." }); return;
   }
 
-  // Decode payload without signature (we verify via NCC API call below)
-  const jwtPayload = decodeJwtPayload(nccToken);
-  if (!jwtPayload) {
-    sendJson(res, 401, { error: "Invalid token format." }); return;
-  }
-  if (jwtPayload.exp && Math.floor(Date.now() / 1000) > jwtPayload.exp) {
-    sendJson(res, 401, { error: "NCC token has expired." }); return;
-  }
-
-  // Find campaign to get the NCC domain
+  // Find campaign to determine auth mode
   const campaigns = await readCampaigns();
   const campaign = campaigns.find(c => c.id === campaignParam);
   if (!campaign) {
     sendJson(res, 404, { error: `Campaign "${campaignParam}" not found.` }); return;
   }
 
-  // For token auth mode: validate the user's JWT by calling NCC API with it
   const campaignAuthType = campaign.wieland?.nccAuthType || "token";
-  if (campaignAuthType === "token") {
-    const nccBase = `https://${campaign.domain}/data/api/types`;
-    try {
-      const testRes = await fetch(`${nccBase}/contact?pageSize=1`, {
-        headers: { "Authorization": `Bearer ${nccToken}` }
-      });
-      if (!testRes.ok) {
-        sendJson(res, 401, { error: "NCC token is invalid or unauthorized." }); return;
-      }
-    } catch (err) {
-      sendJson(res, 502, { error: "Could not verify token with NCC.", details: err.message }); return;
-    }
-  }
-  // For key/none modes: trust the JWT's own expiry (already checked above)
 
-  // Token is valid — create Wieland session
-  const userId = jwtPayload.sub || jwtPayload.userId || "ncc-user";
-  const username = jwtPayload.username || jwtPayload.sub || "ncc-user";
-  const tenantId = jwtPayload.tenantId || "";
+  let userId, username, tenantId;
+
+  if (campaignAuthType === "none") {
+    // No NCC validation — accept any non-empty string as identity
+    userId = nccToken.slice(0, 64);
+    username = nccToken.slice(0, 64);
+    tenantId = "";
+  } else {
+    // Expect a JWT for token/key modes
+    const jwtPayload = decodeJwtPayload(nccToken);
+    if (!jwtPayload) {
+      sendJson(res, 401, { error: "Invalid token format. Paste your NCC session JWT (starts with eyJ…)." }); return;
+    }
+    if (jwtPayload.exp && Math.floor(Date.now() / 1000) > jwtPayload.exp) {
+      sendJson(res, 401, { error: "NCC token has expired." }); return;
+    }
+
+    // For token mode: validate by calling NCC API with the user's JWT
+    if (campaignAuthType === "token") {
+      const nccBase = `https://${campaign.domain}/data/api/types`;
+      try {
+        const testRes = await fetch(`${nccBase}/contact?pageSize=1`, {
+          headers: { "Authorization": `Bearer ${nccToken}` }
+        });
+        if (!testRes.ok) {
+          sendJson(res, 401, { error: "NCC token is invalid or unauthorized." }); return;
+        }
+      } catch (err) {
+        sendJson(res, 502, { error: "Could not verify token with NCC.", details: err.message }); return;
+      }
+    }
+    // key mode: trust the JWT's own expiry
+
+    userId = jwtPayload.sub || jwtPayload.userId || "ncc-user";
+    username = jwtPayload.username || jwtPayload.sub || "ncc-user";
+    tenantId = jwtPayload.tenantId || "";
+  }
+
+  // Create Wieland session
   const sessionToken = createWielandSessionToken({ userId, username, tenantId });
   setWielandCookie(res, sessionToken);
   // Also return the token in the body so the client can store it in sessionStorage
@@ -351,7 +362,7 @@ async function handleWielandAuth(req, res, url) {
   sendJson(res, 200, { ok: true, sessionToken, user: { username, tenantId } });
 }
 
-function handleWielandMe(req, res) {
+async function handleWielandMe(req, res, url) {
   const ws = getWielandSessionFromRequest(req) || getWielandUser(req);
   if (ws) {
     sendJson(res, 200, { user: { username: ws.name || ws.username, tenantId: ws.tenant || ws.tenantId } });
@@ -361,6 +372,16 @@ function handleWielandMe(req, res) {
     const as = getSessionFromRequest(req);
     sendJson(res, 200, { user: { username: as?.name || "admin" } });
     return;
+  }
+  // If campaign uses nccAuthType=none, allow anonymous access
+  const campaignParam = url.searchParams.get("campaign") || "";
+  if (campaignParam) {
+    const campaigns = await readCampaigns();
+    const campaign = campaigns.find(c => c.id === campaignParam);
+    if (campaign?.wieland?.nccAuthType === "none") {
+      sendJson(res, 200, { user: { username: "guest" }, nccAuthType: "none" });
+      return;
+    }
   }
   sendJson(res, 401, { error: "Not authenticated." });
 }
@@ -679,7 +700,7 @@ async function handleRequest(req, res) {
     return;
   }
   if (req.method === "GET" && url.pathname === "/api/wieland/me") {
-    handleWielandMe(req, res);
+    await handleWielandMe(req, res, url);
     return;
   }
   if (req.method === "POST" && url.pathname === "/api/wieland/logout") {

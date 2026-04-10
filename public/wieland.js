@@ -135,7 +135,7 @@ function showTokenFallback() {
 }
 
 async function applySession() {
-  const meRes = await fetch(buildUrl("/api/wieland/me"), { credentials: "include" });
+  const meRes = await fetch(buildUrl(withCampaign("/api/wieland/me")), { credentials: "include", headers: authHeaders() });
   if (!meRes.ok) return false;
   const meData = await meRes.json();
   session = meData.user;
