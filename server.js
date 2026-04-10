@@ -9,6 +9,8 @@ const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, "public");
 const CAMPAIGNS_FILE = path.join(ROOT, "campaigns.json");
 const USERS_FILE = path.join(ROOT, "users.json");
+const WIELAND_CONFIG_FILE = path.join(ROOT, "wieland-config.json");
+const WIELAND_CONTACTS_FILE = path.join(ROOT, "wieland-contacts.json");
 
 loadEnv(path.join(ROOT, ".env"));
 
@@ -20,6 +22,9 @@ const ENCRYPTION_SALT = process.env.ENCRYPTION_SALT || "nextiq-campaigns-salt-v1
 const FIRESTORE_PREFIX = sanitizeFirestorePrefix(process.env.FIRESTORE_PREFIX || "nextiq");
 const FIRESTORE_COLLECTION = process.env.FIRESTORE_COLLECTION || `${FIRESTORE_PREFIX}_campaigns`;
 const USERS_COLLECTION = `${FIRESTORE_PREFIX}_users`;
+const WIELAND_CONFIG_COLLECTION = `${FIRESTORE_PREFIX}_wieland_config`;
+const WIELAND_CONTACTS_COLLECTION = `${FIRESTORE_PREFIX}_wieland_contacts`;
+const WIELAND_CONFIG_DOC_ID = "settings";
 const SESSION_EXPIRY_SECONDS = 8 * 60 * 60; // 8 hours
 const SESSION_COOKIE_NAME = "niq_sess";
 const CAMPAIGN_PERMISSIONS = ["createCampaign", "editCampaign", "deleteCampaign"];
@@ -507,6 +512,11 @@ async function handleRequest(req, res) {
 
   if (url.pathname.startsWith("/api/admin/")) {
     await handleAdmin(req, res, url);
+    return;
+  }
+
+  if (url.pathname.startsWith("/api/wieland/")) {
+    await handleWieland(req, res, url);
     return;
   }
 
@@ -3422,6 +3432,358 @@ function normalizeSentimentColor(color, label, score) {
   }
   return "yellow";
 }
+
+// ── Wieland Dialer ─────────────────────────────────────────────────────────
+
+async function readWielandConfig() {
+  if (firestore) {
+    const doc = await firestore.collection(WIELAND_CONFIG_COLLECTION).doc(WIELAND_CONFIG_DOC_ID).get();
+    return doc.exists ? doc.data() : {};
+  }
+  if (!fs.existsSync(WIELAND_CONFIG_FILE)) return {};
+  try { return JSON.parse(fs.readFileSync(WIELAND_CONFIG_FILE, "utf8")); } catch { return {}; }
+}
+
+async function writeWielandConfig(config) {
+  if (firestore) {
+    await firestore.collection(WIELAND_CONFIG_COLLECTION).doc(WIELAND_CONFIG_DOC_ID).set(config);
+    return;
+  }
+  fs.writeFileSync(WIELAND_CONFIG_FILE, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+}
+
+async function readWielandContactsLocal() {
+  if (firestore) {
+    const snapshot = await firestore.collection(WIELAND_CONTACTS_COLLECTION).get();
+    const result = {};
+    for (const doc of snapshot.docs) result[doc.id] = doc.data();
+    return result;
+  }
+  if (!fs.existsSync(WIELAND_CONTACTS_FILE)) return {};
+  try { return JSON.parse(fs.readFileSync(WIELAND_CONTACTS_FILE, "utf8")); } catch { return {}; }
+}
+
+async function writeWielandContactLocal(externalId, fields) {
+  const clean = {
+    union_eligible: Boolean(fields.union_eligible),
+    active_status: String(fields.active_status || "Active"),
+    do_not_call: Boolean(fields.do_not_call),
+    seniority_years: Number(fields.seniority_years) || 0,
+    plant_location: String(fields.plant_location || ""),
+    trade: String(fields.trade || "")
+  };
+  if (firestore) {
+    await firestore.collection(WIELAND_CONTACTS_COLLECTION).doc(externalId).set(clean, { merge: true });
+    return;
+  }
+  const all = await readWielandContactsLocal();
+  all[externalId] = { ...(all[externalId] || {}), ...clean };
+  fs.writeFileSync(WIELAND_CONTACTS_FILE, `${JSON.stringify(all, null, 2)}\n`, "utf8");
+}
+
+function calcCallPriority(contacts) {
+  const eligible = contacts.filter(c =>
+    c.active_status === "Active" &&
+    c.union_eligible === true &&
+    c.do_not_call === false
+  );
+  eligible.sort((a, b) => (b.seniority_years || 0) - (a.seniority_years || 0));
+  const eligibleIds = new Set(eligible.map(c => c.externalId || c.id || c._id));
+  eligible.forEach((c, i) => { c.call_priority = i + 1; });
+  contacts.forEach(c => {
+    if (!eligibleIds.has(c.externalId || c.id || c._id)) c.call_priority = 9999;
+  });
+  return contacts;
+}
+
+function generateWielandCSV(contacts) {
+  const headers = [
+    "employee_id", "firstName", "lastName", "phone_primary", "phone_alternate",
+    "union_eligible", "active_status", "do_not_call", "plant_location", "trade",
+    "seniority_years", "call_priority", "campaign_ready"
+  ];
+  const esc = (v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
+  const rows = [headers.join(",")];
+  for (const c of contacts) {
+    const campaignReady = (c.active_status === "Active" && c.union_eligible === true && c.do_not_call === false) ? "YES" : "NO";
+    rows.push([
+      esc(c.externalId || ""), esc(c.firstName || ""), esc(c.lastName || ""),
+      esc(c.phone || ""), esc(c.mobile || ""),
+      esc(c.union_eligible ? "Yes" : "No"), esc(c.active_status || ""),
+      esc(c.do_not_call ? "Yes" : "No"), esc(c.plant_location || ""), esc(c.trade || ""),
+      esc(c.seniority_years || 0), esc(c.call_priority || 9999), esc(campaignReady)
+    ].join(","));
+  }
+  return rows.join("\n");
+}
+
+async function nccFetch(nccConfig, nccPath, method = "GET", body = null) {
+  const baseUrl = (nccConfig.nccBaseUrl || "https://mancity.thrio.io/data/api/types").replace(/\/$/, "");
+  const url = `${baseUrl}${nccPath}`;
+  const opts = {
+    method,
+    headers: { "Authorization": `Bearer ${nccConfig.nccToken}`, "Content-Type": "application/json" }
+  };
+  if (body !== null && method !== "GET") opts.body = JSON.stringify(body);
+  const res = await fetch(url, opts);
+  const text = await res.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = text; }
+  return { ok: res.ok, status: res.status, data };
+}
+
+function sanitizeWielandConfig(config) {
+  return {
+    nccBaseUrl: config.nccBaseUrl || "",
+    hasToken: Boolean(config.nccToken),
+    campaignId: config.campaignId || "",
+    slotsNeeded: Number(config.slotsNeeded) || 8
+  };
+}
+
+async function mergeWielandContacts(rawContacts, localMap) {
+  return rawContacts.map(c => {
+    const key = c.externalId || c.id || c._id || "";
+    const local = localMap[key] || {};
+    return {
+      ...c,
+      union_eligible: local.union_eligible !== undefined ? local.union_eligible : false,
+      active_status: local.active_status || "Active",
+      do_not_call: local.do_not_call !== undefined ? local.do_not_call : false,
+      seniority_years: local.seniority_years || 0,
+      plant_location: local.plant_location || "",
+      trade: local.trade || ""
+    };
+  });
+}
+
+async function handleWieland(req, res, url) {
+  if (!isAuthorizedAdmin(req)) {
+    sendJson(res, 401, { error: "Unauthorized" });
+    return;
+  }
+
+  const session = getSessionFromRequest(req);
+
+  // ── Config (admin only) ──────────────────────────────────────────────────
+  if (req.method === "GET" && url.pathname === "/api/wieland/config") {
+    const config = await readWielandConfig();
+    sendJson(res, 200, { config: sanitizeWielandConfig(config) });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/wieland/config") {
+    if (session && session.role !== "admin") {
+      sendJson(res, 403, { error: "Admin role required." });
+      return;
+    }
+    let body;
+    try { body = await readJson(req); } catch {
+      sendJson(res, 400, { error: "Invalid JSON." }); return;
+    }
+    const existing = await readWielandConfig();
+    const newToken = body.nccToken ? encryptSecret(String(body.nccToken).trim()) : (existing.nccToken || "");
+    const newConfig = {
+      nccBaseUrl: String(body.nccBaseUrl || "").trim(),
+      nccToken: newToken,
+      campaignId: String(body.campaignId || "").trim(),
+      slotsNeeded: Math.max(1, parseInt(body.slotsNeeded) || 8)
+    };
+    await writeWielandConfig(newConfig);
+    sendJson(res, 200, { ok: true, config: sanitizeWielandConfig(newConfig) });
+    return;
+  }
+
+  const config = await readWielandConfig();
+  if (!config.nccToken) {
+    sendJson(res, 400, { error: "Wieland NCC token not configured. Go to Settings tab to set it up." });
+    return;
+  }
+  const nccConfig = { ...config, nccToken: decryptSecret(config.nccToken) };
+
+  // ── Contacts ─────────────────────────────────────────────────────────────
+  if (req.method === "GET" && url.pathname === "/api/wieland/contacts") {
+    const result = await nccFetch(nccConfig, "/contact");
+    if (!result.ok) { sendJson(res, result.status, { error: "NCC API error", details: result.data }); return; }
+    const raw = Array.isArray(result.data) ? result.data : (result.data?.results || result.data?.data || []);
+    const localMap = await readWielandContactsLocal();
+    const contacts = await mergeWielandContacts(raw, localMap);
+    calcCallPriority(contacts);
+    sendJson(res, 200, { contacts });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/wieland/contacts") {
+    let body;
+    try { body = await readJson(req); } catch {
+      sendJson(res, 400, { error: "Invalid JSON." }); return;
+    }
+    const { union_eligible, active_status, do_not_call, seniority_years, plant_location, trade, ...nccFields } = body;
+    const result = await nccFetch(nccConfig, "/contact", "POST", { objectType: "contact", ...nccFields });
+    if (!result.ok) { sendJson(res, result.status, { error: "NCC API error", details: result.data }); return; }
+    const externalId = body.externalId || result.data?.externalId || result.data?.id || result.data?._id;
+    if (externalId) {
+      await writeWielandContactLocal(externalId, { union_eligible, active_status, do_not_call, seniority_years, plant_location, trade });
+    }
+    sendJson(res, 200, { ok: true, contact: result.data });
+    return;
+  }
+
+  const contactPatchMatch = url.pathname.match(/^\/api\/wieland\/contacts\/([^/]+)$/);
+  if (req.method === "PATCH" && contactPatchMatch) {
+    const contactId = contactPatchMatch[1];
+    let body;
+    try { body = await readJson(req); } catch {
+      sendJson(res, 400, { error: "Invalid JSON." }); return;
+    }
+    const { union_eligible, active_status, do_not_call, seniority_years, plant_location, trade, ...nccFields } = body;
+    const result = await nccFetch(nccConfig, `/contact/${contactId}`, "PATCH", nccFields);
+    if (!result.ok) { sendJson(res, result.status, { error: "NCC API error", details: result.data }); return; }
+    const externalId = body.externalId || contactId;
+    await writeWielandContactLocal(externalId, { union_eligible, active_status, do_not_call, seniority_years, plant_location, trade });
+    sendJson(res, 200, { ok: true, contact: result.data });
+    return;
+  }
+
+  // ── Lists ────────────────────────────────────────────────────────────────
+  if (req.method === "GET" && url.pathname === "/api/wieland/lists") {
+    const qs = nccConfig.campaignId ? `?campaignId=${encodeURIComponent(nccConfig.campaignId)}` : "";
+    const result = await nccFetch(nccConfig, `/outboundlist${qs}`);
+    const lists = result.ok ? (Array.isArray(result.data) ? result.data : (result.data?.results || result.data?.data || [])) : [];
+    sendJson(res, result.ok ? 200 : result.status, result.ok ? { lists } : { error: "NCC API error", details: result.data });
+    return;
+  }
+
+  const listGetMatch = url.pathname.match(/^\/api\/wieland\/lists\/([^/]+)$/);
+  if (req.method === "GET" && listGetMatch && !url.pathname.endsWith("/leads")) {
+    const result = await nccFetch(nccConfig, `/outboundlist/${listGetMatch[1]}`);
+    sendJson(res, result.ok ? 200 : result.status, result.ok ? { list: result.data } : { error: "NCC API error" });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/wieland/lists") {
+    let body;
+    try { body = await readJson(req); } catch {
+      sendJson(res, 400, { error: "Invalid JSON." }); return;
+    }
+    const listName = String(body.name || "").trim();
+    if (!listName) { sendJson(res, 400, { error: "List name is required." }); return; }
+    if (!nccConfig.campaignId) { sendJson(res, 400, { error: "Campaign ID not configured." }); return; }
+
+    // Build contacts + CSV
+    const contactsResult = await nccFetch(nccConfig, "/contact");
+    const raw = contactsResult.ok ? (Array.isArray(contactsResult.data) ? contactsResult.data : (contactsResult.data?.results || contactsResult.data?.data || [])) : [];
+    const localMap = await readWielandContactsLocal();
+    const contacts = await mergeWielandContacts(raw, localMap);
+    calcCallPriority(contacts);
+    const eligible = contacts.filter(c => c.call_priority !== 9999);
+    const csvContent = generateWielandCSV(eligible);
+
+    // Multipart upload
+    const listPayload = {
+      objectType: "outboundlist",
+      campaignId: nccConfig.campaignId,
+      isSMS: false,
+      name: listName,
+      duplicateStrategy: null,
+      description: body.description || null,
+      isScrub: false,
+      keepOptinOnly: false,
+      isReassigned: false,
+      isWorkflow: false,
+      localizations: { name: { en: { language: "en", value: listName } } }
+    };
+
+    const formData = new FormData();
+    formData.append("object", new Blob([JSON.stringify(listPayload)], { type: "application/json" }), "object.json");
+    formData.append("file", new Blob([csvContent], { type: "text/csv" }), "contacts.csv");
+
+    const baseUrl = (nccConfig.nccBaseUrl || "https://mancity.thrio.io/data/api/types").replace(/\/$/, "");
+    let createRes;
+    try {
+      createRes = await fetch(`${baseUrl}/outboundlist`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${nccConfig.nccToken}` },
+        body: formData
+      });
+    } catch (err) {
+      sendJson(res, 502, { error: "Failed to reach NCC API", details: err.message });
+      return;
+    }
+
+    if (!createRes.ok) {
+      const errText = await createRes.text();
+      sendJson(res, createRes.status, { error: "Failed to create list", details: errText });
+      return;
+    }
+
+    const listData = await createRes.json();
+    const listId = listData.id || listData._id;
+
+    // Assign to campaign
+    if (listId) {
+      await nccFetch(nccConfig, "/campaignoutboundlist", "POST", {
+        campaignId: nccConfig.campaignId,
+        outboundlistId: listId,
+        _working: true
+      });
+    }
+
+    sendJson(res, 200, { ok: true, list: listData, contactsInCsv: eligible.length });
+    return;
+  }
+
+  // POST /api/wieland/lists/:id/leads (bulk)
+  const listLeadsMatch = url.pathname.match(/^\/api\/wieland\/lists\/([^/]+)\/leads$/);
+  if (req.method === "POST" && listLeadsMatch) {
+    const listId = listLeadsMatch[1];
+    let body;
+    try { body = await readJson(req); } catch {
+      sendJson(res, 400, { error: "Invalid JSON." }); return;
+    }
+    const leads = Array.isArray(body.leads) ? body.leads : [body];
+    const result = await nccFetch(nccConfig, `/outboundlist/${listId}/leads`, "POST", leads);
+    sendJson(res, result.ok ? 200 : result.status, result.ok ? { ok: true } : { error: "NCC API error", details: result.data });
+    return;
+  }
+
+  // GET /api/wieland/lists/:id/leads
+  const listLeadsGetMatch = url.pathname.match(/^\/api\/wieland\/lists\/([^/]+)\/leads$/);
+  if (req.method === "GET" && listLeadsGetMatch) {
+    const listId = listLeadsGetMatch[1];
+    const result = await nccFetch(nccConfig, `/outboundlist/${listId}/lead`);
+    const leads = result.ok ? (Array.isArray(result.data) ? result.data : (result.data?.results || result.data?.data || [])) : [];
+    sendJson(res, result.ok ? 200 : result.status, result.ok ? { leads } : { error: "NCC API error" });
+    return;
+  }
+
+  // PATCH /api/wieland/lists/:listId/leads/:leadId
+  const leadPatchMatch = url.pathname.match(/^\/api\/wieland\/lists\/([^/]+)\/leads\/([^/]+)$/);
+  if (req.method === "PATCH" && leadPatchMatch) {
+    const [, listId, leadId] = leadPatchMatch;
+    let body;
+    try { body = await readJson(req); } catch {
+      sendJson(res, 400, { error: "Invalid JSON." }); return;
+    }
+    const result = await nccFetch(nccConfig, `/outboundlist/${listId}/lead/${leadId}`, "PATCH", body);
+    sendJson(res, result.ok ? 200 : result.status, result.ok ? { ok: true } : { error: "NCC API error" });
+    return;
+  }
+
+  // ── Campaign status ──────────────────────────────────────────────────────
+  if (req.method === "GET" && url.pathname === "/api/wieland/campaign/status") {
+    if (!nccConfig.campaignId) { sendJson(res, 400, { error: "Campaign ID not configured." }); return; }
+    const result = await nccFetch(nccConfig, `/campaign/${nccConfig.campaignId}`);
+    sendJson(res, result.ok ? 200 : result.status, result.ok
+      ? { campaign: result.data, slotsNeeded: Number(nccConfig.slotsNeeded) || 8 }
+      : { error: "NCC API error", details: result.data }
+    );
+    return;
+  }
+
+  sendJson(res, 404, { error: "Wieland route not found" });
+}
+// ──────────────────────────────────────────────────────────────────────────
 
 function startServer() {
   server.listen(PORT, HOST, () => {

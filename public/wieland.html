@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Wieland OT Dialer Manager</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css" />
+    <style>
+      /* ── Wieland Shell ─────────────────────────────────────────────────── */
+      .w-shell {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        padding: 0;
+      }
+
+      .w-header {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 18px 32px;
+        background: white;
+        border-bottom: 1px solid var(--line-soft);
+        position: sticky;
+        top: 0;
+        z-index: 100;
+      }
+
+      .w-header-brand {
+        font-size: 1.15rem;
+        font-weight: 800;
+        color: var(--brand);
+        letter-spacing: -0.03em;
+        flex: 1;
+      }
+
+      .w-header-back {
+        font-size: 0.85rem;
+        color: var(--muted);
+        text-decoration: none;
+        font-weight: 600;
+        padding: 6px 12px;
+        border-radius: 8px;
+        transition: background 0.15s;
+      }
+      .w-header-back:hover { background: var(--bg); }
+
+      .w-tabs {
+        display: flex;
+        gap: 0;
+        background: white;
+        border-bottom: 1px solid var(--line-soft);
+        padding: 0 32px;
+      }
+
+      .w-tab {
+        padding: 12px 18px;
+        font: inherit;
+        font-weight: 600;
+        font-size: 0.9rem;
+        color: var(--muted);
+        background: none;
+        border: none;
+        border-bottom: 2px solid transparent;
+        cursor: pointer;
+        transition: color 0.15s, border-color 0.15s;
+        white-space: nowrap;
+      }
+      .w-tab:hover { color: var(--brand); }
+      .w-tab.active { color: var(--brand); border-bottom-color: var(--brand); }
+
+      .w-body {
+        flex: 1;
+        padding: 28px 32px;
+        max-width: 1280px;
+        width: 100%;
+        margin: 0 auto;
+      }
+
+      .w-panel { display: none; }
+      .w-panel.active { display: block; }
+
+      /* ── Stats row ─────────────────────────────────────────────────────── */
+      .w-stats {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+        margin-bottom: 24px;
+      }
+
+      .w-stat {
+        background: white;
+        border: 1px solid var(--line-soft);
+        border-radius: 14px;
+        padding: 16px 22px;
+        min-width: 140px;
+        flex: 1;
+      }
+
+      .w-stat-value {
+        font-size: 1.8rem;
+        font-weight: 800;
+        color: var(--brand);
+        letter-spacing: -0.04em;
+        line-height: 1;
+      }
+
+      .w-stat-label {
+        font-size: 0.8rem;
+        color: var(--muted);
+        font-weight: 600;
+        margin-top: 4px;
+      }
+
+      /* ── Toolbar ───────────────────────────────────────────────────────── */
+      .w-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 16px;
+        flex-wrap: wrap;
+      }
+
+      .w-search {
+        flex: 1;
+        min-width: 220px;
+        padding: 9px 14px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        font: inherit;
+        font-size: 0.9rem;
+        outline: none;
+        transition: border-color 0.15s, box-shadow 0.15s;
+      }
+      .w-search:focus {
+        border-color: var(--brand);
+        box-shadow: 0 0 0 3px rgba(28, 40, 83, 0.08);
+      }
+
+      .w-filters {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+
+      .w-filter-chip {
+        padding: 6px 14px;
+        font: inherit;
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: var(--muted);
+        background: white;
+        border: 1px solid var(--line-soft);
+        border-radius: 999px;
+        cursor: pointer;
+        transition: background 0.15s, color 0.15s, border-color 0.15s;
+      }
+      .w-filter-chip:hover { border-color: var(--brand); color: var(--brand); }
+      .w-filter-chip.active { background: var(--brand); color: white; border-color: var(--brand); }
+
+      /* ── Table ─────────────────────────────────────────────────────────── */
+      .w-table-wrap {
+        background: white;
+        border: 1px solid var(--line-soft);
+        border-radius: 14px;
+        overflow: hidden;
+      }
+
+      .w-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.88rem;
+      }
+
+      .w-table th {
+        padding: 12px 14px;
+        text-align: left;
+        font-size: 0.78rem;
+        font-weight: 700;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        background: #f8f9fb;
+        border-bottom: 1px solid var(--line-soft);
+      }
+
+      .w-table td {
+        padding: 11px 14px;
+        border-bottom: 1px solid var(--line-soft);
+        color: var(--text);
+        vertical-align: middle;
+      }
+
+      .w-table tr:last-child td { border-bottom: none; }
+      .w-table tbody tr:hover { background: #f8f9fb; }
+
+      /* ── Priority chip ─────────────────────────────────────────────────── */
+      .w-priority {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        font-weight: 800;
+        font-size: 0.8rem;
+        flex-shrink: 0;
+      }
+      .w-priority.top { background: #dcfce7; color: #166534; }
+      .w-priority.mid { background: #dbeafe; color: #1e40af; }
+      .w-priority.low { background: #f3f4f6; color: #6b7280; }
+
+      /* ── Badges ────────────────────────────────────────────────────────── */
+      .w-badge {
+        display: inline-block;
+        padding: 3px 10px;
+        border-radius: 999px;
+        font-size: 0.76rem;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+      .w-badge.union { background: #eff6ff; color: #1e40af; }
+      .w-badge.active { background: #dcfce7; color: #166534; }
+      .w-badge.loa { background: #fef9c3; color: #713f12; }
+      .w-badge.terminated { background: #fee2e2; color: #991b1b; }
+      .w-badge.dnc { background: #fee2e2; color: #991b1b; }
+
+      /* ── Buttons ───────────────────────────────────────────────────────── */
+      .w-btn {
+        padding: 8px 16px;
+        font: inherit;
+        font-weight: 700;
+        font-size: 0.88rem;
+        border: none;
+        border-radius: 10px;
+        cursor: pointer;
+        transition: opacity 0.15s, transform 0.1s;
+        white-space: nowrap;
+      }
+      .w-btn:hover { opacity: 0.85; }
+      .w-btn:active { transform: scale(0.98); }
+      .w-btn:disabled { opacity: 0.45; cursor: not-allowed; pointer-events: none; }
+
+      .w-btn-primary { background: var(--brand); color: white; }
+      .w-btn-secondary { background: white; color: var(--brand); border: 1px solid var(--line); }
+      .w-btn-sm { padding: 5px 10px; font-size: 0.8rem; border-radius: 7px; }
+      .w-btn-danger { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+
+      /* ── Modal ─────────────────────────────────────────────────────────── */
+      .w-modal-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(17, 24, 39, 0.45);
+        z-index: 200;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+      .w-modal-backdrop.hidden { display: none; }
+
+      .w-modal {
+        background: white;
+        border-radius: 20px;
+        padding: 32px;
+        width: 100%;
+        max-width: 520px;
+        max-height: 90vh;
+        overflow-y: auto;
+        box-shadow: 0 24px 60px rgba(17, 24, 39, 0.2);
+      }
+
+      .w-modal-title {
+        font-size: 1.25rem;
+        font-weight: 800;
+        color: var(--brand);
+        margin-bottom: 20px;
+        letter-spacing: -0.03em;
+      }
+
+      .w-modal-actions {
+        display: flex;
+        gap: 10px;
+        margin-top: 24px;
+        justify-content: flex-end;
+      }
+
+      /* ── Form fields ───────────────────────────────────────────────────── */
+      .w-field {
+        display: grid;
+        gap: 6px;
+        margin-bottom: 14px;
+      }
+
+      .w-field label {
+        font-size: 0.85rem;
+        font-weight: 700;
+        color: var(--brand);
+      }
+
+      .w-field input, .w-field select, .w-field textarea {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        font: inherit;
+        font-size: 0.9rem;
+        outline: none;
+        transition: border-color 0.15s, box-shadow 0.15s;
+        background: white;
+      }
+      .w-field input:focus, .w-field select:focus, .w-field textarea:focus {
+        border-color: var(--brand);
+        box-shadow: 0 0 0 3px rgba(28, 40, 83, 0.08);
+      }
+
+      .w-field-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+
+      .w-field-check {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+      .w-field-check label { font-size: 0.88rem; font-weight: 600; color: var(--text); cursor: pointer; }
+
+      /* ── Alert ─────────────────────────────────────────────────────────── */
+      .w-alert {
+        border-radius: 10px;
+        padding: 10px 14px;
+        font-size: 0.86rem;
+        font-weight: 600;
+        margin-bottom: 14px;
+        display: none;
+      }
+      .w-alert.error { background: #fee2e2; color: #991b1b; display: block; }
+      .w-alert.success { background: #dcfce7; color: #166534; display: block; }
+      .w-alert.info { background: #eff6ff; color: #1e40af; display: block; }
+
+      /* ── Empty state ───────────────────────────────────────────────────── */
+      .w-empty {
+        text-align: center;
+        padding: 60px 20px;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+      .w-empty-icon { font-size: 2.5rem; margin-bottom: 12px; opacity: 0.4; }
+
+      /* ── Loading ───────────────────────────────────────────────────────── */
+      .w-loading {
+        text-align: center;
+        padding: 40px;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      /* ── Lists ─────────────────────────────────────────────────────────── */
+      .w-list-card {
+        background: white;
+        border: 1px solid var(--line-soft);
+        border-radius: 14px;
+        margin-bottom: 12px;
+        overflow: hidden;
+      }
+
+      .w-list-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px 20px;
+        cursor: pointer;
+        user-select: none;
+      }
+      .w-list-header:hover { background: #f8f9fb; }
+
+      .w-list-name { font-weight: 700; color: var(--brand); flex: 1; }
+      .w-list-meta { font-size: 0.82rem; color: var(--muted); }
+      .w-list-chevron { color: var(--muted); transition: transform 0.2s; font-size: 0.8rem; }
+      .w-list-card.open .w-list-chevron { transform: rotate(180deg); }
+
+      .w-list-body { display: none; border-top: 1px solid var(--line-soft); }
+      .w-list-card.open .w-list-body { display: block; }
+
+      .w-list-toolbar {
+        display: flex;
+        gap: 10px;
+        padding: 12px 20px;
+        background: #f8f9fb;
+        border-bottom: 1px solid var(--line-soft);
+        align-items: center;
+      }
+
+      /* ── Campaign page ─────────────────────────────────────────────────── */
+      .w-campaign-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 16px;
+        margin-bottom: 28px;
+      }
+
+      .w-info-card {
+        background: white;
+        border: 1px solid var(--line-soft);
+        border-radius: 14px;
+        padding: 22px;
+      }
+
+      .w-info-card h3 {
+        font-size: 0.82rem;
+        font-weight: 700;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin-bottom: 12px;
+      }
+
+      .w-info-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 6px 0;
+        border-bottom: 1px solid var(--line-soft);
+        font-size: 0.88rem;
+      }
+      .w-info-row:last-child { border-bottom: none; }
+      .w-info-row-label { color: var(--muted); font-weight: 600; }
+      .w-info-row-value { font-weight: 700; color: var(--text); }
+
+      .w-slots-bar {
+        height: 8px;
+        background: var(--line-soft);
+        border-radius: 999px;
+        margin-top: 12px;
+        overflow: hidden;
+      }
+      .w-slots-fill {
+        height: 100%;
+        background: var(--brand);
+        border-radius: 999px;
+        transition: width 0.4s;
+      }
+
+      /* ── Dispositions table ────────────────────────────────────────────── */
+      .w-section-title {
+        font-size: 1.05rem;
+        font-weight: 800;
+        color: var(--brand);
+        margin: 28px 0 14px;
+        letter-spacing: -0.02em;
+      }
+
+      /* ── Field mapping table ───────────────────────────────────────────── */
+      .w-code {
+        font-family: monospace;
+        font-size: 0.85em;
+        background: #f3f4f6;
+        padding: 2px 6px;
+        border-radius: 4px;
+        color: #1e40af;
+      }
+
+      /* ── Settings ──────────────────────────────────────────────────────── */
+      .w-settings-card {
+        background: white;
+        border: 1px solid var(--line-soft);
+        border-radius: 16px;
+        padding: 28px;
+        max-width: 580px;
+      }
+
+      .w-settings-title {
+        font-size: 1.1rem;
+        font-weight: 800;
+        color: var(--brand);
+        margin-bottom: 20px;
+        letter-spacing: -0.02em;
+      }
+
+      /* ── Toast ─────────────────────────────────────────────────────────── */
+      .w-toast {
+        position: fixed;
+        bottom: 28px;
+        right: 28px;
+        background: var(--brand);
+        color: white;
+        padding: 12px 20px;
+        border-radius: 12px;
+        font-size: 0.88rem;
+        font-weight: 700;
+        box-shadow: 0 8px 24px rgba(28, 40, 83, 0.28);
+        z-index: 300;
+        opacity: 0;
+        transform: translateY(12px);
+        transition: opacity 0.22s, transform 0.22s;
+        pointer-events: none;
+      }
+      .w-toast.visible { opacity: 1; transform: translateY(0); }
+      .w-toast.error { background: #991b1b; }
+
+      /* ── Checkbox table ────────────────────────────────────────────────── */
+      .w-check-list {
+        max-height: 300px;
+        overflow-y: auto;
+        border: 1px solid var(--line-soft);
+        border-radius: 10px;
+        margin-top: 8px;
+      }
+
+      .w-check-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--line-soft);
+        font-size: 0.88rem;
+        cursor: pointer;
+      }
+      .w-check-item:last-child { border-bottom: none; }
+      .w-check-item:hover { background: #f8f9fb; }
+      .w-check-item label { cursor: pointer; flex: 1; }
+    </style>
+  </head>
+  <body>
+    <div class="w-shell">
+      <!-- Header -->
+      <header class="w-header">
+        <div class="w-header-brand">Wieland OT Dialer Manager</div>
+        <div class="admin-user-bar" id="userBar" hidden>
+          <span class="admin-user-name" id="userName"></span>
+          <span class="admin-user-role" id="userRole"></span>
+          <button type="button" id="logoutBtn" class="admin-logout-btn">Sign out</button>
+        </div>
+        <a href="./admin.html" class="w-header-back">← Admin</a>
+      </header>
+
+      <!-- Tabs -->
+      <nav class="w-tabs">
+        <button class="w-tab active" data-tab="contacts">Contacts</button>
+        <button class="w-tab" data-tab="lists">Lists</button>
+        <button class="w-tab" data-tab="campaign">Campaign</button>
+        <button class="w-tab" data-tab="mapping">Field Mapping</button>
+        <button class="w-tab" data-tab="settings" id="settingsTab">Settings</button>
+      </nav>
+
+      <!-- Loading / error state -->
+      <div id="initMessage" class="w-loading">Loading…</div>
+
+      <!-- Main content -->
+      <main class="w-body" id="mainBody" hidden>
+
+        <!-- ─── Contacts tab ───────────────────────────────────────────── -->
+        <div class="w-panel active" id="panel-contacts">
+          <div class="w-stats" id="contactStats">
+            <div class="w-stat"><div class="w-stat-value" id="statTotal">—</div><div class="w-stat-label">Total contacts</div></div>
+            <div class="w-stat"><div class="w-stat-value" id="statUnion">—</div><div class="w-stat-label">Union eligible</div></div>
+            <div class="w-stat"><div class="w-stat-value" id="statActive">—</div><div class="w-stat-label">Active</div></div>
+            <div class="w-stat"><div class="w-stat-value" id="statDNC">—</div><div class="w-stat-label">Do not call</div></div>
+            <div class="w-stat"><div class="w-stat-value" id="statEligible">—</div><div class="w-stat-label">Call eligible</div></div>
+          </div>
+
+          <div class="w-toolbar">
+            <input type="search" class="w-search" id="contactSearch" placeholder="Search by name, employee ID, trade…" />
+            <div class="w-filters">
+              <button class="w-filter-chip active" data-filter="all">All</button>
+              <button class="w-filter-chip" data-filter="union">Union</button>
+              <button class="w-filter-chip" data-filter="active">Active</button>
+              <button class="w-filter-chip" data-filter="dnc">DNC</button>
+              <button class="w-filter-chip" data-filter="eligible">Call eligible</button>
+            </div>
+            <button class="w-btn w-btn-primary" id="newContactBtn">+ New contact</button>
+          </div>
+
+          <div id="contactsWrap">
+            <div class="w-loading" id="contactsLoading">Loading contacts…</div>
+            <div class="w-table-wrap" id="contactsTable" hidden></div>
+          </div>
+        </div>
+
+        <!-- ─── Lists tab ──────────────────────────────────────────────── -->
+        <div class="w-panel" id="panel-lists">
+          <div class="w-toolbar">
+            <div style="flex:1"></div>
+            <button class="w-btn w-btn-primary" id="newListBtn">+ New list</button>
+          </div>
+
+          <div id="listsWrap">
+            <div class="w-loading" id="listsLoading">Loading lists…</div>
+            <div id="listsContainer"></div>
+          </div>
+        </div>
+
+        <!-- ─── Campaign tab ───────────────────────────────────────────── -->
+        <div class="w-panel" id="panel-campaign">
+          <div class="w-campaign-grid">
+            <div class="w-info-card" id="slotsCard">
+              <h3>Slots Progress</h3>
+              <div id="slotsInfo" class="w-loading" style="padding:10px 0">Loading…</div>
+            </div>
+            <div class="w-info-card">
+              <h3>Campaign Config</h3>
+              <div class="w-info-row"><span class="w-info-row-label">Campaign</span><span class="w-info-row-value">Wieland_OT_CastingPlantA</span></div>
+              <div class="w-info-row"><span class="w-info-row-label">Tenant</span><span class="w-info-row-value">thrio-prod-4258998</span></div>
+              <div class="w-info-row"><span class="w-info-row-label">Mode</span><span class="w-info-row-value">Progressive / Agentless</span></div>
+              <div class="w-info-row"><span class="w-info-row-label">Dial ratio</span><span class="w-info-row-value">1:1</span></div>
+              <div class="w-info-row"><span class="w-info-row-label">AMD</span><span class="w-info-row-value">Unknown → Machine</span></div>
+            </div>
+            <div class="w-info-card">
+              <h3>Dial Rules</h3>
+              <div class="w-info-row"><span class="w-info-row-label">Daily max attempts</span><span class="w-info-row-value">2</span></div>
+              <div class="w-info-row"><span class="w-info-row-label">Max per number</span><span class="w-info-row-value">3</span></div>
+              <div class="w-info-row"><span class="w-info-row-label">Alt phone fallback</span><span class="w-info-row-value">120s</span></div>
+              <div class="w-info-row"><span class="w-info-row-label">No answer wait</span><span class="w-info-row-value">30s</span></div>
+              <div class="w-info-row"><span class="w-info-row-label">Timezone</span><span class="w-info-row-value">America/Chicago</span></div>
+            </div>
+          </div>
+
+          <h2 class="w-section-title">Dispositions</h2>
+          <div class="w-table-wrap">
+            <table class="w-table">
+              <thead>
+                <tr>
+                  <th>Disposition</th>
+                  <th>Trigger</th>
+                  <th>Action</th>
+                  <th>Next step</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>OT_ACCEPTED</strong></td>
+                  <td>Keypress 1</td>
+                  <td>Increment accepted slots. If slots = needed → delete remaining leads</td>
+                  <td>Close case</td>
+                </tr>
+                <tr>
+                  <td><strong>OT_DECLINED</strong></td>
+                  <td>Keypress 2</td>
+                  <td>No callback</td>
+                  <td>Advance to next by call_priority</td>
+                </tr>
+                <tr>
+                  <td><strong>OT_NO_ANSWER</strong></td>
+                  <td>No answer 30s</td>
+                  <td>Lead update: callback in 60 min, max 2 retries</td>
+                  <td>Close lead after max retries</td>
+                </tr>
+                <tr>
+                  <td><strong>OT_VOICEMAIL</strong></td>
+                  <td>AMD detects machine</td>
+                  <td>Deposit voicemail → 1 callback in 240 min</td>
+                  <td>Close lead</td>
+                </tr>
+                <tr>
+                  <td><strong>OT_INVALID</strong></td>
+                  <td>Invalid number</td>
+                  <td>Remove from queue immediately</td>
+                  <td>Notify HR</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h2 class="w-section-title">SQL Filter (NCC)</h2>
+          <pre style="background:#f3f4f6;border-radius:10px;padding:14px 18px;font-size:0.85rem;overflow-x:auto;color:#1e40af;">active_status='Active' AND union_eligible='Yes' AND do_not_call='No'
+ORDER BY call_priority ASC</pre>
+        </div>
+
+        <!-- ─── Field Mapping tab ──────────────────────────────────────── -->
+        <div class="w-panel" id="panel-mapping">
+          <h2 class="w-section-title">NCC Contact → Lead Field Mapping</h2>
+          <div class="w-table-wrap">
+            <table class="w-table">
+              <thead>
+                <tr>
+                  <th>NCC Contact Field</th>
+                  <th>Lead Field</th>
+                  <th>Type</th>
+                  <th>Priority</th>
+                  <th>Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td><code class="w-code">firstName</code></td><td><code class="w-code">firstName</code></td><td>string</td><td>Required</td><td>Employee first name</td></tr>
+                <tr><td><code class="w-code">lastName</code></td><td><code class="w-code">lastName</code></td><td>string</td><td>Required</td><td>Employee last name</td></tr>
+                <tr><td><code class="w-code">phone</code></td><td><code class="w-code">phone</code></td><td>string</td><td>Primary</td><td>Primary dial number</td></tr>
+                <tr><td><code class="w-code">mobile</code></td><td><code class="w-code">phone_alternate</code></td><td>string</td><td>Fallback (120s)</td><td>Alt phone if primary unanswered</td></tr>
+                <tr><td><code class="w-code">externalId</code></td><td><code class="w-code">T_EXTERNAL_ID</code></td><td>string</td><td>Required</td><td>Employee ID (key for updates)</td></tr>
+                <tr><td><em>local</em></td><td><code class="w-code">call_priority</code></td><td>integer</td><td>Critical</td><td>Computed: rank by seniority among eligible</td></tr>
+                <tr><td><em>local</em></td><td><code class="w-code">union_eligible</code></td><td>boolean</td><td>Filter</td><td>Must be true to be callable</td></tr>
+                <tr><td><em>local</em></td><td><code class="w-code">active_status</code></td><td>enum</td><td>Filter</td><td>Active / LOA / Terminated</td></tr>
+                <tr><td><em>local</em></td><td><code class="w-code">do_not_call</code></td><td>boolean</td><td>Filter</td><td>Excluded from all lists if true</td></tr>
+                <tr><td><em>local</em></td><td><code class="w-code">seniority_years</code></td><td>number</td><td>Sort</td><td>Higher = lower call_priority rank (called sooner)</td></tr>
+                <tr><td><em>local</em></td><td><code class="w-code">plant_location</code></td><td>string</td><td>Info</td><td>Casting Plant A, B, etc.</td></tr>
+                <tr><td><em>local</em></td><td><code class="w-code">trade</code></td><td>string</td><td>Info</td><td>Millwright, Electrician, etc.</td></tr>
+                <tr><td><em>csv</em></td><td><code class="w-code">campaign_ready</code></td><td>YES/NO</td><td>CSV only</td><td>Active + union + no-DNC</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h2 class="w-section-title">call_priority Formula</h2>
+          <pre style="background:#f3f4f6;border-radius:10px;padding:14px 18px;font-size:0.85rem;overflow-x:auto;color:#1e40af;">eligible = contacts.filter(c =>
+  c.active_status === "Active" &amp;&amp;
+  c.union_eligible === true &amp;&amp;
+  c.do_not_call === false
+)
+eligible.sort((a, b) => b.seniority_years - a.seniority_years)
+eligible.forEach((c, i) => c.call_priority = i + 1)
+nonEligible.forEach(c => c.call_priority = 9999)</pre>
+        </div>
+
+        <!-- ─── Settings tab ───────────────────────────────────────────── -->
+        <div class="w-panel" id="panel-settings">
+          <div class="w-settings-card">
+            <div class="w-settings-title">NCC / Thrio Connection</div>
+            <div class="w-alert" id="settingsAlert"></div>
+
+            <div class="w-field">
+              <label for="settingsBaseUrl">NCC Base URL</label>
+              <input id="settingsBaseUrl" type="url" placeholder="https://mancity.thrio.io/data/api/types" />
+            </div>
+            <div class="w-field">
+              <label for="settingsToken">NCC Token <span style="font-weight:400;color:var(--muted)">(leave blank to keep existing)</span></label>
+              <input id="settingsToken" type="password" placeholder="Paste new token to update…" autocomplete="off" />
+            </div>
+            <div class="w-field">
+              <label for="settingsCampaignId">Campaign ID (NCC)</label>
+              <input id="settingsCampaignId" type="text" placeholder="69d6dca2753ac319b7d6560f" />
+            </div>
+            <div class="w-field">
+              <label for="settingsSlotsNeeded">Slots needed</label>
+              <input id="settingsSlotsNeeded" type="number" min="1" max="500" placeholder="8" />
+            </div>
+            <div style="display:flex;gap:10px;margin-top:4px;">
+              <button class="w-btn w-btn-primary" id="saveSettingsBtn">Save settings</button>
+            </div>
+          </div>
+        </div>
+
+      </main>
+    </div>
+
+    <!-- ── Contact modal ──────────────────────────────────────────────────── -->
+    <div class="w-modal-backdrop hidden" id="contactModal">
+      <div class="w-modal">
+        <div class="w-modal-title" id="contactModalTitle">New Contact</div>
+        <div class="w-alert" id="contactModalAlert"></div>
+
+        <div class="w-field-row">
+          <div class="w-field">
+            <label for="mFirstName">First name</label>
+            <input id="mFirstName" type="text" placeholder="Maria" required />
+          </div>
+          <div class="w-field">
+            <label for="mLastName">Last name</label>
+            <input id="mLastName" type="text" placeholder="Garcia" required />
+          </div>
+        </div>
+
+        <div class="w-field-row">
+          <div class="w-field">
+            <label for="mPhone">Phone (primary)</label>
+            <input id="mPhone" type="tel" placeholder="+1 555 000 0000" />
+          </div>
+          <div class="w-field">
+            <label for="mMobile">Phone (alternate)</label>
+            <input id="mMobile" type="tel" placeholder="+1 555 000 0001" />
+          </div>
+        </div>
+
+        <div class="w-field-row">
+          <div class="w-field">
+            <label for="mExternalId">Employee ID</label>
+            <input id="mExternalId" type="text" placeholder="EMP-0001" />
+          </div>
+          <div class="w-field">
+            <label for="mTrade">Trade</label>
+            <input id="mTrade" type="text" placeholder="Millwright" />
+          </div>
+        </div>
+
+        <div class="w-field-row">
+          <div class="w-field">
+            <label for="mPlant">Plant location</label>
+            <input id="mPlant" type="text" placeholder="Casting Plant A" />
+          </div>
+          <div class="w-field">
+            <label for="mSeniority">Seniority (years)</label>
+            <input id="mSeniority" type="number" min="0" max="60" step="0.5" placeholder="5" />
+          </div>
+        </div>
+
+        <div class="w-field">
+          <label for="mStatus">Employment status</label>
+          <select id="mStatus">
+            <option value="Active">Active</option>
+            <option value="LOA">LOA</option>
+            <option value="Terminated">Terminated</option>
+          </select>
+        </div>
+
+        <div class="w-field-check">
+          <input id="mUnion" type="checkbox" />
+          <label for="mUnion">Union eligible</label>
+        </div>
+        <div class="w-field-check">
+          <input id="mDNC" type="checkbox" />
+          <label for="mDNC">Do not call (DNC)</label>
+        </div>
+
+        <input type="hidden" id="mContactId" />
+
+        <div class="w-modal-actions">
+          <button class="w-btn w-btn-secondary" id="contactModalCancel">Cancel</button>
+          <button class="w-btn w-btn-primary" id="contactModalSave">Save contact</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── New list modal ─────────────────────────────────────────────────── -->
+    <div class="w-modal-backdrop hidden" id="listModal">
+      <div class="w-modal">
+        <div class="w-modal-title">Create New List</div>
+        <div class="w-alert" id="listModalAlert"></div>
+        <p style="font-size:0.86rem;color:var(--muted);margin-bottom:16px;">
+          A CSV will be auto-generated from all eligible contacts (Active + Union + no-DNC), sorted by call_priority (seniority descending). The list will be uploaded to NCC and assigned to the configured campaign.
+        </p>
+        <div class="w-field">
+          <label for="listName">List name</label>
+          <input id="listName" type="text" placeholder="OT_CastingA_Week23" required />
+        </div>
+        <div class="w-field">
+          <label for="listDescription">Description (optional)</label>
+          <input id="listDescription" type="text" placeholder="Overtime call for casting plant A" />
+        </div>
+        <div class="w-modal-actions">
+          <button class="w-btn w-btn-secondary" id="listModalCancel">Cancel</button>
+          <button class="w-btn w-btn-primary" id="listModalSave">Create &amp; upload</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Assign contacts modal ──────────────────────────────────────────── -->
+    <div class="w-modal-backdrop hidden" id="assignModal">
+      <div class="w-modal">
+        <div class="w-modal-title">Assign Contacts to List</div>
+        <div class="w-alert" id="assignModalAlert"></div>
+        <p style="font-size:0.86rem;color:var(--muted);margin-bottom:10px;">
+          Select eligible contacts to add as leads. Sorted by call_priority.
+        </p>
+        <div class="w-check-list" id="assignContactList"></div>
+        <input type="hidden" id="assignListId" />
+        <div class="w-modal-actions">
+          <button class="w-btn w-btn-secondary" id="assignModalCancel">Cancel</button>
+          <button class="w-btn w-btn-primary" id="assignModalSave">Add leads</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="w-toast" id="wToast"></div>
+
+    <script src="./wieland.js"></script>
+  </body>
+</html>

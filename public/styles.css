@@ -5289,3 +5289,27 @@ body.embedded .copilot-shell {
     gap: 10px;
   }
 }
+
+
+/* ── Admin sidebar tools (Wieland link) ──────────────────────────────────── */
+.admin-sidebar-tools {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.admin-tool-link {
+  display: block;
+  padding: 9px 14px;
+  border-radius: 10px;
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: var(--brand);
+  text-decoration: none;
+  background: rgba(28, 40, 83, 0.06);
+  transition: background 0.15s;
+}
+
+.admin-tool-link:hover {
+  background: rgba(28, 40, 83, 0.12);
+}

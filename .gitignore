@@ -4,5 +4,7 @@ node_modules
 .claude/
 campaigns.json
 users.json
+wieland-config.json
+wieland-contacts.json
 *.bak
 migrate-encrypt.js
