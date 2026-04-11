@@ -134,19 +134,32 @@ function showTokenFallback() {
 
 async function applySession() {
   const meRes = await fetch(buildUrl(withCampaign("/api/wieland/me")), { credentials: "include", headers: authHeaders() });
-  if (!meRes.ok) return false;
+  if (!meRes.ok) { clearSessionToken(); return false; }
   const meData = await meRes.json();
   session = meData.user;
-  document.getElementById("userName").textContent = session.username || "";
+
+  // Detect corrupted session (e.g. NCC template not substituted: ${session.token})
+  const username = session.username || "";
+  if (username.includes("${") || username.includes("%7B")) {
+    clearSessionToken();
+    return false;
+  }
+
+  document.getElementById("userName").textContent = username || "guest";
   const roleEl = document.getElementById("userRole");
   if (roleEl) roleEl.textContent = session.role || "";
   document.getElementById("userBar").hidden = false;
   document.getElementById("campaignLabel").textContent = `— ${campaignId}`;
+
+  const logoutBtn = document.getElementById("logoutBtn");
+  logoutBtn.replaceWith(logoutBtn.cloneNode(true)); // remove stale listeners
   document.getElementById("logoutBtn").addEventListener("click", async () => {
+    clearSessionToken();
     await fetch(buildUrl("/api/wieland/logout"), { method: "POST", credentials: "include" });
     document.getElementById("userBar").hidden = true;
     document.getElementById("mainBody").hidden = true;
     document.getElementById("initMessage").hidden = true;
+    tokenFallbackReady = false;
     showTokenFallback();
   });
   return true;
