@@ -767,11 +767,10 @@ function updateWielandCredentialField(authType) {
   const label = document.getElementById("wielandCredentialLabel");
   const note = document.getElementById("wielandCredentialNote");
   const input = fields.wielandNccCredential;
-  if (authType === "none") {
-    row.hidden = true;
-    return;
-  }
-  row.hidden = false;
+  const isNone = authType === "none";
+  row.hidden = isNone;
+  row.style.display = isNone ? "none" : "";
+  if (isNone) return;
   if (authType === "key") {
     label.textContent = "NCC API Key";
     input.placeholder = "your-api-key";

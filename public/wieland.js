@@ -94,19 +94,17 @@ async function exchangeNccToken(nccToken) {
   const data = await res.json();
   // Store session token in sessionStorage as fallback when browser blocks third-party cookies
   if (data.sessionToken) saveSessionToken(data.sessionToken);
-  // Remove ncc_token from URL without reloading
-  const params = new URLSearchParams(window.location.search);
-  params.delete("ncc_token");
-  const clean = params.toString()
-    ? `${window.location.pathname}?${params.toString()}`
-    : window.location.pathname;
-  history.replaceState({}, "", clean);
 }
 
+let tokenFallbackReady = false;
 function showTokenFallback() {
   document.getElementById("initMessage").hidden = true;
+  document.getElementById("mainBody").hidden = true;
   const fallback = document.getElementById("tokenFallback");
   fallback.hidden = false;
+
+  if (tokenFallbackReady) return;
+  tokenFallbackReady = true;
 
   const btn = document.getElementById("tokenFallbackBtn");
   const input = document.getElementById("tokenFallbackInput");
@@ -156,6 +154,7 @@ async function applySession() {
 
 function finishInit() {
   document.getElementById("initMessage").hidden = true;
+  document.getElementById("tokenFallback").hidden = true;
   document.getElementById("mainBody").hidden = false;
   loaded.contacts = true;
   loadContacts();
@@ -163,32 +162,42 @@ function finishInit() {
 
 // ── Auth + campaign check ──────────────────────────────────────────────────────
 async function initAuth() {
-  // Validate campaign param first
   if (!campaignId) {
     showAuthError("Missing ?campaign= parameter. Access this page from the Admin panel.");
     return false;
   }
 
-  // If NCC passed a token in the URL, exchange it for a Wieland session cookie
+  // 1. Try existing session first (handles nccAuthType=none, admin session, existing cookie/token)
+  if (await applySession()) return true;
+
+  // 2. Try ncc_token in URL (passed by NCC on embed)
   const params = new URLSearchParams(window.location.search);
   const nccToken = params.get("ncc_token") || "";
-  if (nccToken) {
+  if (nccToken && !nccToken.includes("${")) {
+    // Skip literal unresolved template strings like ${session.token}
     try {
       await exchangeNccToken(nccToken);
-    } catch (err) {
-      showAuthError(err.message);
-      return false;
+      if (await applySession()) return true;
+    } catch {
+      // fall through to manual fallback
     }
+    // Clean URL regardless
+    params.delete("ncc_token");
+    const clean = params.toString()
+      ? `${window.location.pathname}?${params.toString()}`
+      : window.location.pathname;
+    history.replaceState({}, "", clean);
+  } else if (nccToken) {
+    // Unresolved template — clean it from URL silently
+    params.delete("ncc_token");
+    history.replaceState({}, "", params.toString()
+      ? `${window.location.pathname}?${params.toString()}`
+      : window.location.pathname);
   }
 
-  // Check existing session (Wieland or admin)
-  const ok = await applySession();
-  if (!ok) {
-    // No token in URL, no valid session → show manual input fallback
-    showTokenFallback();
-    return false;
-  }
-  return true;
+  // 3. No session → show manual token input
+  showTokenFallback();
+  return false;
 }
 
 // ── Tab navigation ────────────────────────────────────────────────────────────
