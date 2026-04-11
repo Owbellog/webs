@@ -32,6 +32,10 @@ async function api(path, options = {}) {
   });
   if (res.status === 401) {
     clearSessionToken();
+    if (session) {
+      // Had a valid session — show error inline, don't blow up the page
+      throw new Error("Session expired.");
+    }
     showAuthError("Session expired. Reload from NCC.");
     throw new Error("Session expired.");
   }

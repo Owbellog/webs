@@ -3741,12 +3741,7 @@ async function mergeWielandContacts(rawContacts, localMap) {
 }
 
 async function handleWieland(req, res, url) {
-  if (!isAuthorizedWieland(req)) {
-    sendJson(res, 401, { error: "Unauthorized" });
-    return;
-  }
-
-  // ── Resolve campaign from ?campaign= param ────────────────────────────────
+  // ── Resolve campaign first so we can check its auth mode ─────────────────
   const campaignParam = url.searchParams.get("campaign") || "";
   if (!campaignParam) {
     sendJson(res, 400, { error: "Missing ?campaign= parameter." });
@@ -3759,6 +3754,12 @@ async function handleWieland(req, res, url) {
     return;
   }
   const nccAuthType = campaign.wieland?.nccAuthType || "token";
+
+  // Auth check: skip when campaign has no-auth mode, otherwise require session
+  if (nccAuthType !== "none" && !isAuthorizedWieland(req)) {
+    sendJson(res, 401, { error: "Unauthorized" });
+    return;
+  }
   const nccCredential = campaign.wielandNccCredential || (nccAuthType === "token" ? campaign.token : "");
   if (nccAuthType !== "none" && !nccCredential) {
     sendJson(res, 400, { error: `Campaign "${campaign.id}" has no NCC credentials configured. Add them in Admin.` });
