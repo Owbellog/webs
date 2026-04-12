@@ -343,6 +343,21 @@ window.toggleList = function(listId) {
   document.getElementById(`list-${listId}`)?.classList.toggle("open");
 };
 
+window.deleteLead = async function(listId, leadId, btn) {
+  if (!confirm("Remove this lead from the list?")) return;
+  btn.disabled = true;
+  btn.textContent = "…";
+  try {
+    await apiDelete(`/api/wieland/lists/${encodeURIComponent(listId)}/leads/${encodeURIComponent(leadId)}`);
+    btn.closest("tr").remove();
+    showToast("Lead removed.");
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "Remove";
+    showToast(err.message, "error");
+  }
+};
+
 window.deleteList = async function(listId, name) {
   if (!confirm(`Delete list "${name}"? This cannot be undone.`)) return;
   try {
@@ -368,15 +383,17 @@ window.loadListLeads = async function(listId) {
     const rows = leads.map(l => {
       const name = `${l.firstName || ""} ${l.lastName || ""}`.trim();
       const status = l.status || l.outcomeResActionResult || "—";
+      const leadId = l.id || l._id || l.resId || "";
       return `<tr>
-        <td>${escHtml(l.externalId || l.resId || "—")}</td>
+        <td>${escHtml(l.externalId || leadId || "—")}</td>
         <td>${escHtml(name || "—")}</td>
         <td>${escHtml(l.phone || l.mobile || "—")}</td>
         <td>${escHtml(String(status))}</td>
+        <td><button class="w-btn w-btn-danger w-btn-sm" onclick="deleteLead('${escHtml(listId)}','${escHtml(leadId)}',this)">Remove</button></td>
       </tr>`;
     }).join("");
     leadsEl.innerHTML = `<table class="w-table">
-      <thead><tr><th>External ID</th><th>Name</th><th>Phone</th><th>Status</th></tr></thead>
+      <thead><tr><th>External ID</th><th>Name</th><th>Phone</th><th>Status</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
   } catch (err) {

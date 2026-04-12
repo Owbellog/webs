@@ -3939,6 +3939,15 @@ async function handleWieland(req, res, url) {
     return;
   }
 
+  // DELETE /api/wieland/lists/:listId/leads/:leadId
+  const leadDeleteMatch = url.pathname.match(/^\/api\/wieland\/lists\/([^/]+)\/leads\/([^/]+)$/);
+  if (req.method === "DELETE" && leadDeleteMatch) {
+    const [, listId, leadId] = leadDeleteMatch;
+    const result = await nccFetch(nccConfig, `/lead/${leadId}?outboundListId=${encodeURIComponent(listId)}`, "DELETE", {});
+    sendJson(res, result.ok ? 200 : result.status, result.ok ? { ok: true } : { error: "NCC API error", details: result.data });
+    return;
+  }
+
   // DELETE /api/wieland/lists/:id
   const listDeleteMatch = url.pathname.match(/^\/api\/wieland\/lists\/([^/]+)$/);
   if (req.method === "DELETE" && listDeleteMatch) {
