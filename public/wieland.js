@@ -12,33 +12,13 @@ function withCampaign(path) {
   return `${path}${sep}campaign=${encodeURIComponent(campaignId)}`;
 }
 
-// ── Session token (sessionStorage fallback for when cookies are blocked) ──────
-const SESSION_KEY = "niq_w_tok";
-function saveSessionToken(t) { try { sessionStorage.setItem(SESSION_KEY, t); } catch {} }
-function loadSessionToken() { try { return sessionStorage.getItem(SESSION_KEY) || ""; } catch { return ""; } }
-function clearSessionToken() { try { sessionStorage.removeItem(SESSION_KEY); } catch {} }
-
-function authHeaders() {
-  const t = loadSessionToken();
-  return t ? { "Authorization": `Bearer ${t}` } : {};
-}
-
 // ── API ───────────────────────────────────────────────────────────────────────
 async function api(path, options = {}) {
   const res = await fetch(buildUrl(withCampaign(path)), {
     ...options,
     credentials: "include",
-    headers: { "Content-Type": "application/json", ...authHeaders(), ...(options.headers || {}) }
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) }
   });
-  if (res.status === 401) {
-    clearSessionToken();
-    if (session) {
-      // Had a valid session — show error inline, don't blow up the page
-      throw new Error("Session expired.");
-    }
-    showAuthError("Session expired. Reload from NCC.");
-    throw new Error("Session expired.");
-  }
   const data = await res.json();
   if (!res.ok) {
     const detail = data.details ? ` — ${typeof data.details === "string" ? data.details : JSON.stringify(data.details)}` : "";
@@ -75,146 +55,21 @@ let allContacts = [];
 let allLists = [];
 let currentFilter = "all";
 let contactSearchValue = "";
-let session = null;
 
-// ── Auth helpers ──────────────────────────────────────────────────────────────
-function showAuthError(msg) {
-  const el = document.getElementById("initMessage");
-  el.textContent = msg;
-  el.hidden = false;
-}
-
-async function exchangeNccToken(nccToken) {
-  const res = await fetch(buildUrl(withCampaign("/api/wieland/auth")), {
-    method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ nccToken })
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || "Authentication failed.");
-  }
-  const data = await res.json();
-  // Store session token in sessionStorage as fallback when browser blocks third-party cookies
-  if (data.sessionToken) saveSessionToken(data.sessionToken);
-}
-
-let tokenFallbackReady = false;
-function showTokenFallback() {
-  document.getElementById("initMessage").hidden = true;
-  document.getElementById("mainBody").hidden = true;
-  const fallback = document.getElementById("tokenFallback");
-  fallback.hidden = false;
-
-  if (tokenFallbackReady) return;
-  tokenFallbackReady = true;
-
-  const btn = document.getElementById("tokenFallbackBtn");
-  const input = document.getElementById("tokenFallbackInput");
-  const errEl = document.getElementById("tokenFallbackError");
-
-  btn.addEventListener("click", async () => {
-    const token = input.value.trim();
-    if (!token) return;
-    btn.disabled = true;
-    btn.textContent = "Verificando…";
-    errEl.hidden = true;
-    try {
-      await exchangeNccToken(token);
-      fallback.hidden = true;
-      const ok = await applySession();
-      if (ok) finishInit();
-    } catch (err) {
-      errEl.textContent = err.message;
-      errEl.hidden = false;
-      btn.disabled = false;
-      btn.textContent = "Continuar";
-    }
-  });
-
-  input.addEventListener("keydown", e => { if (e.key === "Enter") btn.click(); });
-}
-
-async function applySession() {
-  const meRes = await fetch(buildUrl(withCampaign("/api/wieland/me")), { credentials: "include", headers: authHeaders() });
-  if (!meRes.ok) { clearSessionToken(); return false; }
-  const meData = await meRes.json();
-  session = meData.user;
-
-  // Detect corrupted session (e.g. NCC template not substituted: ${session.token})
-  const username = session.username || "";
-  if (username.includes("${") || username.includes("%7B")) {
-    clearSessionToken();
+// ── Init check ────────────────────────────────────────────────────────────────
+function initCheck() {
+  if (!campaignId) {
+    const el = document.getElementById("initMessage");
+    el.textContent = "Missing ?campaign= parameter. Access this page from the Admin panel.";
+    el.hidden = false;
     return false;
   }
-
-  document.getElementById("userName").textContent = username || "guest";
-  const roleEl = document.getElementById("userRole");
-  if (roleEl) roleEl.textContent = session.role || "";
-  document.getElementById("userBar").hidden = false;
   document.getElementById("campaignLabel").textContent = `— ${campaignId}`;
-
-  const logoutBtn = document.getElementById("logoutBtn");
-  logoutBtn.replaceWith(logoutBtn.cloneNode(true)); // remove stale listeners
-  document.getElementById("logoutBtn").addEventListener("click", async () => {
-    clearSessionToken();
-    await fetch(buildUrl("/api/wieland/logout"), { method: "POST", credentials: "include" });
-    document.getElementById("userBar").hidden = true;
-    document.getElementById("mainBody").hidden = true;
-    document.getElementById("initMessage").hidden = true;
-    tokenFallbackReady = false;
-    showTokenFallback();
-  });
-  return true;
-}
-
-function finishInit() {
   document.getElementById("initMessage").hidden = true;
-  document.getElementById("tokenFallback").hidden = true;
   document.getElementById("mainBody").hidden = false;
   loaded.contacts = true;
   loadContacts();
-}
-
-// ── Auth + campaign check ──────────────────────────────────────────────────────
-async function initAuth() {
-  if (!campaignId) {
-    showAuthError("Missing ?campaign= parameter. Access this page from the Admin panel.");
-    return false;
-  }
-
-  // 1. Try existing session first (handles nccAuthType=none, admin session, existing cookie/token)
-  if (await applySession()) return true;
-
-  // 2. Try ncc_token in URL (passed by NCC on embed)
-  const params = new URLSearchParams(window.location.search);
-  const nccToken = params.get("ncc_token") || "";
-  if (nccToken && !nccToken.includes("${")) {
-    // Skip literal unresolved template strings like ${session.token}
-    try {
-      await exchangeNccToken(nccToken);
-      if (await applySession()) return true;
-    } catch {
-      // fall through to manual fallback
-    }
-    // Clean URL regardless
-    params.delete("ncc_token");
-    const clean = params.toString()
-      ? `${window.location.pathname}?${params.toString()}`
-      : window.location.pathname;
-    history.replaceState({}, "", clean);
-  } else if (nccToken) {
-    // Unresolved template — clean it from URL silently
-    params.delete("ncc_token");
-    history.replaceState({}, "", params.toString()
-      ? `${window.location.pathname}?${params.toString()}`
-      : window.location.pathname);
-  }
-
-  // 3. No session → show manual token input
-  showTokenFallback();
-  return false;
+  return true;
 }
 
 // ── Tab navigation ────────────────────────────────────────────────────────────
@@ -680,7 +535,4 @@ tabs.forEach(tab => {
 });
 
 // ── Init ──────────────────────────────────────────────────────────────────────
-(async () => {
-  const ok = await initAuth();
-  if (ok) finishInit();
-})();
+initCheck();

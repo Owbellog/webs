@@ -3755,11 +3755,7 @@ async function handleWieland(req, res, url) {
   }
   const nccAuthType = campaign.wieland?.nccAuthType || "token";
 
-  // Auth check: skip when campaign has no-auth mode, otherwise require session
-  if (nccAuthType !== "none" && !isAuthorizedWieland(req)) {
-    sendJson(res, 401, { error: "Unauthorized" });
-    return;
-  }
+  // No auth required for Wieland routes — access controlled at the NCC/embed level
   const nccCredential = campaign.wielandNccCredential || (nccAuthType === "token" ? campaign.token : "");
   if (nccAuthType !== "none" && !nccCredential) {
     sendJson(res, 400, { error: `Campaign "${campaign.id}" has no NCC credentials configured. Add them in Admin.` });

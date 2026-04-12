@@ -593,11 +593,6 @@
       <!-- Header -->
       <header class="w-header">
         <div class="w-header-brand">Wieland OT Dialer <span id="campaignLabel" style="font-weight:500;color:var(--muted);font-size:0.9rem;margin-left:6px;"></span></div>
-        <div class="admin-user-bar" id="userBar" hidden>
-          <span class="admin-user-name" id="userName"></span>
-          <span class="admin-user-role" id="userRole"></span>
-          <button type="button" id="logoutBtn" class="admin-logout-btn">Sign out</button>
-        </div>
         <a href="./admin.html" class="w-header-back">← Admin</a>
       </header>
 
@@ -612,16 +607,6 @@
       <!-- Loading / error state -->
       <div id="initMessage" class="w-loading">Loading…</div>
 
-      <!-- Manual token fallback (shown when NCC doesn't pass ncc_token in URL) -->
-      <div id="tokenFallback" class="w-token-fallback" hidden>
-        <div class="w-token-box">
-          <p class="w-token-title">Autenticación requerida</p>
-          <p class="w-token-desc">Pega tu token de sesión de NCC para continuar.</p>
-          <input id="tokenFallbackInput" type="password" class="w-token-input" placeholder="eyJ0eXAiOiJKV1Qi…" autocomplete="off" />
-          <div id="tokenFallbackError" class="w-token-error" hidden></div>
-          <button id="tokenFallbackBtn" class="w-token-btn">Continuar</button>
-        </div>
-      </div>
 
       <!-- Main content -->
       <main class="w-body" id="mainBody" hidden>
