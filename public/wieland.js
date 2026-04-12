@@ -367,16 +367,16 @@ window.loadListLeads = async function(listId) {
     }
     const rows = leads.map(l => {
       const name = `${l.firstName || ""} ${l.lastName || ""}`.trim();
+      const status = l.status || l.outcomeResActionResult || "—";
       return `<tr>
-        <td>${priorityChip(l.call_priority || 9999)}</td>
-        <td>${escHtml(l.T_EXTERNAL_ID || l.externalId || "—")}</td>
+        <td>${escHtml(l.externalId || l.resId || "—")}</td>
         <td>${escHtml(name || "—")}</td>
-        <td>${escHtml(l.phone || "—")}</td>
-        <td>${escHtml(l.placeOfEmployment || "—")}</td>
+        <td>${escHtml(l.phone || l.mobile || "—")}</td>
+        <td>${escHtml(String(status))}</td>
       </tr>`;
     }).join("");
     leadsEl.innerHTML = `<table class="w-table">
-      <thead><tr><th>Priority</th><th>Employee ID</th><th>Name</th><th>Phone</th><th>Plant</th></tr></thead>
+      <thead><tr><th>External ID</th><th>Name</th><th>Phone</th><th>Status</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
   } catch (err) {
@@ -458,15 +458,16 @@ async function assignContacts() {
   clearModalAlert(assignModalAlert);
 
   const leads = checked.map(exId => {
-    const c = allContacts.find(x => (x.externalId || x.id) === exId);
+    const c = allContacts.find(x => (x.externalId || x.id || x._id) === exId);
     if (!c) return null;
     return {
       firstName: c.firstName || "",
       lastName: c.lastName || "",
       phone: c.phone || "",
-      T_EXTERNAL_ID: exId,
-      placeOfEmployment: c.plant_location || "",
-      call_priority: c.call_priority || 9999
+      mobile: c.mobile || "",
+      email: c.email || "",
+      externalId: c.externalId || "",
+      thrioListId: listId
     };
   }).filter(Boolean);
 
