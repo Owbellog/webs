@@ -3704,8 +3704,8 @@ function generateWielandCSV(contacts) {
 function buildNccAuthHeader(nccConfig) {
   const type = nccConfig.nccAuthType || "token";
   const cred = nccConfig.nccCredential || "";
-  if (type === "key" && cred) return { "Authorization": cred };
-  if (type === "token" && cred) return { "Authorization": `Bearer ${cred}` };
+  if (type === "key" && cred) return { "Authorization": `Bearer ${cred}` };
+  if (type === "token" && cred) return { "Authorization": cred };
   return {};
 }
 

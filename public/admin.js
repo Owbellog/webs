@@ -772,13 +772,13 @@ function updateWielandCredentialField(authType) {
   row.style.display = isNone ? "none" : "";
   if (isNone) return;
   if (authType === "key") {
-    label.textContent = "NCC API Key";
-    input.placeholder = "your-api-key";
-    note.innerHTML = "Sent as <code>Authorization: &lt;key&gt;</code> (raw value).";
+    label.textContent = "NCC Credential";
+    input.placeholder = "eyJ0eXAiOiJKV1Qi\u2026";
+    note.innerHTML = "Sent as <code>Authorization: Bearer &lt;token&gt;</code>.";
   } else {
     label.textContent = "NCC Token";
     input.placeholder = "eyJ0eXAiOiJKV1Qi\u2026";
-    note.innerHTML = "Sent as <code>Authorization: Bearer &lt;token&gt;</code>.";
+    note.innerHTML = "Sent as <code>Authorization: &lt;token&gt;</code> (NCC/Thrio format).";
   }
 }
 
