@@ -3911,7 +3911,7 @@ async function handleWieland(req, res, url) {
       sendJson(res, 400, { error: "Invalid JSON." }); return;
     }
     const leads = Array.isArray(body.leads) ? body.leads : [body];
-    const result = await nccFetch(nccConfig, `/outboundlist/${listId}/leads`, "POST", leads);
+    const result = await nccFetch(nccConfig, `/lead`, "POST", leads);
     sendJson(res, result.ok ? 200 : result.status, result.ok ? { ok: true } : { error: "NCC API error", details: result.data });
     return;
   }
@@ -3920,7 +3920,7 @@ async function handleWieland(req, res, url) {
   const listLeadsGetMatch = url.pathname.match(/^\/api\/wieland\/lists\/([^/]+)\/leads$/);
   if (req.method === "GET" && listLeadsGetMatch) {
     const listId = listLeadsGetMatch[1];
-    const result = await nccFetch(nccConfig, `/outboundlist/${listId}/leads`);
+    const result = await nccFetch(nccConfig, `/lead?rows=100&start=0&q=&outboundListId=${encodeURIComponent(listId)}`);
     const leads = result.ok ? (Array.isArray(result.data) ? result.data : (result.data?.objects || result.data?.results || result.data?.data || [])) : [];
     sendJson(res, result.ok ? 200 : result.status, result.ok ? { leads } : { error: "NCC API error" });
     return;
@@ -3934,7 +3934,7 @@ async function handleWieland(req, res, url) {
     try { body = await readJson(req); } catch {
       sendJson(res, 400, { error: "Invalid JSON." }); return;
     }
-    const result = await nccFetch(nccConfig, `/outboundlist/${listId}/lead/${leadId}`, "PATCH", body);
+    const result = await nccFetch(nccConfig, `/lead/${leadId}`, "PATCH", body);
     sendJson(res, result.ok ? 200 : result.status, result.ok ? { ok: true } : { error: "NCC API error" });
     return;
   }
