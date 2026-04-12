@@ -3774,7 +3774,7 @@ async function handleWieland(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/wieland/contacts") {
     const result = await nccFetch(nccConfig, "/contact");
     if (!result.ok) { sendJson(res, result.status, { error: "NCC API error", details: result.data }); return; }
-    const raw = Array.isArray(result.data) ? result.data : (result.data?.results || result.data?.data || []);
+    const raw = Array.isArray(result.data) ? result.data : (result.data?.objects || result.data?.results || result.data?.data || []);
     const localMap = await readWielandContactsLocal();
     const contacts = await mergeWielandContacts(raw, localMap);
     calcCallPriority(contacts);
@@ -3818,7 +3818,7 @@ async function handleWieland(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/wieland/lists") {
     const qs = nccConfig.campaignId ? `?campaignId=${encodeURIComponent(nccConfig.campaignId)}` : "";
     const result = await nccFetch(nccConfig, `/outboundlist${qs}`);
-    const lists = result.ok ? (Array.isArray(result.data) ? result.data : (result.data?.results || result.data?.data || [])) : [];
+    const lists = result.ok ? (Array.isArray(result.data) ? result.data : (result.data?.objects || result.data?.results || result.data?.data || [])) : [];
     sendJson(res, result.ok ? 200 : result.status, result.ok ? { lists } : { error: "NCC API error", details: result.data });
     return;
   }
@@ -3921,7 +3921,7 @@ async function handleWieland(req, res, url) {
   if (req.method === "GET" && listLeadsGetMatch) {
     const listId = listLeadsGetMatch[1];
     const result = await nccFetch(nccConfig, `/outboundlist/${listId}/lead`);
-    const leads = result.ok ? (Array.isArray(result.data) ? result.data : (result.data?.results || result.data?.data || [])) : [];
+    const leads = result.ok ? (Array.isArray(result.data) ? result.data : (result.data?.objects || result.data?.results || result.data?.data || [])) : [];
     sendJson(res, result.ok ? 200 : result.status, result.ok ? { leads } : { error: "NCC API error" });
     return;
   }
