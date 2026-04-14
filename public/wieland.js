@@ -382,14 +382,12 @@ function renderLists() {
     const listId = list.id || list._id || "";
     const name = list.name || list.localizations?.name?.en?.value || listId;
     const status = list.status || list.state || "";
-    const count = list.leadCount || list.recordCount || list.count || "";
     const isActive = Boolean(list.active);
     return `<div class="w-list-card" id="list-${escHtml(listId)}">
       <div class="w-list-header" data-action="toggle-list" data-list-id="${escHtml(listId)}">
         <span class="w-list-name">${escHtml(name)}</span>
         <span class="w-list-meta">${isActive ? "Active" : "Inactive"}</span>
         ${status ? `<span class="w-list-meta">${escHtml(status)}</span>` : ""}
-        ${count !== "" ? `<span class="w-list-meta">${count} records</span>` : ""}
         <span class="w-list-chevron">▼</span>
       </div>
       <div class="w-list-body">

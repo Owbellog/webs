@@ -302,7 +302,7 @@ function renderWielandMappingEditors(widgetMap = {}, contactToListMap = {}) {
     wielandWidgetMappingRows.innerHTML = Object.entries(DEFAULT_WIELAND_WIDGET_TO_CONTACT_MAP).map(([widgetField, defaultContactField]) => `
       <tr>
         <td><span class="admin-mapping-code">${escapeHtml(widgetField)}</span></td>
-        <td><input class="admin-mapping-input" type="text" data-wieland-widget-field="${escapeHtml(widgetField)}" value="${escapeHtml(widgetMap[widgetField] || defaultContactField || "")}" /></td>
+        <td><input class="admin-mapping-input" type="text" data-wieland-widget-field="${escapeHtml(widgetField)}" value="${escapeHtml(Object.prototype.hasOwnProperty.call(widgetMap, widgetField) ? widgetMap[widgetField] : (defaultContactField || ""))}" /></td>
         <td class="admin-mapping-description">Logical field used by the widget.</td>
       </tr>
     `).join("");
@@ -325,7 +325,7 @@ function readWielandWidgetMap() {
   document.querySelectorAll("[data-wieland-widget-field]").forEach((input) => {
     const key = input.getAttribute("data-wieland-widget-field");
     const value = input.value.trim();
-    if (key && value) result[key] = value;
+    if (key) result[key] = value;
   });
   return result;
 }

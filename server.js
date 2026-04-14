@@ -3790,6 +3790,10 @@ function sanitizeStringMapping(mapping) {
   return clean;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function buildWielandContactFingerprints(contact) {
   const fingerprints = new Set();
   const add = (value) => {
@@ -4073,6 +4077,28 @@ async function handleWieland(req, res, url) {
 
   // ── Lists ────────────────────────────────────────────────────────────────
   if (req.method === "GET" && url.pathname === "/api/wieland/lists") {
+    const campaignResult = nccConfig.campaignId
+      ? await nccFetch(nccConfig, `/campaign/${encodeURIComponent(nccConfig.campaignId)}`)
+      : { ok: false, status: 400, data: { error: "Campaign ID not configured." } };
+    if (campaignResult.ok) {
+      const assigned = Array.isArray(campaignResult.data?.lists?.objects) ? campaignResult.data.lists.objects : [];
+      const lists = assigned.map((item) => {
+        const expanded = item?.expansions?.outboundlistId || {};
+        return {
+          ...expanded,
+          ...item,
+          _id: expanded._id || item?.outboundlistId || item?._id || "",
+          outboundlistId: expanded.outboundlistId || item?.outboundlistId || expanded._id || "",
+          name: expanded.name || expanded.localizations?.name?.en?.value || item?.outboundlistId || "",
+          active: expanded.active,
+          status: expanded.status,
+          count: expanded.totalConverted ?? expanded.totalInFile ?? ""
+        };
+      });
+      sendJson(res, 200, { lists });
+      return;
+    }
+
     const qs = nccConfig.campaignId ? `?campaignId=${encodeURIComponent(nccConfig.campaignId)}` : "";
     const result = await nccFetch(nccConfig, `/outboundlist${qs}`);
     const lists = result.ok ? (Array.isArray(result.data) ? result.data : (result.data?.objects || result.data?.results || result.data?.data || [])) : [];
@@ -4147,22 +4173,40 @@ async function handleWieland(req, res, url) {
     ).trim() || "contacts.csv";
 
     // Multipart upload
+    const listDescription = String(body.description || "").trim();
     const listPayload = {
       objectType: "outboundlist",
       campaignId: nccConfig.campaignId,
       isSMS: false,
+      isEmail: false,
       name: listName,
-      duplicateStrategy: null,
-      description: body.description || null,
+      file: uploadFileName,
+      description: listDescription || null,
       isScrub: false,
       keepOptinOnly: false,
       isReassigned: false,
       isWorkflow: false,
-      localizations: { name: { en: { language: "en", value: listName } } }
+      localizations: {
+        name: { en: { language: "en", value: listName } },
+        ...(listDescription ? { description: { en: { language: "en", value: listDescription } } } : {})
+      },
+      outboundListLoadForm: {
+        isSMS: false,
+        file: uploadFileName,
+        keepOptinOnly: false,
+        localizations: {
+          name: { en: { language: "en", value: listName } },
+          ...(listDescription ? { description: { en: { language: "en", value: listDescription } } } : {})
+        },
+        campaignId: nccConfig.campaignId,
+        isReassigned: false,
+        isWorkflow: false,
+        isScrub: false
+      }
     };
 
     const formData = new FormData();
-    formData.append("object", new Blob([JSON.stringify(listPayload)], { type: "application/json" }), "object.json");
+    formData.append("object", JSON.stringify(listPayload));
     formData.append("file", new Blob([csvContent], { type: "text/csv" }), uploadFileName);
 
     const baseUrl = (nccConfig.nccBaseUrl || "https://mancity.thrio.io/data/api/types").replace(/\/$/, "");
@@ -4210,18 +4254,32 @@ async function handleWieland(req, res, url) {
     }
 
     const listData = await createRes.json();
-    const listId = listData.id || listData._id;
+    const listId = listData.id || listData._id || listData.outboundlistId;
 
     // Assign to campaign
+    let attachResult = null;
     if (listId) {
-      await nccFetch(nccConfig, "/campaignoutboundlist", "POST", {
-        campaignId: nccConfig.campaignId,
-        outboundlistId: listId,
-        _working: true
-      });
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        attachResult = await nccFetch(nccConfig, "/campaignoutboundlist", "POST", {
+          campaignId: nccConfig.campaignId,
+          outboundlistId: listId,
+          _working: true
+        });
+        if (attachResult.ok) break;
+        if (attempt < 3) await sleep(500 * attempt);
+      }
     }
 
-    sendJson(res, 200, { ok: true, list: listData, contactsInCsv: eligible.length });
+    sendJson(res, 200, {
+      ok: true,
+      list: listData,
+      contactsInCsv: eligible.length,
+      attach: attachResult
+        ? (attachResult.ok
+          ? { ok: true, data: attachResult.data }
+          : { ok: false, status: attachResult.status, data: attachResult.data })
+        : { ok: false, error: "No list id returned from NCC." }
+    });
     return;
   }
 
