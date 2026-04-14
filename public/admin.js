@@ -62,28 +62,28 @@ const DEFAULT_WIELAND_WIDGET_TO_CONTACT_MAP = {
 };
 
 const WIELAND_CONTACT_FIELD_DESCRIPTIONS = [
-  ["firstName", "Employee first name"],
-  ["lastName", "Employee last name"],
-  ["phone", "Primary phone number"],
-  ["mobile", "Alternate phone number"],
-  ["email", "Email address"],
-  ["externalId", "Employee ID"],
-  ["shift_type", "Shift / cambio"],
-  ["trade", "Trade / role"],
-  ["plant_location", "Plant location"],
-  ["seniority_start_date", "Seniority start date"],
-  ["seniority_years", "Computed seniority in years"],
-  ["active_status", "Employment status"],
-  ["union_eligible", "Union flag"],
-  ["do_not_call", "Do not call flag"],
-  ["call_priority", "Computed call priority"],
-  ["name", "Full display name"],
-  ["addresss", "Address"],
-  ["city", "City"],
-  ["state", "State / employee status in NCC"],
-  ["zip", "ZIP / union flag in NCC"],
-  ["dob", "Date of birth / start date in NCC"],
-  ["fax", "Priority slot used in NCC"]
+  ["firstName",           "Employee first name"],
+  ["lastName",            "Employee last name"],
+  ["phone",               "Primary phone number"],
+  ["mobile",              "Alternate phone number"],
+  ["email",               "Email address"],
+  ["externalId",          "Employee ID — e.g. map to 'email' to pass employee ID through the NCC email column"],
+  ["shift_type",          "Shift / cambio"],
+  ["trade",               "Trade / role"],
+  ["plant_location",      "Plant location (NCC field: addresss)"],
+  ["seniority_start_date","Seniority start date (NCC field: dob)"],
+  ["seniority_years",     "Computed seniority in years"],
+  ["active_status",       "Employment status (NCC field: state)"],
+  ["union_eligible",      "Union flag (NCC field: zip — '1' or '0')"],
+  ["do_not_call",         "Do not call flag"],
+  ["call_priority",       "Computed call priority (NCC field: fax)"],
+  ["name",                "Full display name"],
+  ["address",             "Address (NCC field name: addresss)"],
+  ["city",                "City"],
+  ["state",               "State"],
+  ["zip",                 "ZIP code"],
+  ["dob",                 "Date of birth"],
+  ["fax",                 "Fax / priority slot (NCC)"]
 ];
 
 const fields = {
@@ -309,13 +309,15 @@ function renderWielandMappingEditors(widgetMap = {}, contactToListMap = {}) {
   }
 
   if (wielandContactToListRows) {
-    wielandContactToListRows.innerHTML = WIELAND_CONTACT_FIELD_DESCRIPTIONS.map(([contactField, description]) => `
-      <tr>
+    wielandContactToListRows.innerHTML = WIELAND_CONTACT_FIELD_DESCRIPTIONS.map(([contactField, description]) => {
+      const val = contactToListMap[contactField] || "";
+      const highlight = val ? ' style="border-color:var(--brand,#1c2853);background:#f0f4ff;"' : "";
+      return `<tr>
         <td><code>${escapeHtml(contactField)}</code></td>
-        <td><input type="text" data-wieland-contact-field="${escapeHtml(contactField)}" value="${escapeHtml(contactToListMap[contactField] || "")}" /></td>
-        <td>${escapeHtml(description)}</td>
-      </tr>
-    `).join("");
+        <td><input type="text" data-wieland-contact-field="${escapeHtml(contactField)}" value="${escapeHtml(val)}" placeholder="NCC column name"${highlight} /></td>
+        <td style="color:var(--muted,#6b7280);font-size:0.85rem;">${escapeHtml(description)}</td>
+      </tr>`;
+    }).join("");
   }
 }
 
