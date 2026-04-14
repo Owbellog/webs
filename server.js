@@ -3748,15 +3748,20 @@ function normalizeWielandContactInput(input, campaign) {
   return normalized;
 }
 
-function buildLeadPayloadFromContact(contact, listId, contactToList = {}) {
+function buildLeadPayloadFromContact(contact, listId, contactToList = {}, options = {}) {
   const fullName = contact.name || `${contact.firstName || ""} ${contact.lastName || ""}`.trim();
-  const lead = {
-    name: fullName,
-    firstName: contact.firstName || "",
-    lastName: contact.lastName || "",
-    phone: contact.phone || "",
-    outboundListId: listId
-  };
+  const includeBaseFields = options.includeBaseFields !== false;
+  const lead = includeBaseFields
+    ? {
+        name: fullName,
+        firstName: contact.firstName || "",
+        lastName: contact.lastName || "",
+        phone: contact.phone || "",
+        outboundListId: listId
+      }
+    : {
+        outboundListId: listId
+      };
   for (const [contactField, listColumn] of Object.entries(contactToList || {})) {
     const value = contact?.[contactField];
     if (!listColumn || value === undefined || value === null || value === "") continue;
@@ -3801,6 +3806,7 @@ function buildWielandContactFingerprints(contact) {
     if (normalized) fingerprints.add(normalized);
   };
   add(contact?.externalId);
+  add(contact?.email);
   add(contact?.phone);
   add(contact?.mobile);
   add(`${contact?.firstName || ""} ${contact?.lastName || ""}`.trim());
@@ -4291,9 +4297,112 @@ async function handleWieland(req, res, url) {
     try { body = await readJson(req); } catch {
       sendJson(res, 400, { error: "Invalid JSON." }); return;
     }
-    const leads = Array.isArray(body.leads) ? body.leads : [body];
-    const result = await nccFetch(nccConfig, `/lead`, "POST", leads);
-    sendJson(res, result.ok ? 200 : result.status, result.ok ? { ok: true } : { error: "NCC API error", details: result.data });
+    const inputLeads = Array.isArray(body.leads) ? body.leads : [body];
+    const existingResult = await nccFetch(nccConfig, `/lead?rows=200&start=0&q=&outboundListId=${encodeURIComponent(listId)}`);
+    if (!existingResult.ok) {
+      sendJson(res, existingResult.status, { error: "NCC API error", details: existingResult.data });
+      return;
+    }
+    const existingLeads = Array.isArray(existingResult.data)
+      ? existingResult.data
+      : (existingResult.data?.objects || existingResult.data?.results || existingResult.data?.data || []);
+    const existingFingerprints = new Set();
+    for (const lead of existingLeads) {
+      for (const fingerprint of buildWielandContactFingerprints(lead)) existingFingerprints.add(fingerprint);
+    }
+
+    const fieldmappingsResult = await nccFetch(nccConfig, "/fieldmappings");
+    const nccFieldmappings = fieldmappingsResult.ok
+      ? (Array.isArray(fieldmappingsResult.data) ? fieldmappingsResult.data : (fieldmappingsResult.data?.objects || fieldmappingsResult.data?.results || fieldmappingsResult.data?.data || []))
+      : [];
+    const selectedFieldmapping = nccFieldmappings.find((item) => {
+      const itemId = item?.fieldmappingsId || item?._id || item?.id || "";
+      return item?.schema === "contact" && itemId === String(campaign.wieland?.nccFieldmappingId || "").trim();
+    }) || selectBestNccContactFieldmapping(nccFieldmappings);
+    const configuredContactToList = sanitizeStringMapping(campaign.wieland?.contactToListMap || {});
+    const contactToList = Object.keys(configuredContactToList).length
+      ? configuredContactToList
+      : sanitizeStringMapping(selectedFieldmapping?.fields || {});
+    const widgetMap = getEffectiveWielandWidgetMap(campaign);
+    const widgetExternalTarget = widgetMap.externalId || "externalId";
+
+    const leads = inputLeads.map((lead) => {
+      const normalizedLead = { ...lead };
+      if (!normalizedLead.externalId && widgetExternalTarget && widgetExternalTarget !== "externalId") {
+        normalizedLead.externalId = normalizedLead[widgetExternalTarget] || "";
+      }
+      return buildLeadPayloadFromContact(normalizedLead, listId, contactToList, { includeBaseFields: false });
+    }).filter((lead) => {
+      const fingerprints = buildWielandContactFingerprints(lead);
+      for (const fingerprint of fingerprints) {
+        if (existingFingerprints.has(fingerprint)) return false;
+      }
+      for (const fingerprint of fingerprints) existingFingerprints.add(fingerprint);
+      return true;
+    });
+
+    if (!leads.length) {
+      sendJson(res, 200, { ok: true, added: 0, skippedExisting: inputLeads.length });
+      return;
+    }
+
+    const result = await nccFetch(nccConfig, `/outboundlist/${encodeURIComponent(listId)}/leads`, "POST", leads);
+    let visibleAfterInsert = null;
+    if (result.ok) {
+      const verifyResult = await nccFetch(nccConfig, `/lead?rows=200&start=0&q=&outboundListId=${encodeURIComponent(listId)}`);
+      if (verifyResult.ok) {
+        const verifyLeads = Array.isArray(verifyResult.data)
+          ? verifyResult.data
+          : (verifyResult.data?.objects || verifyResult.data?.results || verifyResult.data?.data || []);
+        visibleAfterInsert = {
+          count: verifyLeads.length,
+          leads: verifyLeads.map((lead) => ({
+            leadId: lead?.leadId || lead?._id || lead?.id || "",
+            firstName: lead?.firstName || "",
+            lastName: lead?.lastName || "",
+            phone: lead?.phone || "",
+            mobile: lead?.mobile || "",
+            email: lead?.email || "",
+            thrioListId: lead?.thrioListId || ""
+          }))
+        };
+      } else {
+        visibleAfterInsert = {
+          error: true,
+          status: verifyResult.status,
+          details: verifyResult.data
+        };
+      }
+    }
+    sendJson(
+      res,
+      result.ok ? 200 : result.status,
+      result.ok
+        ? {
+            ok: true,
+            added: leads.length,
+            skippedExisting: inputLeads.length - leads.length,
+            debug: {
+              nccStatus: result.status,
+              nccResponse: result.data,
+              outboundListId: listId,
+              contactToList,
+              payloadSentToNcc: { leads },
+              visibleAfterInsert
+            }
+          }
+        : {
+            error: "NCC API error",
+            details: result.data,
+            debug: {
+              nccStatus: result.status,
+              nccResponse: result.data,
+              outboundListId: listId,
+              contactToList,
+              payloadSentToNcc: { leads }
+            }
+          }
+    );
     return;
   }
 

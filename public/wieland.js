@@ -569,14 +569,43 @@ async function createList() {
 const assignModal = document.getElementById("assignModal");
 const assignModalAlert = document.getElementById("assignModalAlert");
 
-function openAssignModal(listId) {
+function buildLeadFingerprints(item) {
+  const values = [
+    item?.externalId,
+    item?.email,
+    item?.phone,
+    item?.mobile,
+    `${item?.firstName || ""} ${item?.lastName || ""}`.trim(),
+    item?.name
+  ];
+  return new Set(values.map((value) => String(value || "").trim().toLowerCase()).filter(Boolean));
+}
+
+async function openAssignModal(listId) {
   clearModalAlert(assignModalAlert);
   document.getElementById("assignListId").value = listId;
-  const eligible = allContacts.filter(c => c.call_priority < INELIGIBLE_PRIORITY);
-  eligible.sort((a, b) => (b.call_priority || 0) - (a.call_priority || 0));
   const listEl = document.getElementById("assignContactList");
+  listEl.innerHTML = `<div style="padding:16px;text-align:center;color:var(--muted);">Loading…</div>`;
+  let existingFingerprints = new Set();
+  try {
+    const data = await api(`/api/wieland/lists/${encodeURIComponent(listId)}/leads`);
+    const existingLeads = data.leads || [];
+    existingFingerprints = new Set(existingLeads.flatMap((lead) => Array.from(buildLeadFingerprints(lead))));
+  } catch {
+    existingFingerprints = new Set();
+  }
+
+  const eligible = allContacts.filter((c) => {
+    if (c.call_priority >= INELIGIBLE_PRIORITY) return false;
+    const fingerprints = buildLeadFingerprints(c);
+    for (const fingerprint of fingerprints) {
+      if (existingFingerprints.has(fingerprint)) return false;
+    }
+    return true;
+  });
+  eligible.sort((a, b) => (b.call_priority || 0) - (a.call_priority || 0));
   if (!eligible.length) {
-    listEl.innerHTML = `<div style="padding:16px;text-align:center;color:var(--muted);">No eligible contacts found.</div>`;
+    listEl.innerHTML = `<div style="padding:16px;text-align:center;color:var(--muted);">No eligible contacts available to add.</div>`;
   } else {
     listEl.innerHTML = eligible.map(c => {
       const name = `${c.firstName || ""} ${c.lastName || ""}`.trim();
@@ -607,20 +636,22 @@ async function assignContacts() {
     const c = allContacts.find(x => getContactKey(x) === exId);
     if (!c) return null;
     return {
+      name: `${c.firstName || ""} ${c.lastName || ""}`.trim(),
       firstName: c.firstName || "",
       lastName: c.lastName || "",
       phone: c.phone || "",
       mobile: c.mobile || "",
       email: c.email || "",
       externalId: c.externalId || "",
-      thrioListId: listId
+      outboundListId: listId
     };
   }).filter(Boolean);
 
   try {
-    await apiPost(`/api/wieland/lists/${encodeURIComponent(listId)}/leads`, { leads });
+    const result = await apiPost(`/api/wieland/lists/${encodeURIComponent(listId)}/leads`, { leads });
     assignModal.classList.add("hidden");
-    showToast(`${leads.length} leads added to list.`);
+    showToast(`${result.added || 0} leads added.${result.skippedExisting ? ` ${result.skippedExisting} already existed.` : ""}`);
+    await loadListLeads(listId);
   } catch (err) {
     showModalAlert(assignModalAlert, err.message);
   } finally {
