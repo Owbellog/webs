@@ -3898,12 +3898,24 @@ async function handleWieland(req, res, url) {
     try { body = await readJson(req); } catch {
       sendJson(res, 400, { error: "Invalid JSON." }); return;
     }
-    const { union_eligible, active_status, do_not_call, seniority_years, seniority_start_date, plant_location, trade, shift_type, ...nccFields } = body;
-    const result = await nccFetch(nccConfig, "/contact", "POST", { objectType: "contact", ...nccFields });
+    const { union_eligible, active_status, do_not_call, seniority_years, seniority_start_date,
+            plant_location, trade, shift_type, firstName, lastName, phone, mobile, externalId, email, name } = body;
+    // Map semantic fields → NCC field names (addresss is NCC's own field name)
+    const nccPayload = {
+      objectType: "contact",
+      firstName, lastName, phone, mobile, externalId, email,
+      name: name || `${firstName || ""} ${lastName || ""}`.trim(),
+      addresss: plant_location || "",
+      city:     trade || "",
+      state:    active_status || "Active",
+      zip:      union_eligible ? "1" : "0",
+      dob:      seniority_start_date || ""
+    };
+    const result = await nccFetch(nccConfig, "/contact", "POST", nccPayload);
     if (!result.ok) { sendJson(res, result.status, { error: "NCC API error", details: result.data }); return; }
-    const externalId = body.externalId || result.data?.externalId || result.data?.id || result.data?._id;
-    if (externalId) {
-      await writeWielandContactLocal(externalId, { union_eligible, active_status, do_not_call, seniority_years, seniority_start_date, plant_location, trade, shift_type });
+    const nccExternalId = externalId || result.data?.externalId || result.data?.id || result.data?._id;
+    if (nccExternalId) {
+      await writeWielandContactLocal(nccExternalId, { union_eligible, active_status, do_not_call, seniority_years, seniority_start_date, plant_location, trade, shift_type });
     }
     const syncResult = await syncWielandContactFaxPriority(nccConfig);
     if (!syncResult.ok) {
@@ -3921,11 +3933,27 @@ async function handleWieland(req, res, url) {
     try { body = await readJson(req); } catch {
       sendJson(res, 400, { error: "Invalid JSON." }); return;
     }
-    const { union_eligible, active_status, do_not_call, seniority_years, seniority_start_date, plant_location, trade, shift_type, ...nccFields } = body;
-    const result = await nccFetch(nccConfig, `/contact/${contactId}`, "PATCH", nccFields);
+    const { union_eligible, active_status, do_not_call, seniority_years, seniority_start_date,
+            plant_location, trade, shift_type, firstName, lastName, phone, mobile, externalId, email, name } = body;
+    // Only include NCC fields that were actually provided in the request
+    const nccPayload = {};
+    if (firstName !== undefined)           nccPayload.firstName = firstName;
+    if (lastName !== undefined)            nccPayload.lastName  = lastName;
+    if (firstName !== undefined || lastName !== undefined || name !== undefined)
+      nccPayload.name = name || `${firstName || ""} ${lastName || ""}`.trim();
+    if (phone !== undefined)               nccPayload.phone     = phone;
+    if (mobile !== undefined)              nccPayload.mobile    = mobile;
+    if (email !== undefined)               nccPayload.email     = email;
+    if (externalId !== undefined)          nccPayload.externalId = externalId;
+    if (plant_location !== undefined)      nccPayload.addresss  = plant_location;
+    if (trade !== undefined)               nccPayload.city      = trade;
+    if (active_status !== undefined)       nccPayload.state     = active_status;
+    if (union_eligible !== undefined)      nccPayload.zip       = union_eligible ? "1" : "0";
+    if (seniority_start_date !== undefined) nccPayload.dob      = seniority_start_date;
+    const result = await nccFetch(nccConfig, `/contact/${contactId}`, "PATCH", nccPayload);
     if (!result.ok) { sendJson(res, result.status, { error: "NCC API error", details: result.data }); return; }
-    const externalId = body.externalId || contactId;
-    await writeWielandContactLocal(externalId, { union_eligible, active_status, do_not_call, seniority_years, seniority_start_date, plant_location, trade, shift_type });
+    const nccExternalId = externalId || contactId;
+    await writeWielandContactLocal(nccExternalId, { union_eligible, active_status, do_not_call, seniority_years, seniority_start_date, plant_location, trade, shift_type });
     const syncResult = await syncWielandContactFaxPriority(nccConfig);
     if (!syncResult.ok) {
       sendJson(res, syncResult.status, { error: "Failed to sync contact priorities", details: syncResult.data });

@@ -1,3 +1,6 @@
+// ── Constants ─────────────────────────────────────────────────────────────────
+const INELIGIBLE_PRIORITY = 9999;
+
 // ── Campaign param ────────────────────────────────────────────────────────────
 const appBase = new URL(".", window.location.href);
 const campaignId = new URLSearchParams(window.location.search).get("campaign") || "";
@@ -39,6 +42,14 @@ function apiDelete(path) {
   return api(path, { method: "DELETE" });
 }
 
+// ── Campaign status cache ─────────────────────────────────────────────────────
+let campaignStatusCache = null;
+async function getCampaignStatus() {
+  if (campaignStatusCache) return campaignStatusCache;
+  campaignStatusCache = await api("/api/wieland/campaign/status");
+  return campaignStatusCache;
+}
+
 // ── Toast ─────────────────────────────────────────────────────────────────────
 const toast = document.getElementById("wToast");
 let toastTimer;
@@ -56,6 +67,7 @@ let allLists = [];
 let currentFilter = "all";
 let contactSearchValue = "";
 let currentContactToListMap = {};
+let loaded = { contacts: false, lists: false, campaign: false, mapping: false };
 
 // ── Init check ────────────────────────────────────────────────────────────────
 function initCheck() {
@@ -84,13 +96,17 @@ tabs.forEach(tab => {
     panels.forEach(p => p.classList.remove("active"));
     tab.classList.add("active");
     document.getElementById(`panel-${tab.dataset.tab}`).classList.add("active");
+    const name = tab.dataset.tab;
+    if (name === "lists" && !loaded.lists) { loaded.lists = true; loadLists(); }
+    if (name === "campaign" && !loaded.campaign) { loaded.campaign = true; loadCampaignStatus(); }
+    if (name === "mapping" && !loaded.mapping) { loaded.mapping = true; loadFieldMapping(); }
   });
 });
 
 // ── Priority chip ─────────────────────────────────────────────────────────────
 function priorityChip(p) {
   const cls = p <= 3 ? "top" : p <= 9 ? "mid" : "low";
-  const label = p >= 9999 ? "—" : p;
+  const label = p >= INELIGIBLE_PRIORITY ? "—" : p;
   return `<span class="w-priority ${cls}">${label}</span>`;
 }
 
@@ -121,7 +137,7 @@ function filteredContacts() {
   if (currentFilter === "union") list = list.filter(c => c.union_eligible);
   else if (currentFilter === "active") list = list.filter(c => c.active_status === "Active");
   else if (currentFilter === "dnc") list = list.filter(c => c.do_not_call);
-  else if (currentFilter === "eligible") list = list.filter(c => c.call_priority < 9999);
+  else if (currentFilter === "eligible") list = list.filter(c => c.call_priority < INELIGIBLE_PRIORITY);
   return list;
 }
 
@@ -130,7 +146,7 @@ function updateStats() {
   const union = allContacts.filter(c => c.union_eligible).length;
   const active = allContacts.filter(c => c.active_status === "Active").length;
   const dnc = allContacts.filter(c => c.do_not_call).length;
-  const eligible = allContacts.filter(c => c.call_priority < 9999).length;
+  const eligible = allContacts.filter(c => c.call_priority < INELIGIBLE_PRIORITY).length;
   document.getElementById("statTotal").textContent = total;
   document.getElementById("statUnion").textContent = union;
   document.getElementById("statActive").textContent = active;
@@ -154,7 +170,7 @@ function renderContactsTable() {
     const dncBadge = c.do_not_call ? `<span class="w-badge dnc">DNC</span>` : "";
     const cid = escHtml(getContactKey(c));
     return `<tr>
-      <td>${priorityChip(c.call_priority || 9999)}</td>
+      <td>${priorityChip(c.call_priority || INELIGIBLE_PRIORITY)}</td>
       <td>${escHtml(c.externalId || c.contactId || c._id || "—")}</td>
       <td><strong>${escHtml(name)}</strong></td>
       <td>${escHtml(c.shift_type || "—")}</td>
@@ -167,8 +183,8 @@ function renderContactsTable() {
       <td>${escHtml(c.seniority_years != null ? c.seniority_years + "y" : "—")}</td>
       <td>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="w-btn w-btn-secondary w-btn-sm" onclick="openEditContact('${cid}')">Edit</button>
-          <button class="w-btn ${c.active_status === "Active" ? "w-btn-danger" : "w-btn-secondary"} w-btn-sm" onclick="toggleContactActive('${cid}')">${c.active_status === "Active" ? "Deactivate" : "Activate"}</button>
+          <button class="w-btn w-btn-secondary w-btn-sm" data-action="edit-contact" data-id="${cid}">Edit</button>
+          <button class="w-btn ${c.active_status === "Active" ? "w-btn-danger" : "w-btn-secondary"} w-btn-sm" data-action="toggle-contact" data-id="${cid}">${c.active_status === "Active" ? "Deactivate" : "Activate"}</button>
         </div>
       </td>
     </tr>`;
@@ -199,9 +215,21 @@ async function loadContacts() {
   document.getElementById("contactsLoading").style.display = "none";
 }
 
+// Event delegation — contacts table
+document.getElementById("contactsWrap").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-action]");
+  if (!btn) return;
+  const { action, id } = btn.dataset;
+  if (action === "edit-contact") openEditContact(id);
+  if (action === "toggle-contact") toggleContactActive(id);
+});
+
+// Search with debounce
+let searchDebounce;
 document.getElementById("contactSearch").addEventListener("input", (e) => {
+  clearTimeout(searchDebounce);
   contactSearchValue = e.target.value;
-  renderContactsTable();
+  searchDebounce = setTimeout(renderContactsTable, 200);
 });
 
 document.querySelectorAll(".w-filter-chip").forEach(chip => {
@@ -250,16 +278,13 @@ function openEditContact(externalId) {
   contactModal.classList.remove("hidden");
 }
 
-window.openEditContact = openEditContact;
-
 async function toggleContactActive(externalId) {
   const c = allContacts.find(x => getContactKey(x) === externalId);
   if (!c) return;
-  const nextStatus = c.active_status === "Active" ? "Inactive" : "Active";
+  const nextStatus = c.active_status === "Active" ? "Terminated" : "Active";
   try {
     await apiPatch(`/api/wieland/contacts/${encodeURIComponent(externalId)}`, {
-      active_status: nextStatus,
-      state: nextStatus
+      active_status: nextStatus
     });
     showToast(`Contact ${nextStatus === "Active" ? "activated" : "deactivated"}.`);
     await loadContacts();
@@ -267,8 +292,6 @@ async function toggleContactActive(externalId) {
     showToast(err.message, "error");
   }
 }
-
-window.toggleContactActive = toggleContactActive;
 
 function clearContactForm() {
   ["mFirstName","mLastName","mPhone","mMobile","mExternalId","mTrade","mShift","mPlant","mSeniorityStartDate"].forEach(id => {
@@ -283,19 +306,17 @@ async function saveContact() {
   const btn = document.getElementById("contactModalSave");
   const id = document.getElementById("mContactId").value.trim();
   const externalId = document.getElementById("mExternalId").value.trim();
+  const firstName = document.getElementById("mFirstName").value.trim();
+  const lastName = document.getElementById("mLastName").value.trim();
 
+  // Send only semantic fields — server maps to NCC field names
   const payload = {
-    firstName: document.getElementById("mFirstName").value.trim(),
-    lastName: document.getElementById("mLastName").value.trim(),
-    name: `${document.getElementById("mFirstName").value.trim()} ${document.getElementById("mLastName").value.trim()}`.trim(),
+    firstName,
+    lastName,
+    name: `${firstName} ${lastName}`.trim(),
     phone: document.getElementById("mPhone").value.trim(),
     mobile: document.getElementById("mMobile").value.trim(),
     externalId,
-    city: document.getElementById("mTrade").value.trim(),
-    addresss: document.getElementById("mPlant").value.trim(),
-    state: document.getElementById("mStatus").value,
-    zip: document.getElementById("mUnion").checked ? "1" : "0",
-    dob: document.getElementById("mSeniorityStartDate").value || "",
     union_eligible: document.getElementById("mUnion").checked,
     active_status: document.getElementById("mStatus").value,
     do_not_call: document.getElementById("mDNC").checked,
@@ -360,20 +381,20 @@ function renderLists() {
     const count = list.leadCount || list.recordCount || list.count || "";
     const isActive = Boolean(list.active);
     return `<div class="w-list-card" id="list-${escHtml(listId)}">
-      <div class="w-list-header" onclick="toggleList('${escHtml(listId)}')">
+      <div class="w-list-header" data-action="toggle-list" data-list-id="${escHtml(listId)}">
         <span class="w-list-name">${escHtml(name)}</span>
-        <span class="w-list-meta">${isActive ? "Activa" : "Inactiva"}</span>
+        <span class="w-list-meta">${isActive ? "Active" : "Inactive"}</span>
         ${status ? `<span class="w-list-meta">${escHtml(status)}</span>` : ""}
         ${count !== "" ? `<span class="w-list-meta">${count} records</span>` : ""}
         <span class="w-list-chevron">▼</span>
       </div>
       <div class="w-list-body">
         <div class="w-list-toolbar">
-          <button class="w-btn w-btn-secondary w-btn-sm" onclick="toggleListActive('${escHtml(listId)}', ${isActive}, this)">${isActive ? "Desactivar lista" : "Activar lista"}</button>
-          <button class="w-btn w-btn-secondary w-btn-sm" onclick="openAssignModal('${escHtml(listId)}')">Assign contacts</button>
-          <button class="w-btn w-btn-secondary w-btn-sm" onclick="refreshListPriority('${escHtml(listId)}', this)">Actualizar lista</button>
-          <button class="w-btn w-btn-secondary w-btn-sm" onclick="loadListLeads('${escHtml(listId)}')">Refresh leads</button>
-          <button class="w-btn w-btn-danger w-btn-sm" onclick="deleteList('${escHtml(listId)}', '${escHtml(name)}')">Delete</button>
+          <button class="w-btn w-btn-secondary w-btn-sm" data-action="toggle-list-active" data-list-id="${escHtml(listId)}" data-active="${isActive}">${isActive ? "Deactivate list" : "Activate list"}</button>
+          <button class="w-btn w-btn-secondary w-btn-sm" data-action="assign-contacts" data-list-id="${escHtml(listId)}">Assign contacts</button>
+          <button class="w-btn w-btn-secondary w-btn-sm" data-action="refresh-priority" data-list-id="${escHtml(listId)}">Update list</button>
+          <button class="w-btn w-btn-secondary w-btn-sm" data-action="load-leads" data-list-id="${escHtml(listId)}">Refresh leads</button>
+          <button class="w-btn w-btn-danger w-btn-sm" data-action="delete-list" data-list-id="${escHtml(listId)}" data-name="${escHtml(name)}">Delete</button>
         </div>
         <div id="leads-${escHtml(listId)}" style="padding:12px 20px;">
           <span style="color:var(--muted);font-size:0.85rem;">Click "Refresh leads" to load.</span>
@@ -383,60 +404,7 @@ function renderLists() {
   }).join("");
 }
 
-window.toggleList = function(listId) {
-  document.getElementById(`list-${listId}`)?.classList.toggle("open");
-};
-
-window.deleteLead = async function(listId, leadId, btn) {
-  if (!confirm("Remove this lead from the list?")) return;
-  btn.disabled = true;
-  btn.textContent = "…";
-  try {
-    await apiDelete(`/api/wieland/lists/${encodeURIComponent(listId)}/leads/${encodeURIComponent(leadId)}`);
-    btn.closest("tr").remove();
-    showToast("Lead removed.");
-  } catch (err) {
-    btn.disabled = false;
-    btn.textContent = "Remove";
-    showToast(err.message, "error");
-  }
-};
-
-window.toggleListActive = async function(listId, currentActive, btn) {
-  const nextActive = !currentActive;
-  const originalText = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = nextActive ? "Activando…" : "Desactivando…";
-  try {
-    const result = await apiPatch(`/api/wieland/lists/${encodeURIComponent(listId)}`, { active: nextActive });
-    const updatedList = result.list || {};
-    allLists = allLists.map((item) => {
-      const itemId = item.id || item._id;
-      if (itemId !== listId) return item;
-      return { ...item, ...updatedList, active: updatedList.active ?? nextActive };
-    });
-    renderLists();
-    showToast(nextActive ? "Lista activada." : "Lista desactivada.");
-  } catch (err) {
-    btn.disabled = false;
-    btn.textContent = originalText;
-    showToast(err.message, "error");
-  }
-};
-
-window.deleteList = async function(listId, name) {
-  if (!confirm(`Delete list "${name}"? This cannot be undone.`)) return;
-  try {
-    await apiDelete(`/api/wieland/lists/${encodeURIComponent(listId)}`);
-    allLists = allLists.filter(l => (l.id || l._id) !== listId);
-    renderLists();
-    showToast("List deleted.");
-  } catch (err) {
-    showToast(err.message, "error");
-  }
-};
-
-window.loadListLeads = async function(listId) {
+async function loadListLeads(listId) {
   const leadsEl = document.getElementById(`leads-${listId}`);
   leadsEl.innerHTML = `<span style="color:var(--muted);font-size:0.85rem;">Loading…</span>`;
   try {
@@ -455,7 +423,7 @@ window.loadListLeads = async function(listId) {
         <td>${escHtml(name || "—")}</td>
         <td>${escHtml(l.phone || l.mobile || "—")}</td>
         <td>${escHtml(String(status))}</td>
-        <td><button class="w-btn w-btn-danger w-btn-sm" onclick="deleteLead('${escHtml(listId)}','${escHtml(leadId)}',this)">Remove</button></td>
+        <td><button class="w-btn w-btn-danger w-btn-sm" data-action="delete-lead" data-list-id="${escHtml(listId)}" data-lead-id="${escHtml(leadId)}">Remove</button></td>
       </tr>`;
     }).join("");
     leadsEl.innerHTML = `<table class="w-table">
@@ -465,15 +433,37 @@ window.loadListLeads = async function(listId) {
   } catch (err) {
     leadsEl.innerHTML = `<span style="color:#991b1b;font-size:0.85rem;">Error: ${escHtml(err.message)}</span>`;
   }
-};
+}
 
-window.refreshListPriority = async function(listId, btn) {
+async function toggleListActive(listId, currentActive, btn) {
+  const nextActive = !currentActive;
   const originalText = btn.textContent;
   btn.disabled = true;
-  btn.textContent = "Actualizando…";
+  btn.textContent = nextActive ? "Activating…" : "Deactivating…";
+  try {
+    const result = await apiPatch(`/api/wieland/lists/${encodeURIComponent(listId)}`, { active: nextActive });
+    const updatedList = result.list || {};
+    allLists = allLists.map((item) => {
+      const itemId = item.id || item._id;
+      if (itemId !== listId) return item;
+      return { ...item, ...updatedList, active: updatedList.active ?? nextActive };
+    });
+    renderLists();
+    showToast(nextActive ? "List activated." : "List deactivated.");
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = originalText;
+    showToast(err.message, "error");
+  }
+}
+
+async function refreshListPriority(listId, btn) {
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Updating…";
   try {
     const result = await apiPost(`/api/wieland/lists/${encodeURIComponent(listId)}/refresh-priority`, {});
-    showToast(`Lista actualizada. ${result.updated || 0} leads sincronizados.`);
+    showToast(`List updated. ${result.updated || 0} leads synced.`);
     await loadListLeads(listId);
   } catch (err) {
     showToast(err.message, "error");
@@ -481,7 +471,62 @@ window.refreshListPriority = async function(listId, btn) {
     btn.disabled = false;
     btn.textContent = originalText;
   }
-};
+}
+
+async function deleteLead(listId, leadId, btn) {
+  if (!confirm("Remove this lead from the list?")) return;
+  btn.disabled = true;
+  btn.textContent = "…";
+  try {
+    await apiDelete(`/api/wieland/lists/${encodeURIComponent(listId)}/leads/${encodeURIComponent(leadId)}`);
+    btn.closest("tr").remove();
+    showToast("Lead removed.");
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "Remove";
+    showToast(err.message, "error");
+  }
+}
+
+async function deleteList(listId, name, btn) {
+  if (!confirm(`Delete list "${name}"? This cannot be undone.`)) return;
+  btn.disabled = true;
+  btn.textContent = "Deleting…";
+  try {
+    await apiDelete(`/api/wieland/lists/${encodeURIComponent(listId)}`);
+    allLists = allLists.filter(l => (l.id || l._id) !== listId);
+    renderLists();
+    showToast("List deleted.");
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "Delete";
+    showToast(err.message, "error");
+  }
+}
+
+// Event delegation — lists container
+document.getElementById("listsContainer").addEventListener("click", async (e) => {
+  const el = e.target.closest("[data-action]");
+  if (!el) return;
+  const { action, listId, leadId, name } = el.dataset;
+  const active = el.dataset.active === "true";
+
+  if (action === "toggle-list") {
+    document.getElementById(`list-${listId}`)?.classList.toggle("open");
+  } else if (action === "toggle-list-active") {
+    await toggleListActive(listId, active, el);
+  } else if (action === "assign-contacts") {
+    openAssignModal(listId);
+  } else if (action === "refresh-priority") {
+    await refreshListPriority(listId, el);
+  } else if (action === "load-leads") {
+    await loadListLeads(listId);
+  } else if (action === "delete-list") {
+    await deleteList(listId, name, el);
+  } else if (action === "delete-lead") {
+    await deleteLead(listId, leadId, el);
+  }
+});
 
 // ── New list modal ────────────────────────────────────────────────────────────
 const listModal = document.getElementById("listModal");
@@ -522,10 +567,10 @@ async function createList() {
 const assignModal = document.getElementById("assignModal");
 const assignModalAlert = document.getElementById("assignModalAlert");
 
-window.openAssignModal = function(listId) {
+function openAssignModal(listId) {
   clearModalAlert(assignModalAlert);
   document.getElementById("assignListId").value = listId;
-  const eligible = allContacts.filter(c => c.call_priority < 9999);
+  const eligible = allContacts.filter(c => c.call_priority < INELIGIBLE_PRIORITY);
   eligible.sort((a, b) => (b.call_priority || 0) - (a.call_priority || 0));
   const listEl = document.getElementById("assignContactList");
   if (!eligible.length) {
@@ -541,7 +586,7 @@ window.openAssignModal = function(listId) {
     }).join("");
   }
   assignModal.classList.remove("hidden");
-};
+}
 
 document.getElementById("assignModalCancel").addEventListener("click", () => assignModal.classList.add("hidden"));
 document.getElementById("assignModalSave").addEventListener("click", assignContacts);
@@ -622,7 +667,7 @@ async function loadCampaignStatus() {
   const campaignDispositionsInfo = document.getElementById("campaignDispositionsInfo");
   const campaignFilterInfo = document.getElementById("campaignFilterInfo");
   try {
-    const data = await api("/api/wieland/campaign/status");
+    const data = await getCampaignStatus();
     const slotsNeeded = data.slotsNeeded || 8;
     const c = data.campaign || {};
     const accepted = c.acceptedCount || c.accepted || 0;
@@ -674,7 +719,8 @@ async function loadCampaignStatus() {
       campaignDispositionsInfo.innerHTML = `<span style="color:var(--muted);font-size:0.85rem;">No campaign dispositions configured.</span>`;
     }
     campaignFilterInfo.textContent = c.filterOnLeads || "No campaign filter configured.";
-  } catch {
+  } catch (err) {
+    console.error("Campaign status error:", err);
     slotsInfo.innerHTML = `<span style="color:var(--muted);font-size:0.85rem;">Campaign status unavailable.</span>`;
     campaignConfigInfo.classList.remove("w-loading");
     campaignDialRulesInfo.classList.remove("w-loading");
@@ -705,7 +751,12 @@ function clearModalAlert(el) {
 
 // ── Utility ───────────────────────────────────────────────────────────────────
 function escHtml(str) {
-  return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return String(str ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function yearsFromDate(dateStr) {
@@ -721,18 +772,18 @@ function formatHint(labelField, nccListField = "") {
 
 function updateContactFieldHints() {
   const hintMap = {
-    hintFirstName: ["firstName", currentContactToListMap.firstName],
-    hintLastName: ["lastName", currentContactToListMap.lastName],
-    hintPhone: ["phone", currentContactToListMap.phone],
-    hintMobile: ["mobile", currentContactToListMap.mobile],
-    hintExternalId: ["externalId"],
-    hintTrade: ["city", currentContactToListMap.city],
-    hintShiftType: ["shift_type"],
-    hintPlantLocation: ["addresss", currentContactToListMap.addresss],
-    hintSeniorityStartDate: ["dob"],
-    hintStatus: ["state"],
-    hintUnionEligible: ["zip"],
-    hintDoNotCall: ["do_not_call"]
+    hintFirstName:        ["firstName",          currentContactToListMap.firstName],
+    hintLastName:         ["lastName",           currentContactToListMap.lastName],
+    hintPhone:            ["phone",              currentContactToListMap.phone],
+    hintMobile:           ["mobile",             currentContactToListMap.mobile],
+    hintExternalId:       ["externalId"],
+    hintTrade:            ["trade",              currentContactToListMap.city],
+    hintShiftType:        ["shift_type"],
+    hintPlantLocation:    ["plant_location",     currentContactToListMap.address || currentContactToListMap.addresss],
+    hintSeniorityStartDate: ["seniority_start_date", currentContactToListMap.dob],
+    hintStatus:           ["active_status",      currentContactToListMap.state],
+    hintUnionEligible:    ["union_eligible",     currentContactToListMap.zip],
+    hintDoNotCall:        ["do_not_call"]
   };
   Object.entries(hintMap).forEach(([id, [labelField, nccListField]]) => {
     const el = document.getElementById(id);
@@ -742,14 +793,16 @@ function updateContactFieldHints() {
 
 async function loadContactFieldHints() {
   try {
-    const data = await api("/api/wieland/campaign/status");
+    const data = await getCampaignStatus();
     currentContactToListMap = data?.campaign?.expansions?.fieldMappingsId?.fields || {};
-  } catch {
+  } catch (err) {
+    console.error("Field hints error:", err);
     currentContactToListMap = {};
   }
   updateContactFieldHints();
 }
 
+// ── Field mapping ─────────────────────────────────────────────────────────────
 const DEFAULT_WIDGET_TO_CONTACT_MAP = {
   firstName: "firstName",
   lastName: "lastName",
@@ -791,7 +844,7 @@ const KNOWN_CONTACT_FIELDS = [
   ["accountId", "Account ID"],
   ["accountName", "Account name"],
   ["accountNumber", "Account number"],
-  ["addresss", "Address"],
+  ["address", "Address"],
   ["city", "City"],
   ["contactId", "Contact ID"],
   ["country", "Country"],
@@ -813,7 +866,7 @@ async function loadFieldMapping() {
   const widgetRows = document.getElementById("widgetMappingRows");
   const listRows = document.getElementById("listMappingRows");
   try {
-    const data = await api("/api/wieland/campaign/status");
+    const data = await getCampaignStatus();
     const campaign = data.campaign || {};
     const widgetMap = DEFAULT_WIDGET_TO_CONTACT_MAP;
     const listMap = campaign?.expansions?.fieldMappingsId?.fields || {};
@@ -842,18 +895,6 @@ async function loadFieldMapping() {
     loadingEl.textContent = `Error: ${err.message}`;
   }
 }
-
-// ── Tab-aware lazy loading ────────────────────────────────────────────────────
-let loaded = { contacts: false, lists: false, campaign: false, mapping: false };
-
-tabs.forEach(tab => {
-  tab.addEventListener("click", () => {
-    const name = tab.dataset.tab;
-    if (name === "lists" && !loaded.lists) { loaded.lists = true; loadLists(); }
-    if (name === "campaign" && !loaded.campaign) { loaded.campaign = true; loadCampaignStatus(); }
-    if (name === "mapping" && !loaded.mapping) { loaded.mapping = true; loadFieldMapping(); }
-  });
-});
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 initCheck();
