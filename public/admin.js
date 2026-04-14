@@ -748,7 +748,9 @@ function readForm() {
       slotsNeeded: parseInt(fields.wielandSlotsNeeded.value) || 8,
       uploadFileName: fields.wielandUploadFileName.value.trim(),
       nccFieldmappingId: fields.wielandNccFieldmappingId.value.trim(),
-      nccAuthType: fields.wielandNccAuthType.value || "token"
+      nccAuthType: fields.wielandNccAuthType.value || "token",
+      widgetToContactMap: readWielandWidgetMap(),
+      contactToListMap: readWielandContactToListMap()
     },
     wielandNccCredential: fields.wielandNccCredential.value.trim(),
     token: fields.token.value.trim(),

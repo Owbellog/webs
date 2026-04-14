@@ -3714,9 +3714,6 @@ function buildLeadPayloadFromContact(contact, listId, contactToList = {}) {
     firstName: contact.firstName || "",
     lastName: contact.lastName || "",
     phone: contact.phone || "",
-    mobile: contact.mobile || "",
-    email: contact.email || "",
-    externalId: contact.externalId || "",
     outboundListId: listId
   };
   for (const [contactField, listColumn] of Object.entries(contactToList || {})) {
