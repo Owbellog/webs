@@ -301,9 +301,9 @@ function renderWielandMappingEditors(widgetMap = {}, contactToListMap = {}) {
   if (wielandWidgetMappingRows) {
     wielandWidgetMappingRows.innerHTML = Object.entries(DEFAULT_WIELAND_WIDGET_TO_CONTACT_MAP).map(([widgetField, defaultContactField]) => `
       <tr>
-        <td><code>${escapeHtml(widgetField)}</code></td>
-        <td><input type="text" data-wieland-widget-field="${escapeHtml(widgetField)}" value="${escapeHtml(widgetMap[widgetField] || defaultContactField || "")}" /></td>
-        <td>Logical field used by the widget.</td>
+        <td><span class="admin-mapping-code">${escapeHtml(widgetField)}</span></td>
+        <td><input class="admin-mapping-input" type="text" data-wieland-widget-field="${escapeHtml(widgetField)}" value="${escapeHtml(widgetMap[widgetField] || defaultContactField || "")}" /></td>
+        <td class="admin-mapping-description">Logical field used by the widget.</td>
       </tr>
     `).join("");
   }
@@ -311,11 +311,10 @@ function renderWielandMappingEditors(widgetMap = {}, contactToListMap = {}) {
   if (wielandContactToListRows) {
     wielandContactToListRows.innerHTML = WIELAND_CONTACT_FIELD_DESCRIPTIONS.map(([contactField, description]) => {
       const val = contactToListMap[contactField] || "";
-      const highlight = val ? ' style="border-color:var(--brand,#1c2853);background:#f0f4ff;"' : "";
       return `<tr>
-        <td><code>${escapeHtml(contactField)}</code></td>
-        <td><input type="text" data-wieland-contact-field="${escapeHtml(contactField)}" value="${escapeHtml(val)}" placeholder="NCC column name"${highlight} /></td>
-        <td style="color:var(--muted,#6b7280);font-size:0.85rem;">${escapeHtml(description)}</td>
+        <td><span class="admin-mapping-code">${escapeHtml(contactField)}</span></td>
+        <td><input class="admin-mapping-input${val ? " admin-mapping-input--filled" : ""}" type="text" data-wieland-contact-field="${escapeHtml(contactField)}" value="${escapeHtml(val)}" placeholder="NCC column name" /></td>
+        <td class="admin-mapping-description">${escapeHtml(description)}</td>
       </tr>`;
     }).join("");
   }

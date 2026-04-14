@@ -67,6 +67,7 @@ let allLists = [];
 let currentFilter = "all";
 let contactSearchValue = "";
 let currentContactToListMap = {};
+let currentWidgetToContactMap = {};
 let loaded = { contacts: false, lists: false, campaign: false, mapping: false };
 
 // ── Init check ────────────────────────────────────────────────────────────────
@@ -171,9 +172,10 @@ function renderContactsTable() {
     const unionBadge = c.union_eligible ? `<span class="w-badge union">Union</span>` : "";
     const dncBadge = c.do_not_call ? `<span class="w-badge dnc">DNC</span>` : "";
     const cid = escHtml(getContactKey(c));
+    const employeeId = getWidgetValue(c, "externalId") || c.contactId || c._id || "—";
     return `<tr>
       <td>${priorityChip(c.call_priority || INELIGIBLE_PRIORITY, allContacts.length)}</td>
-      <td>${escHtml(c.externalId || c.contactId || c._id || "—")}</td>
+      <td>${escHtml(employeeId)}</td>
       <td><strong>${escHtml(name)}</strong></td>
       <td>${escHtml(c.shift_type || "—")}</td>
       <td>${escHtml(c.trade || "—")}</td>
@@ -269,7 +271,7 @@ function openEditContact(externalId) {
   document.getElementById("mLastName").value = c.lastName || "";
   document.getElementById("mPhone").value = c.phone || "";
   document.getElementById("mMobile").value = c.mobile || "";
-  document.getElementById("mExternalId").value = c.externalId || "";
+  document.getElementById("mExternalId").value = getWidgetValue(c, "externalId");
   document.getElementById("mTrade").value = c.trade || "";
   document.getElementById("mShift").value = c.shift_type || "";
   document.getElementById("mPlant").value = c.plant_location || "";
@@ -768,6 +770,18 @@ function yearsFromDate(dateStr) {
   return Math.floor((Date.now() - d) / (365.25 * 24 * 60 * 60 * 1000));
 }
 
+function getWidgetMappedContactField(widgetField) {
+  return currentWidgetToContactMap[widgetField] || DEFAULT_WIDGET_TO_CONTACT_MAP[widgetField] || widgetField;
+}
+
+function getWidgetValue(contact, widgetField) {
+  const mappedField = getWidgetMappedContactField(widgetField);
+  const mappedValue = contact?.[mappedField];
+  if (mappedValue !== undefined && mappedValue !== null && mappedValue !== "") return mappedValue;
+  const fallbackValue = contact?.[widgetField];
+  return fallbackValue !== undefined && fallbackValue !== null ? fallbackValue : "";
+}
+
 function formatHint(labelField, nccListField = "") {
   return nccListField ? `(${labelField} | NCC list: ${nccListField})` : `(${labelField})`;
 }
@@ -778,7 +792,7 @@ function updateContactFieldHints() {
     hintLastName:         ["lastName",           currentContactToListMap.lastName],
     hintPhone:            ["phone",              currentContactToListMap.phone],
     hintMobile:           ["mobile",             currentContactToListMap.mobile],
-    hintExternalId:       ["externalId"],
+    hintExternalId:       [getWidgetMappedContactField("externalId"), currentContactToListMap[getWidgetMappedContactField("externalId")] || ""],
     hintTrade:            ["trade",              currentContactToListMap.city],
     hintShiftType:        ["shift_type"],
     hintPlantLocation:    ["plant_location",     currentContactToListMap.address || currentContactToListMap.addresss],
@@ -796,9 +810,16 @@ function updateContactFieldHints() {
 async function loadContactFieldHints() {
   try {
     const data = await getCampaignStatus();
-    currentContactToListMap = data?.campaign?.expansions?.fieldMappingsId?.fields || {};
+    currentWidgetToContactMap = {
+      ...DEFAULT_WIDGET_TO_CONTACT_MAP,
+      ...(data?.localConfig?.widgetToContactMap || {})
+    };
+    currentContactToListMap = Object.keys(data?.localConfig?.contactToListMap || {}).length
+      ? (data?.localConfig?.contactToListMap || {})
+      : (data?.campaign?.expansions?.fieldMappingsId?.fields || {});
   } catch (err) {
     console.error("Field hints error:", err);
+    currentWidgetToContactMap = { ...DEFAULT_WIDGET_TO_CONTACT_MAP };
     currentContactToListMap = {};
   }
   updateContactFieldHints();
@@ -870,8 +891,13 @@ async function loadFieldMapping() {
   try {
     const data = await getCampaignStatus();
     const campaign = data.campaign || {};
-    const widgetMap = DEFAULT_WIDGET_TO_CONTACT_MAP;
-    const listMap = campaign?.expansions?.fieldMappingsId?.fields || {};
+    const widgetMap = {
+      ...DEFAULT_WIDGET_TO_CONTACT_MAP,
+      ...(data?.localConfig?.widgetToContactMap || {})
+    };
+    const listMap = Object.keys(data?.localConfig?.contactToListMap || {}).length
+      ? (data?.localConfig?.contactToListMap || {})
+      : (campaign?.expansions?.fieldMappingsId?.fields || {});
     widgetRows.innerHTML = Object.entries(widgetMap).map(([field, contactField]) => `
       <tr>
         <td><code class="w-code">${escHtml(field)}</code></td>

@@ -621,48 +621,44 @@
                 </div>
 
                 <div class="admin-field admin-field--full">
-                  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+                  <div class="admin-mapping-header">
                     <div>
-                      <label style="display:block;margin:0;font-size:1rem;">Field Mapping</label>
-                      <span class="admin-field-note">Edit the NCC column each contact field maps to. Save the campaign to persist changes.</span>
+                      <label class="admin-mapping-title">Field Mapping</label>
+                      <span class="admin-field-note">Same mapping model used by the Wieland Manager. Changes here are editable and saved per campaign.</span>
                     </div>
-                    <button type="button" id="wielandRefreshFieldmappings" class="secondary-button">↻ Refresh from NCC</button>
+                    <button type="button" id="wielandRefreshFieldmappings" class="admin-mapping-refresh">↻ Refresh from NCC</button>
                   </div>
 
-                  <!-- Contact → NCC List Mapping (primary editing surface) -->
-                  <div style="margin-bottom:22px;">
-                    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;">
-                      <h4 style="margin:0;font-size:0.9rem;font-weight:700;color:var(--brand,#1c2853);">Contact → NCC List Mapping</h4>
-                      <span style="font-size:0.82rem;color:var(--muted,#6b7280);">Contact field → NCC column written when creating/uploading a list</span>
-                    </div>
-                    <div class="admin-table-wrap">
-                      <table class="admin-table">
-                        <thead>
-                          <tr><th>Contact field</th><th style="min-width:160px;">NCC list column</th><th>Description</th></tr>
-                        </thead>
-                        <tbody id="wielandContactToListRows"></tbody>
-                      </table>
-                    </div>
-                  </div>
+                  <div class="admin-mapping-stack">
+                    <section class="admin-mapping-block">
+                      <h3 class="admin-mapping-block-title">Widget → Contact Mapping (advanced)</h3>
+                      <p class="admin-mapping-block-note">Logical widget fields and the contact field they read/write. Only change if the widget field names differ from the contact schema.</p>
+                      <div class="admin-mapping-table-wrap">
+                        <table class="admin-mapping-table">
+                          <thead>
+                            <tr><th>Widget field</th><th style="min-width:220px;">Contact field</th><th>Description</th></tr>
+                          </thead>
+                          <tbody id="wielandWidgetMappingRows"></tbody>
+                        </table>
+                      </div>
+                    </section>
 
-                  <!-- Widget → Contact Mapping (less frequently changed) -->
-                  <details style="margin-bottom:18px;">
-                    <summary style="font-size:0.88rem;font-weight:700;color:var(--muted,#6b7280);cursor:pointer;margin-bottom:6px;">Widget → Contact Mapping (advanced)</summary>
-                    <p style="font-size:0.82rem;color:var(--muted,#6b7280);margin:0 0 8px;">Logical widget fields and the contact field they read/write. Only change if the widget field names differ from the contact schema.</p>
-                    <div class="admin-table-wrap">
-                      <table class="admin-table">
-                        <thead>
-                          <tr><th>Widget field</th><th style="min-width:160px;">Contact field</th><th>Description</th></tr>
-                        </thead>
-                        <tbody id="wielandWidgetMappingRows"></tbody>
-                      </table>
-                    </div>
-                  </details>
+                    <section class="admin-mapping-block">
+                      <h3 class="admin-mapping-block-title">Contact → NCC List Mapping</h3>
+                      <p class="admin-mapping-block-note">Contact field → NCC column written when creating or uploading a list.</p>
+                      <div class="admin-mapping-table-wrap">
+                        <table class="admin-mapping-table">
+                          <thead>
+                            <tr><th>Contact field</th><th style="min-width:220px;">NCC list column</th><th>Description</th></tr>
+                          </thead>
+                          <tbody id="wielandContactToListRows"></tbody>
+                        </table>
+                      </div>
+                    </section>
 
-                  <!-- NCC reference (read-only) -->
-                  <details>
-                    <summary style="font-size:0.88rem;font-weight:700;color:var(--muted,#6b7280);cursor:pointer;margin-bottom:8px;">NCC field mapping reference (read-only)</summary>
-                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;">
+                    <details class="admin-mapping-reference">
+                      <summary>NCC field mapping reference (read-only)</summary>
+                      <div class="admin-mapping-reference-grid">
                       <div>
                         <label for="wielandConfiguredFieldmappingInfo">Configured / forced field mapping</label>
                         <textarea id="wielandConfiguredFieldmappingInfo" rows="10" readonly placeholder="Load a campaign to see field mapping details."></textarea>
@@ -671,8 +667,9 @@
                         <label for="wielandAvailableFieldmappingsInfo">Available NCC contact field mappings</label>
                         <textarea id="wielandAvailableFieldmappingsInfo" rows="10" readonly placeholder="Load a campaign to see available field mappings."></textarea>
                       </div>
-                    </div>
-                  </details>
+                      </div>
+                    </details>
+                  </div>
                 </div>
               </div>
             </details>

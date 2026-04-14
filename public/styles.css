@@ -5340,3 +5340,149 @@ body.embedded .copilot-shell {
 .admin-wieland-link:hover {
   background: rgba(28, 40, 83, 0.13);
 }
+
+.admin-mapping-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.admin-mapping-title {
+  display: block;
+  margin: 0;
+  font-size: 1rem;
+}
+
+.admin-mapping-refresh {
+  border: 1px solid rgba(28, 40, 83, 0.14);
+  background: rgba(28, 40, 83, 0.06);
+  color: var(--brand);
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 700;
+  padding: 9px 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.admin-mapping-refresh:hover {
+  background: rgba(28, 40, 83, 0.12);
+  border-color: rgba(28, 40, 83, 0.24);
+}
+
+.admin-mapping-stack {
+  display: grid;
+  gap: 24px;
+}
+
+.admin-mapping-block-title {
+  margin: 0 0 8px;
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: var(--brand);
+  letter-spacing: -0.02em;
+}
+
+.admin-mapping-block-note {
+  color: var(--muted);
+  font-size: 0.88rem;
+  margin: -2px 0 16px;
+}
+
+.admin-mapping-table-wrap {
+  border: 1px solid var(--line-soft);
+  border-radius: 18px;
+  background: white;
+  overflow: auto;
+}
+
+.admin-mapping-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.admin-mapping-table th,
+.admin-mapping-table td {
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line-soft);
+  vertical-align: middle;
+}
+
+.admin-mapping-table th {
+  text-align: left;
+  font-size: 0.8rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  background: #fafbff;
+}
+
+.admin-mapping-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.admin-mapping-code {
+  display: inline-block;
+  font-family: monospace;
+  font-size: 0.85rem;
+  background: #f3f4f6;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: #1e40af;
+}
+
+.admin-mapping-input {
+  width: 100%;
+  min-width: 180px;
+  border: 1px solid var(--line);
+  background: white;
+  color: var(--text);
+  font: inherit;
+  padding: 12px 14px;
+  border-radius: 16px;
+  outline: none;
+}
+
+.admin-mapping-input--filled {
+  border-color: rgba(28, 40, 83, 0.24);
+  background: #f8faff;
+}
+
+.admin-mapping-input:focus {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(28, 40, 83, 0.07);
+}
+
+.admin-mapping-description {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.admin-mapping-reference {
+  border-top: 1px solid var(--line-soft);
+  padding-top: 4px;
+}
+
+.admin-mapping-reference summary {
+  list-style: none;
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.admin-mapping-reference summary::-webkit-details-marker {
+  display: none;
+}
+
+.admin-mapping-reference-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+}
