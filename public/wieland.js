@@ -55,6 +55,7 @@ let allContacts = [];
 let allLists = [];
 let currentFilter = "all";
 let contactSearchValue = "";
+let currentContactToListMap = {};
 
 // ── Init check ────────────────────────────────────────────────────────────────
 function initCheck() {
@@ -67,6 +68,7 @@ function initCheck() {
   document.getElementById("campaignLabel").textContent = `— ${campaignId}`;
   document.getElementById("initMessage").hidden = true;
   document.getElementById("mainBody").hidden = false;
+  loadContactFieldHints();
   loaded.contacts = true;
   loadContacts();
   return true;
@@ -98,6 +100,10 @@ function statusBadge(status) {
   return `<span class="w-badge ${map[status] || "loa"}">${status || "Unknown"}</span>`;
 }
 
+function getContactKey(contact) {
+  return contact?.externalId || contact?.id || contact?._id || contact?.contactId || "";
+}
+
 // ── Contacts ──────────────────────────────────────────────────────────────────
 function filteredContacts() {
   let list = allContacts;
@@ -107,6 +113,7 @@ function filteredContacts() {
       (c.firstName || "").toLowerCase().includes(q) ||
       (c.lastName || "").toLowerCase().includes(q) ||
       (c.externalId || "").toLowerCase().includes(q) ||
+      (c.shift_type || "").toLowerCase().includes(q) ||
       (c.trade || "").toLowerCase().includes(q) ||
       (c.plant_location || "").toLowerCase().includes(q)
     );
@@ -145,11 +152,12 @@ function renderContactsTable() {
     const name = `${c.firstName || ""} ${c.lastName || ""}`.trim() || "—";
     const unionBadge = c.union_eligible ? `<span class="w-badge union">Union</span>` : "";
     const dncBadge = c.do_not_call ? `<span class="w-badge dnc">DNC</span>` : "";
-    const cid = escHtml(c.externalId || c.id || "");
+    const cid = escHtml(getContactKey(c));
     return `<tr>
       <td>${priorityChip(c.call_priority || 9999)}</td>
-      <td>${escHtml(c.externalId || "—")}</td>
+      <td>${escHtml(c.externalId || c.contactId || c._id || "—")}</td>
       <td><strong>${escHtml(name)}</strong></td>
+      <td>${escHtml(c.shift_type || "—")}</td>
       <td>${escHtml(c.trade || "—")}</td>
       <td>${escHtml(c.plant_location || "—")}</td>
       <td>${unionBadge}</td>
@@ -157,13 +165,18 @@ function renderContactsTable() {
       <td>${escHtml(c.phone || "—")}</td>
       <td>${dncBadge}</td>
       <td>${escHtml(c.seniority_years != null ? c.seniority_years + "y" : "—")}</td>
-      <td><button class="w-btn w-btn-secondary w-btn-sm" onclick="openEditContact('${cid}')">Edit</button></td>
+      <td>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="w-btn w-btn-secondary w-btn-sm" onclick="openEditContact('${cid}')">Edit</button>
+          <button class="w-btn ${c.active_status === "Active" ? "w-btn-danger" : "w-btn-secondary"} w-btn-sm" onclick="toggleContactActive('${cid}')">${c.active_status === "Active" ? "Deactivate" : "Activate"}</button>
+        </div>
+      </td>
     </tr>`;
   }).join("");
 
   wrap.innerHTML = `<table class="w-table">
     <thead><tr>
-      <th>Priority</th><th>Employee ID</th><th>Name</th><th>Trade</th><th>Plant</th>
+      <th>Priority</th><th>Employee ID</th><th>Name</th><th>Shift</th><th>Trade</th><th>Plant</th>
       <th>Union</th><th>Status</th><th>Phone</th><th>DNC</th><th>Seniority</th><th></th>
     </tr></thead>
     <tbody>${rows}</tbody>
@@ -217,7 +230,7 @@ function openNewContact() {
 }
 
 function openEditContact(externalId) {
-  const c = allContacts.find(x => (x.externalId || x.id) === externalId);
+  const c = allContacts.find(x => getContactKey(x) === externalId);
   if (!c) return;
   clearModalAlert(contactModalAlert);
   document.getElementById("contactModalTitle").textContent = "Edit Contact";
@@ -228,8 +241,9 @@ function openEditContact(externalId) {
   document.getElementById("mMobile").value = c.mobile || "";
   document.getElementById("mExternalId").value = c.externalId || "";
   document.getElementById("mTrade").value = c.trade || "";
+  document.getElementById("mShift").value = c.shift_type || "";
   document.getElementById("mPlant").value = c.plant_location || "";
-  document.getElementById("mSeniority").value = c.seniority_years != null ? c.seniority_years : "";
+  document.getElementById("mSeniorityStartDate").value = c.seniority_start_date || "";
   document.getElementById("mStatus").value = c.active_status || "Active";
   document.getElementById("mUnion").checked = Boolean(c.union_eligible);
   document.getElementById("mDNC").checked = Boolean(c.do_not_call);
@@ -238,8 +252,26 @@ function openEditContact(externalId) {
 
 window.openEditContact = openEditContact;
 
+async function toggleContactActive(externalId) {
+  const c = allContacts.find(x => getContactKey(x) === externalId);
+  if (!c) return;
+  const nextStatus = c.active_status === "Active" ? "Inactive" : "Active";
+  try {
+    await apiPatch(`/api/wieland/contacts/${encodeURIComponent(externalId)}`, {
+      active_status: nextStatus,
+      state: nextStatus
+    });
+    showToast(`Contact ${nextStatus === "Active" ? "activated" : "deactivated"}.`);
+    await loadContacts();
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
+window.toggleContactActive = toggleContactActive;
+
 function clearContactForm() {
-  ["mFirstName","mLastName","mPhone","mMobile","mExternalId","mTrade","mPlant","mSeniority"].forEach(id => {
+  ["mFirstName","mLastName","mPhone","mMobile","mExternalId","mTrade","mShift","mPlant","mSeniorityStartDate"].forEach(id => {
     document.getElementById(id).value = "";
   });
   document.getElementById("mStatus").value = "Active";
@@ -255,15 +287,23 @@ async function saveContact() {
   const payload = {
     firstName: document.getElementById("mFirstName").value.trim(),
     lastName: document.getElementById("mLastName").value.trim(),
+    name: `${document.getElementById("mFirstName").value.trim()} ${document.getElementById("mLastName").value.trim()}`.trim(),
     phone: document.getElementById("mPhone").value.trim(),
     mobile: document.getElementById("mMobile").value.trim(),
     externalId,
+    city: document.getElementById("mTrade").value.trim(),
+    addresss: document.getElementById("mPlant").value.trim(),
+    state: document.getElementById("mStatus").value,
+    zip: document.getElementById("mUnion").checked ? "1" : "0",
+    dob: document.getElementById("mSeniorityStartDate").value || "",
     union_eligible: document.getElementById("mUnion").checked,
     active_status: document.getElementById("mStatus").value,
     do_not_call: document.getElementById("mDNC").checked,
-    seniority_years: parseFloat(document.getElementById("mSeniority").value) || 0,
+    seniority_start_date: document.getElementById("mSeniorityStartDate").value || "",
+    seniority_years: yearsFromDate(document.getElementById("mSeniorityStartDate").value) || 0,
     plant_location: document.getElementById("mPlant").value.trim(),
-    trade: document.getElementById("mTrade").value.trim()
+    trade: document.getElementById("mTrade").value.trim(),
+    shift_type: document.getElementById("mShift").value.trim()
   };
 
   if (!payload.firstName || !payload.lastName) {
@@ -318,16 +358,20 @@ function renderLists() {
     const name = list.name || list.localizations?.name?.en?.value || listId;
     const status = list.status || list.state || "";
     const count = list.leadCount || list.recordCount || list.count || "";
+    const isActive = Boolean(list.active);
     return `<div class="w-list-card" id="list-${escHtml(listId)}">
       <div class="w-list-header" onclick="toggleList('${escHtml(listId)}')">
         <span class="w-list-name">${escHtml(name)}</span>
+        <span class="w-list-meta">${isActive ? "Activa" : "Inactiva"}</span>
         ${status ? `<span class="w-list-meta">${escHtml(status)}</span>` : ""}
         ${count !== "" ? `<span class="w-list-meta">${count} records</span>` : ""}
         <span class="w-list-chevron">▼</span>
       </div>
       <div class="w-list-body">
         <div class="w-list-toolbar">
+          <button class="w-btn w-btn-secondary w-btn-sm" onclick="toggleListActive('${escHtml(listId)}', ${isActive}, this)">${isActive ? "Desactivar lista" : "Activar lista"}</button>
           <button class="w-btn w-btn-secondary w-btn-sm" onclick="openAssignModal('${escHtml(listId)}')">Assign contacts</button>
+          <button class="w-btn w-btn-secondary w-btn-sm" onclick="refreshListPriority('${escHtml(listId)}', this)">Actualizar lista</button>
           <button class="w-btn w-btn-secondary w-btn-sm" onclick="loadListLeads('${escHtml(listId)}')">Refresh leads</button>
           <button class="w-btn w-btn-danger w-btn-sm" onclick="deleteList('${escHtml(listId)}', '${escHtml(name)}')">Delete</button>
         </div>
@@ -354,6 +398,28 @@ window.deleteLead = async function(listId, leadId, btn) {
   } catch (err) {
     btn.disabled = false;
     btn.textContent = "Remove";
+    showToast(err.message, "error");
+  }
+};
+
+window.toggleListActive = async function(listId, currentActive, btn) {
+  const nextActive = !currentActive;
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = nextActive ? "Activando…" : "Desactivando…";
+  try {
+    const result = await apiPatch(`/api/wieland/lists/${encodeURIComponent(listId)}`, { active: nextActive });
+    const updatedList = result.list || {};
+    allLists = allLists.map((item) => {
+      const itemId = item.id || item._id;
+      if (itemId !== listId) return item;
+      return { ...item, ...updatedList, active: updatedList.active ?? nextActive };
+    });
+    renderLists();
+    showToast(nextActive ? "Lista activada." : "Lista desactivada.");
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = originalText;
     showToast(err.message, "error");
   }
 };
@@ -401,6 +467,22 @@ window.loadListLeads = async function(listId) {
   }
 };
 
+window.refreshListPriority = async function(listId, btn) {
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Actualizando…";
+  try {
+    const result = await apiPost(`/api/wieland/lists/${encodeURIComponent(listId)}/refresh-priority`, {});
+    showToast(`Lista actualizada. ${result.updated || 0} leads sincronizados.`);
+    await loadListLeads(listId);
+  } catch (err) {
+    showToast(err.message, "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+};
+
 // ── New list modal ────────────────────────────────────────────────────────────
 const listModal = document.getElementById("listModal");
 const listModalAlert = document.getElementById("listModalAlert");
@@ -444,17 +526,17 @@ window.openAssignModal = function(listId) {
   clearModalAlert(assignModalAlert);
   document.getElementById("assignListId").value = listId;
   const eligible = allContacts.filter(c => c.call_priority < 9999);
-  eligible.sort((a, b) => (a.call_priority || 9999) - (b.call_priority || 9999));
+  eligible.sort((a, b) => (b.call_priority || 0) - (a.call_priority || 0));
   const listEl = document.getElementById("assignContactList");
   if (!eligible.length) {
     listEl.innerHTML = `<div style="padding:16px;text-align:center;color:var(--muted);">No eligible contacts found.</div>`;
   } else {
     listEl.innerHTML = eligible.map(c => {
       const name = `${c.firstName || ""} ${c.lastName || ""}`.trim();
-      const cid = escHtml(c.externalId || c.id || "");
+      const cid = escHtml(getContactKey(c));
       return `<label class="w-check-item">
         <input type="checkbox" value="${cid}" checked />
-        ${priorityChip(c.call_priority)} ${escHtml(name)} — ${escHtml(c.trade || "—")} (${c.seniority_years || 0}y)
+        ${priorityChip(c.call_priority)} ${escHtml(name)} — ${escHtml(c.shift_type || c.trade || "—")} (${c.seniority_years || 0}y)
       </label>`;
     }).join("");
   }
@@ -475,7 +557,7 @@ async function assignContacts() {
   clearModalAlert(assignModalAlert);
 
   const leads = checked.map(exId => {
-    const c = allContacts.find(x => (x.externalId || x.id || x._id) === exId);
+    const c = allContacts.find(x => getContactKey(x) === exId);
     if (!c) return null;
     return {
       firstName: c.firstName || "",
@@ -501,8 +583,44 @@ async function assignContacts() {
 }
 
 // ── Campaign status ───────────────────────────────────────────────────────────
+function campaignName(c) {
+  return c?.localizations?.name?.en?.value || c?.name || c?.campaignId || c?._id || "—";
+}
+
+function campaignDescription(c) {
+  return c?.localizations?.description?.en?.value || c?.description || "—";
+}
+
+function campaignMode(c) {
+  const modes = [];
+  if (c?.useForProgressive) modes.push("Progressive");
+  if (c?.useForPredictive) modes.push("Predictive");
+  if (c?.useForOutbound || c?.defaultOutbound) modes.push("Outbound");
+  if (c?.useForSMS) modes.push("SMS");
+  if (c?.useForEmail) modes.push("Email");
+  return modes.length ? modes.join(" / ") : "—";
+}
+
+function fmtValue(value, suffix = "") {
+  if (value === undefined || value === null || value === "") return "—";
+  return `${value}${suffix}`;
+}
+
+function renderInfoRows(rows) {
+  return rows.map(([label, value]) => `
+    <div class="w-info-row">
+      <span class="w-info-row-label">${escHtml(label)}</span>
+      <span class="w-info-row-value">${escHtml(value)}</span>
+    </div>
+  `).join("");
+}
+
 async function loadCampaignStatus() {
   const slotsInfo = document.getElementById("slotsInfo");
+  const campaignConfigInfo = document.getElementById("campaignConfigInfo");
+  const campaignDialRulesInfo = document.getElementById("campaignDialRulesInfo");
+  const campaignDispositionsInfo = document.getElementById("campaignDispositionsInfo");
+  const campaignFilterInfo = document.getElementById("campaignFilterInfo");
   try {
     const data = await api("/api/wieland/campaign/status");
     const slotsNeeded = data.slotsNeeded || 8;
@@ -514,8 +632,57 @@ async function loadCampaignStatus() {
       <div style="font-size:0.82rem;color:var(--muted);margin:4px 0 10px">slots accepted</div>
       <div class="w-slots-bar"><div class="w-slots-fill" style="width:${pct}%"></div></div>
     `;
+    campaignConfigInfo.classList.remove("w-loading");
+    campaignConfigInfo.innerHTML = renderInfoRows([
+      ["Campaign", campaignName(c)],
+      ["Description", campaignDescription(c)],
+      ["Tenant", fmtValue(c.tenantId)],
+      ["Campaign ID", fmtValue(c.campaignId || c._id)],
+      ["Mode", campaignMode(c)],
+      ["Dial ratio", fmtValue(c.maxDialRatio)],
+      ["AMD", c.amdUnknownAsVoicemail ? "Unknown → Voicemail" : "Unknown → Human"]
+    ]);
+    campaignDialRulesInfo.classList.remove("w-loading");
+    campaignDialRulesInfo.innerHTML = renderInfoRows([
+      ["Daily max attempts", fmtValue(c.dailyMaxAttempts)],
+      ["Max per number", fmtValue(c.maxAttemptsPerAddress || c.maxAttempts)],
+      ["Cool off period", fmtValue(c.coolOffPeriodInSec, "s")],
+      ["No answer timeout", fmtValue(c.noAnswerTimeout, "s")],
+      ["Primary phone field", fmtValue(c.primaryPhoneField)],
+      ["Lead order by", fmtValue(c.leadOrderByField)]
+    ]);
+    const dispositions = c?.dispositions?.objects || [];
+    campaignDispositionsInfo.classList.remove("w-loading");
+    if (dispositions.length) {
+      campaignDispositionsInfo.innerHTML = `
+        <div class="w-table-wrap">
+          <table class="w-table">
+            <thead><tr><th>Disposition</th><th>Description</th><th>Resolved</th><th>Connect again</th></tr></thead>
+            <tbody>
+              ${dispositions.map((item) => {
+                const disposition = item?.expansions?.dispositionId || {};
+                const name = disposition?.localizations?.name?.en?.value || disposition?.name || item?.dispositionId || "—";
+                const description = disposition?.localizations?.description?.en?.value || disposition?.description || disposition?.note || "—";
+                const resolved = disposition?.resolved === true ? "Yes" : disposition?.resolved === false ? "No" : "—";
+                const connectAgain = disposition?.connectAgain === true ? "Yes" : disposition?.connectAgain === false ? "No" : "—";
+                return `<tr><td><strong>${escHtml(name)}</strong></td><td>${escHtml(description)}</td><td>${escHtml(resolved)}</td><td>${escHtml(connectAgain)}</td></tr>`;
+              }).join("")}
+            </tbody>
+          </table>
+        </div>`;
+    } else {
+      campaignDispositionsInfo.innerHTML = `<span style="color:var(--muted);font-size:0.85rem;">No campaign dispositions configured.</span>`;
+    }
+    campaignFilterInfo.textContent = c.filterOnLeads || "No campaign filter configured.";
   } catch {
     slotsInfo.innerHTML = `<span style="color:var(--muted);font-size:0.85rem;">Campaign status unavailable.</span>`;
+    campaignConfigInfo.classList.remove("w-loading");
+    campaignDialRulesInfo.classList.remove("w-loading");
+    campaignDispositionsInfo.classList.remove("w-loading");
+    campaignConfigInfo.innerHTML = `<span style="color:var(--muted);font-size:0.85rem;">Campaign data unavailable.</span>`;
+    campaignDialRulesInfo.innerHTML = `<span style="color:var(--muted);font-size:0.85rem;">Dial rules unavailable.</span>`;
+    campaignDispositionsInfo.innerHTML = `<span style="color:var(--muted);font-size:0.85rem;">Dispositions unavailable.</span>`;
+    campaignFilterInfo.textContent = "Campaign filter unavailable.";
   }
 }
 
@@ -541,14 +708,150 @@ function escHtml(str) {
   return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+function yearsFromDate(dateStr) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr);
+  if (isNaN(d)) return null;
+  return Math.floor((Date.now() - d) / (365.25 * 24 * 60 * 60 * 1000));
+}
+
+function formatHint(labelField, nccListField = "") {
+  return nccListField ? `(${labelField} | NCC list: ${nccListField})` : `(${labelField})`;
+}
+
+function updateContactFieldHints() {
+  const hintMap = {
+    hintFirstName: ["firstName", currentContactToListMap.firstName],
+    hintLastName: ["lastName", currentContactToListMap.lastName],
+    hintPhone: ["phone", currentContactToListMap.phone],
+    hintMobile: ["mobile", currentContactToListMap.mobile],
+    hintExternalId: ["externalId"],
+    hintTrade: ["city", currentContactToListMap.city],
+    hintShiftType: ["shift_type"],
+    hintPlantLocation: ["addresss", currentContactToListMap.addresss],
+    hintSeniorityStartDate: ["dob"],
+    hintStatus: ["state"],
+    hintUnionEligible: ["zip"],
+    hintDoNotCall: ["do_not_call"]
+  };
+  Object.entries(hintMap).forEach(([id, [labelField, nccListField]]) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = formatHint(labelField, nccListField);
+  });
+}
+
+async function loadContactFieldHints() {
+  try {
+    const data = await api("/api/wieland/campaign/status");
+    currentContactToListMap = data?.campaign?.expansions?.fieldMappingsId?.fields || {};
+  } catch {
+    currentContactToListMap = {};
+  }
+  updateContactFieldHints();
+}
+
+const DEFAULT_WIDGET_TO_CONTACT_MAP = {
+  firstName: "firstName",
+  lastName: "lastName",
+  phone: "phone",
+  mobile: "mobile",
+  externalId: "externalId",
+  shiftType: "shift_type",
+  trade: "trade",
+  plantLocation: "plant_location",
+  seniorityStartDate: "seniority_start_date",
+  seniorityYears: "seniority_years",
+  status: "active_status",
+  priority: "call_priority",
+  unionEligible: "union_eligible",
+  doNotCall: "do_not_call",
+  email: "email",
+  name: "name",
+  objectType: "objectType"
+};
+
+const KNOWN_CONTACT_FIELDS = [
+  ["firstName", "Employee first name"],
+  ["lastName", "Employee last name"],
+  ["phone", "Primary phone number"],
+  ["mobile", "Alternate phone number"],
+  ["email", "Email address"],
+  ["externalId", "Employee ID (external identifier)"],
+  ["shift_type", "Shift / cambio"],
+  ["trade", "Trade / role"],
+  ["plant_location", "Plant location"],
+  ["seniority_start_date", "Seniority start date"],
+  ["seniority_years", "Seniority in years"],
+  ["active_status", "Employment status"],
+  ["union_eligible", "Union eligibility flag"],
+  ["do_not_call", "Do not call flag"],
+  ["call_priority", "Computed call priority"],
+  ["name", "Full display name"],
+  ["account", "Account"],
+  ["accountId", "Account ID"],
+  ["accountName", "Account name"],
+  ["accountNumber", "Account number"],
+  ["addresss", "Address"],
+  ["city", "City"],
+  ["contactId", "Contact ID"],
+  ["country", "Country"],
+  ["description", "Description"],
+  ["dl", "DL"],
+  ["linkedIn", "LinkedIn"],
+  ["locations", "Locations"],
+  ["objectType", "Object type"],
+  ["operator", "Operator"],
+  ["poe", "POE"],
+  ["poenumber", "POE number"],
+  ["preferenceEmail", "Preference email"],
+  ["role", "Role"]
+];
+
+async function loadFieldMapping() {
+  const loadingEl = document.getElementById("mappingLoading");
+  const editorEl = document.getElementById("mappingEditor");
+  const widgetRows = document.getElementById("widgetMappingRows");
+  const listRows = document.getElementById("listMappingRows");
+  try {
+    const data = await api("/api/wieland/campaign/status");
+    const campaign = data.campaign || {};
+    const widgetMap = DEFAULT_WIDGET_TO_CONTACT_MAP;
+    const listMap = campaign?.expansions?.fieldMappingsId?.fields || {};
+    widgetRows.innerHTML = Object.entries(widgetMap).map(([field, contactField]) => `
+      <tr>
+        <td><code class="w-code">${escHtml(field)}</code></td>
+        <td><input class="w-input w-input-sm" type="text" value="${escHtml(contactField)}" readonly style="width:150px;background:#f8fafc;color:#475569;" /></td>
+        <td style="color:var(--muted);font-size:0.85rem;">Logical field used by the widget.</td>
+      </tr>
+    `).join("");
+    const allFields = [...KNOWN_CONTACT_FIELDS];
+    const knownKeys = new Set(KNOWN_CONTACT_FIELDS.map(([k]) => k));
+    for (const key of Object.keys(listMap)) {
+      if (!knownKeys.has(key)) allFields.push([key, "Custom field"]);
+    }
+    listRows.innerHTML = allFields.map(([field, desc]) => `
+      <tr>
+        <td><code class="w-code">${escHtml(field)}</code></td>
+        <td><input class="w-input w-input-sm" type="text" value="${escHtml(listMap[field] || "")}" readonly style="width:150px;background:#f8fafc;color:#475569;" /></td>
+        <td style="color:var(--muted);font-size:0.85rem;">${escHtml(desc)}</td>
+      </tr>
+    `).join("");
+    loadingEl.style.display = "none";
+    editorEl.hidden = false;
+  } catch (err) {
+    loadingEl.textContent = `Error: ${err.message}`;
+  }
+}
+
 // ── Tab-aware lazy loading ────────────────────────────────────────────────────
-let loaded = { contacts: false, lists: false, campaign: false };
+let loaded = { contacts: false, lists: false, campaign: false, mapping: false };
 
 tabs.forEach(tab => {
   tab.addEventListener("click", () => {
     const name = tab.dataset.tab;
     if (name === "lists" && !loaded.lists) { loaded.lists = true; loadLists(); }
     if (name === "campaign" && !loaded.campaign) { loaded.campaign = true; loadCampaignStatus(); }
+    if (name === "mapping" && !loaded.mapping) { loaded.mapping = true; loadFieldMapping(); }
   });
 });
 

@@ -661,114 +661,58 @@
             </div>
             <div class="w-info-card">
               <h3>Campaign Config</h3>
-              <div class="w-info-row"><span class="w-info-row-label">Campaign</span><span class="w-info-row-value">Wieland_OT_CastingPlantA</span></div>
-              <div class="w-info-row"><span class="w-info-row-label">Tenant</span><span class="w-info-row-value">thrio-prod-4258998</span></div>
-              <div class="w-info-row"><span class="w-info-row-label">Mode</span><span class="w-info-row-value">Progressive / Agentless</span></div>
-              <div class="w-info-row"><span class="w-info-row-label">Dial ratio</span><span class="w-info-row-value">1:1</span></div>
-              <div class="w-info-row"><span class="w-info-row-label">AMD</span><span class="w-info-row-value">Unknown → Machine</span></div>
+              <div id="campaignConfigInfo" class="w-loading" style="padding:10px 0">Loading…</div>
             </div>
             <div class="w-info-card">
               <h3>Dial Rules</h3>
-              <div class="w-info-row"><span class="w-info-row-label">Daily max attempts</span><span class="w-info-row-value">2</span></div>
-              <div class="w-info-row"><span class="w-info-row-label">Max per number</span><span class="w-info-row-value">3</span></div>
-              <div class="w-info-row"><span class="w-info-row-label">Alt phone fallback</span><span class="w-info-row-value">120s</span></div>
-              <div class="w-info-row"><span class="w-info-row-label">No answer wait</span><span class="w-info-row-value">30s</span></div>
-              <div class="w-info-row"><span class="w-info-row-label">Timezone</span><span class="w-info-row-value">America/Chicago</span></div>
+              <div id="campaignDialRulesInfo" class="w-loading" style="padding:10px 0">Loading…</div>
             </div>
           </div>
 
           <h2 class="w-section-title">Dispositions</h2>
-          <div class="w-table-wrap">
-            <table class="w-table">
-              <thead>
-                <tr>
-                  <th>Disposition</th>
-                  <th>Trigger</th>
-                  <th>Action</th>
-                  <th>Next step</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td><strong>OT_ACCEPTED</strong></td>
-                  <td>Keypress 1</td>
-                  <td>Increment accepted slots. If slots = needed → delete remaining leads</td>
-                  <td>Close case</td>
-                </tr>
-                <tr>
-                  <td><strong>OT_DECLINED</strong></td>
-                  <td>Keypress 2</td>
-                  <td>No callback</td>
-                  <td>Advance to next by call_priority</td>
-                </tr>
-                <tr>
-                  <td><strong>OT_NO_ANSWER</strong></td>
-                  <td>No answer 30s</td>
-                  <td>Lead update: callback in 60 min, max 2 retries</td>
-                  <td>Close lead after max retries</td>
-                </tr>
-                <tr>
-                  <td><strong>OT_VOICEMAIL</strong></td>
-                  <td>AMD detects machine</td>
-                  <td>Deposit voicemail → 1 callback in 240 min</td>
-                  <td>Close lead</td>
-                </tr>
-                <tr>
-                  <td><strong>OT_INVALID</strong></td>
-                  <td>Invalid number</td>
-                  <td>Remove from queue immediately</td>
-                  <td>Notify HR</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+          <div id="campaignDispositionsInfo" class="w-loading" style="padding:10px 0">Loading…</div>
 
           <h2 class="w-section-title">SQL Filter (NCC)</h2>
-          <pre style="background:#f3f4f6;border-radius:10px;padding:14px 18px;font-size:0.85rem;overflow-x:auto;color:#1e40af;">active_status='Active' AND union_eligible='Yes' AND do_not_call='No'
-ORDER BY call_priority ASC</pre>
+          <pre id="campaignFilterInfo" style="background:#f3f4f6;border-radius:10px;padding:14px 18px;font-size:0.85rem;overflow-x:auto;color:#1e40af;">Loading…</pre>
         </div>
 
         <!-- ─── Field Mapping tab ──────────────────────────────────────── -->
         <div class="w-panel" id="panel-mapping">
-          <h2 class="w-section-title">NCC Contact → Lead Field Mapping</h2>
-          <div class="w-table-wrap">
-            <table class="w-table">
-              <thead>
-                <tr>
-                  <th>NCC Contact Field</th>
-                  <th>Lead Field</th>
-                  <th>Type</th>
-                  <th>Priority</th>
-                  <th>Note</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr><td><code class="w-code">firstName</code></td><td><code class="w-code">firstName</code></td><td>string</td><td>Required</td><td>Employee first name</td></tr>
-                <tr><td><code class="w-code">lastName</code></td><td><code class="w-code">lastName</code></td><td>string</td><td>Required</td><td>Employee last name</td></tr>
-                <tr><td><code class="w-code">phone</code></td><td><code class="w-code">phone</code></td><td>string</td><td>Primary</td><td>Primary dial number</td></tr>
-                <tr><td><code class="w-code">mobile</code></td><td><code class="w-code">phone_alternate</code></td><td>string</td><td>Fallback (120s)</td><td>Alt phone if primary unanswered</td></tr>
-                <tr><td><code class="w-code">externalId</code></td><td><code class="w-code">T_EXTERNAL_ID</code></td><td>string</td><td>Required</td><td>Employee ID (key for updates)</td></tr>
-                <tr><td><em>local</em></td><td><code class="w-code">call_priority</code></td><td>integer</td><td>Critical</td><td>Computed: rank by seniority among eligible</td></tr>
-                <tr><td><em>local</em></td><td><code class="w-code">union_eligible</code></td><td>boolean</td><td>Filter</td><td>Must be true to be callable</td></tr>
-                <tr><td><em>local</em></td><td><code class="w-code">active_status</code></td><td>enum</td><td>Filter</td><td>Active / LOA / Terminated</td></tr>
-                <tr><td><em>local</em></td><td><code class="w-code">do_not_call</code></td><td>boolean</td><td>Filter</td><td>Excluded from all lists if true</td></tr>
-                <tr><td><em>local</em></td><td><code class="w-code">seniority_years</code></td><td>number</td><td>Sort</td><td>Higher = lower call_priority rank (called sooner)</td></tr>
-                <tr><td><em>local</em></td><td><code class="w-code">plant_location</code></td><td>string</td><td>Info</td><td>Casting Plant A, B, etc.</td></tr>
-                <tr><td><em>local</em></td><td><code class="w-code">trade</code></td><td>string</td><td>Info</td><td>Millwright, Electrician, etc.</td></tr>
-                <tr><td><em>csv</em></td><td><code class="w-code">campaign_ready</code></td><td>YES/NO</td><td>CSV only</td><td>Active + union + no-DNC</td></tr>
-              </tbody>
-            </table>
+          <h2 class="w-section-title">Field Mapping</h2>
+          <div style="background:#fff7ed;border:1px solid #fdba74;color:#9a3412;border-radius:12px;padding:14px 16px;margin:0 0 20px;font-size:0.9rem;">
+            This view is read-only. Any field mapping changes must be made from Admin.
           </div>
-
-          <h2 class="w-section-title">call_priority Formula</h2>
-          <pre style="background:#f3f4f6;border-radius:10px;padding:14px 18px;font-size:0.85rem;overflow-x:auto;color:#1e40af;">eligible = contacts.filter(c =>
-  c.active_status === "Active" &amp;&amp;
-  c.union_eligible === true &amp;&amp;
-  c.do_not_call === false
-)
-eligible.sort((a, b) => b.seniority_years - a.seniority_years)
-eligible.forEach((c, i) => c.call_priority = i + 1)
-nonEligible.forEach(c => c.call_priority = 9999)</pre>
+          <div id="mappingLoading" style="color:var(--muted);font-size:0.88rem;margin-bottom:16px;">Loading…</div>
+          <div id="mappingEditor" hidden>
+            <h3 style="margin:0 0 8px;">Widget → Contact Mapping</h3>
+            <p style="color:var(--muted);font-size:0.88rem;margin:-2px 0 16px;">Logical fields used by the Wieland UI and the NCC contact field they read/write.</p>
+            <div class="w-table-wrap">
+              <table class="w-table">
+                <thead>
+                  <tr>
+                    <th>Widget field</th>
+                    <th style="min-width:180px;">Contact field</th>
+                    <th>Description</th>
+                  </tr>
+                </thead>
+                <tbody id="widgetMappingRows"></tbody>
+              </table>
+            </div>
+            <h3 style="margin:24px 0 8px;">Contact → NCC List Mapping</h3>
+            <p style="color:var(--muted);font-size:0.88rem;margin:-2px 0 16px;">Contact fields mapped to NCC outbound list columns used when creating or updating leads.</p>
+            <div class="w-table-wrap">
+              <table class="w-table">
+                <thead>
+                  <tr>
+                    <th>Contact field</th>
+                    <th style="min-width:180px;">NCC list column</th>
+                    <th>Description</th>
+                  </tr>
+                </thead>
+                <tbody id="listMappingRows"></tbody>
+              </table>
+            </div>
+          </div>
         </div>
 
       </main>
@@ -782,64 +726,70 @@ nonEligible.forEach(c => c.call_priority = 9999)</pre>
 
         <div class="w-field-row">
           <div class="w-field">
-            <label for="mFirstName">First name</label>
+            <label for="mFirstName">First name <span id="hintFirstName" style="font-weight:600;color:var(--muted);font-size:0.78rem;"></span></label>
             <input id="mFirstName" type="text" placeholder="Maria" required />
           </div>
           <div class="w-field">
-            <label for="mLastName">Last name</label>
+            <label for="mLastName">Last name <span id="hintLastName" style="font-weight:600;color:var(--muted);font-size:0.78rem;"></span></label>
             <input id="mLastName" type="text" placeholder="Garcia" required />
           </div>
         </div>
 
         <div class="w-field-row">
           <div class="w-field">
-            <label for="mPhone">Phone (primary)</label>
+            <label for="mPhone">Phone (primary) <span id="hintPhone" style="font-weight:600;color:var(--muted);font-size:0.78rem;"></span></label>
             <input id="mPhone" type="tel" placeholder="+1 555 000 0000" />
           </div>
           <div class="w-field">
-            <label for="mMobile">Phone (alternate)</label>
+            <label for="mMobile">Phone (alternate) <span id="hintMobile" style="font-weight:600;color:var(--muted);font-size:0.78rem;"></span></label>
             <input id="mMobile" type="tel" placeholder="+1 555 000 0001" />
           </div>
         </div>
 
         <div class="w-field-row">
           <div class="w-field">
-            <label for="mExternalId">Employee ID</label>
+            <label for="mExternalId">Employee ID <span id="hintExternalId" style="font-weight:600;color:var(--muted);font-size:0.78rem;"></span></label>
             <input id="mExternalId" type="text" placeholder="EMP-0001" />
           </div>
           <div class="w-field">
-            <label for="mTrade">Trade</label>
+            <label for="mTrade">Trade <span id="hintTrade" style="font-weight:600;color:var(--muted);font-size:0.78rem;"></span></label>
             <input id="mTrade" type="text" placeholder="Millwright" />
           </div>
         </div>
 
         <div class="w-field-row">
           <div class="w-field">
-            <label for="mPlant">Plant location</label>
-            <input id="mPlant" type="text" placeholder="Casting Plant A" />
+            <label for="mShift">Shift / Cambio <span id="hintShiftType" style="font-weight:600;color:var(--muted);font-size:0.78rem;"></span></label>
+            <input id="mShift" type="text" placeholder="Night" />
           </div>
           <div class="w-field">
-            <label for="mSeniority">Seniority (years)</label>
-            <input id="mSeniority" type="number" min="0" max="60" step="0.5" placeholder="5" />
+            <label for="mPlant">Plant location <span id="hintPlantLocation" style="font-weight:600;color:var(--muted);font-size:0.78rem;"></span></label>
+            <input id="mPlant" type="text" placeholder="Casting Plant A" />
           </div>
         </div>
 
-        <div class="w-field">
-          <label for="mStatus">Employment status</label>
-          <select id="mStatus">
-            <option value="Active">Active</option>
-            <option value="LOA">LOA</option>
-            <option value="Terminated">Terminated</option>
-          </select>
+        <div class="w-field-row">
+          <div class="w-field">
+            <label for="mSeniorityStartDate">Seniority start date <span id="hintSeniorityStartDate" style="font-weight:600;color:var(--muted);font-size:0.78rem;"></span></label>
+            <input id="mSeniorityStartDate" type="date" />
+          </div>
+          <div class="w-field">
+            <label for="mStatus">Employment status <span id="hintStatus" style="font-weight:600;color:var(--muted);font-size:0.78rem;"></span></label>
+            <select id="mStatus">
+              <option value="Active">Active</option>
+              <option value="LOA">LOA</option>
+              <option value="Terminated">Terminated</option>
+            </select>
+          </div>
         </div>
 
         <div class="w-field-check">
           <input id="mUnion" type="checkbox" />
-          <label for="mUnion">Union eligible</label>
+          <label for="mUnion">Union eligible <span id="hintUnionEligible" style="font-weight:600;color:var(--muted);font-size:0.78rem;"></span></label>
         </div>
         <div class="w-field-check">
           <input id="mDNC" type="checkbox" />
-          <label for="mDNC">Do not call (DNC)</label>
+          <label for="mDNC">Do not call (DNC) <span id="hintDoNotCall" style="font-weight:600;color:var(--muted);font-size:0.78rem;"></span></label>
         </div>
 
         <input type="hidden" id="mContactId" />

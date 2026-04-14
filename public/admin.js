@@ -35,6 +35,56 @@ const newUserPermissionsWrap = document.getElementById("newUserPermissionsWrap")
 const newUserCanCreateCampaign = document.getElementById("newUserCanCreateCampaign");
 const newUserCanEditCampaign = document.getElementById("newUserCanEditCampaign");
 const newUserCanDeleteCampaign = document.getElementById("newUserCanDeleteCampaign");
+const wielandConfiguredFieldmappingInfo = document.getElementById("wielandConfiguredFieldmappingInfo");
+const wielandAvailableFieldmappingsInfo = document.getElementById("wielandAvailableFieldmappingsInfo");
+const wielandRefreshFieldmappingsButton = document.getElementById("wielandRefreshFieldmappings");
+const wielandWidgetMappingRows = document.getElementById("wielandWidgetMappingRows");
+const wielandContactToListRows = document.getElementById("wielandContactToListRows");
+
+const DEFAULT_WIELAND_WIDGET_TO_CONTACT_MAP = {
+  firstName: "firstName",
+  lastName: "lastName",
+  phone: "phone",
+  mobile: "mobile",
+  externalId: "externalId",
+  shiftType: "shift_type",
+  trade: "trade",
+  plantLocation: "plant_location",
+  seniorityStartDate: "seniority_start_date",
+  seniorityYears: "seniority_years",
+  status: "active_status",
+  priority: "call_priority",
+  unionEligible: "union_eligible",
+  doNotCall: "do_not_call",
+  email: "email",
+  name: "name",
+  objectType: "objectType"
+};
+
+const WIELAND_CONTACT_FIELD_DESCRIPTIONS = [
+  ["firstName", "Employee first name"],
+  ["lastName", "Employee last name"],
+  ["phone", "Primary phone number"],
+  ["mobile", "Alternate phone number"],
+  ["email", "Email address"],
+  ["externalId", "Employee ID"],
+  ["shift_type", "Shift / cambio"],
+  ["trade", "Trade / role"],
+  ["plant_location", "Plant location"],
+  ["seniority_start_date", "Seniority start date"],
+  ["seniority_years", "Computed seniority in years"],
+  ["active_status", "Employment status"],
+  ["union_eligible", "Union flag"],
+  ["do_not_call", "Do not call flag"],
+  ["call_priority", "Computed call priority"],
+  ["name", "Full display name"],
+  ["addresss", "Address"],
+  ["city", "City"],
+  ["state", "State / employee status in NCC"],
+  ["zip", "ZIP / union flag in NCC"],
+  ["dob", "Date of birth / start date in NCC"],
+  ["fax", "Priority slot used in NCC"]
+];
 
 const fields = {
   id: document.getElementById("campaignId"),
@@ -51,6 +101,8 @@ const fields = {
   geminiPrompt: document.getElementById("geminiPrompt"),
   wielandNccCampaignId: document.getElementById("wielandNccCampaignId"),
   wielandSlotsNeeded: document.getElementById("wielandSlotsNeeded"),
+  wielandUploadFileName: document.getElementById("wielandUploadFileName"),
+  wielandNccFieldmappingId: document.getElementById("wielandNccFieldmappingId"),
   wielandNccAuthType: document.getElementById("wielandNccAuthType"),
   wielandNccCredential: document.getElementById("wielandNccCredential"),
   token: document.getElementById("campaignToken"),
@@ -245,6 +297,48 @@ function readQuestionItems() {
     .filter(Boolean);
 }
 
+function renderWielandMappingEditors(widgetMap = {}, contactToListMap = {}) {
+  if (wielandWidgetMappingRows) {
+    wielandWidgetMappingRows.innerHTML = Object.entries(DEFAULT_WIELAND_WIDGET_TO_CONTACT_MAP).map(([widgetField, defaultContactField]) => `
+      <tr>
+        <td><code>${escapeHtml(widgetField)}</code></td>
+        <td><input type="text" data-wieland-widget-field="${escapeHtml(widgetField)}" value="${escapeHtml(widgetMap[widgetField] || defaultContactField || "")}" /></td>
+        <td>Logical field used by the widget.</td>
+      </tr>
+    `).join("");
+  }
+
+  if (wielandContactToListRows) {
+    wielandContactToListRows.innerHTML = WIELAND_CONTACT_FIELD_DESCRIPTIONS.map(([contactField, description]) => `
+      <tr>
+        <td><code>${escapeHtml(contactField)}</code></td>
+        <td><input type="text" data-wieland-contact-field="${escapeHtml(contactField)}" value="${escapeHtml(contactToListMap[contactField] || "")}" /></td>
+        <td>${escapeHtml(description)}</td>
+      </tr>
+    `).join("");
+  }
+}
+
+function readWielandWidgetMap() {
+  const result = {};
+  document.querySelectorAll("[data-wieland-widget-field]").forEach((input) => {
+    const key = input.getAttribute("data-wieland-widget-field");
+    const value = input.value.trim();
+    if (key && value) result[key] = value;
+  });
+  return result;
+}
+
+function readWielandContactToListMap() {
+  const result = {};
+  document.querySelectorAll("[data-wieland-contact-field]").forEach((input) => {
+    const key = input.getAttribute("data-wieland-contact-field");
+    const value = input.value.trim();
+    if (key && value) result[key] = value;
+  });
+  return result;
+}
+
 const apiBaseUrl = new URL(".", window.location.href);
 
 previewPageType.addEventListener("change", schedulePreviewRender);
@@ -296,6 +390,10 @@ addQuestionButton.addEventListener("click", () => {
   addQuestionRow();
   markDirty();
   schedulePreviewRender();
+});
+
+wielandRefreshFieldmappingsButton?.addEventListener("click", () => {
+  loadWielandFieldmappingInfo();
 });
 
 collapseAllButton.addEventListener("click", () => {
@@ -504,9 +602,12 @@ function fillForm(campaign) {
   fields.geminiPrompt.value = campaign.geminiPrompt || "";
   fields.wielandNccCampaignId.value = campaign.wieland?.nccCampaignId || "";
   fields.wielandSlotsNeeded.value = campaign.wieland?.slotsNeeded || 8;
+  fields.wielandUploadFileName.value = campaign.wieland?.uploadFileName || "";
+  fields.wielandNccFieldmappingId.value = campaign.wieland?.nccFieldmappingId || "";
   fields.wielandNccAuthType.value = campaign.wieland?.nccAuthType || "token";
   fields.wielandNccCredential.value = campaign.wielandNccCredential || "";
   updateWielandCredentialField(fields.wielandNccAuthType.value);
+  renderWielandMappingEditors(campaign.wieland?.widgetToContactMap || {}, campaign.wieland?.contactToListMap || {});
   const wielandLink = document.getElementById("wielandOpenLink");
   if (campaign.id) {
     wielandLink.href = `./wieland.html?campaign=${encodeURIComponent(campaign.id)}`;
@@ -514,6 +615,7 @@ function fillForm(campaign) {
   } else {
     wielandLink.hidden = true;
   }
+  loadWielandFieldmappingInfo();
   fields.token.value = campaign.token || "";
   fields.cookie.value = campaign.cookie || "";
   fields.allowedKbIds.value = (campaign.allowedKbIds || []).join("\n");
@@ -642,6 +744,8 @@ function readForm() {
     wieland: {
       nccCampaignId: fields.wielandNccCampaignId.value.trim(),
       slotsNeeded: parseInt(fields.wielandSlotsNeeded.value) || 8,
+      uploadFileName: fields.wielandUploadFileName.value.trim(),
+      nccFieldmappingId: fields.wielandNccFieldmappingId.value.trim(),
       nccAuthType: fields.wielandNccAuthType.value || "token"
     },
     wielandNccCredential: fields.wielandNccCredential.value.trim(),
@@ -762,6 +866,69 @@ function readForm() {
   };
 }
 
+function resetWielandFieldmappingInfo(message = "Save the campaign to load field mapping details.") {
+  if (wielandConfiguredFieldmappingInfo) wielandConfiguredFieldmappingInfo.value = message;
+  if (wielandAvailableFieldmappingsInfo) wielandAvailableFieldmappingsInfo.value = message;
+}
+
+function formatFieldmappingSummary(item) {
+  if (!item) return "No field mapping resolved.";
+  const fieldsList = Object.entries(item.fields || {})
+    .map(([contactField, mappedField]) => `${contactField} -> ${mappedField}`)
+    .join("\n");
+  return [
+    `Name: ${item.name || item.localizations?.name?.en?.value || "—"}`,
+    `ID: ${item._id || item.fieldmappingsId || item.id || "—"}`,
+    `Schema: ${item.schema || "—"}`,
+    `File: ${item.fileName || "—"}`,
+    "",
+    fieldsList || "No mapped fields."
+  ].join("\n");
+}
+
+async function loadWielandFieldmappingInfo() {
+  if (!wielandConfiguredFieldmappingInfo || !wielandAvailableFieldmappingsInfo) return;
+  const campaignId = fields.id.value.trim() || state.selectedId;
+  if (!campaignId) {
+    resetWielandFieldmappingInfo();
+    return;
+  }
+
+  wielandConfiguredFieldmappingInfo.value = "Loading…";
+  wielandAvailableFieldmappingsInfo.value = "Loading…";
+
+  try {
+    const [statusData, fieldmapData] = await Promise.all([
+      apiRequest(`/api/wieland/campaign/status?campaign=${encodeURIComponent(campaignId)}`),
+      apiRequest(`/api/wieland/fieldmap/ncc?campaign=${encodeURIComponent(campaignId)}`)
+    ]);
+
+    const configured = statusData?.campaign?.expansions?.fieldMappingsId || null;
+    const forcedId = fields.wielandNccFieldmappingId.value.trim();
+    const available = (fieldmapData?.fieldmappings || []).filter((item) => item?.schema === "contact");
+    const forced = available.find((item) => (item?._id || item?.fieldmappingsId || item?.id || "") === forcedId);
+
+    wielandConfiguredFieldmappingInfo.value = [
+      "Campaign field mapping",
+      formatFieldmappingSummary(configured),
+      "",
+      "Forced field mapping from Admin",
+      forcedId ? formatFieldmappingSummary(forced || { _id: forcedId, name: "Configured ID not found in NCC response" }) : "No forced field mapping configured."
+    ].join("\n");
+
+    wielandAvailableFieldmappingsInfo.value = available.length
+      ? available.map((item) => [
+          `${item.name || item.localizations?.name?.en?.value || "Unnamed"}`,
+          `ID: ${item._id || item.fieldmappingsId || item.id || "—"}`,
+          `File: ${item.fileName || "—"}`,
+          `Fields: ${Object.keys(item.fields || {}).length}`
+        ].join("\n")).join("\n\n")
+      : "No NCC contact field mappings found.";
+  } catch (error) {
+    resetWielandFieldmappingInfo(`Unable to load field mapping details.\n${error.message}`);
+  }
+}
+
 function updateWielandCredentialField(authType) {
   const row = document.getElementById("wielandCredentialField");
   const label = document.getElementById("wielandCredentialLabel");
@@ -785,10 +952,13 @@ function updateWielandCredentialField(authType) {
 function applyDefaultUiValues() {
   fields.wielandNccCampaignId.value = "";
   fields.wielandSlotsNeeded.value = 8;
+  fields.wielandUploadFileName.value = "";
+  fields.wielandNccFieldmappingId.value = "";
   fields.wielandNccAuthType.value = "token";
   fields.wielandNccCredential.value = "";
   updateWielandCredentialField("token");
   document.getElementById("wielandOpenLink").hidden = true;
+  resetWielandFieldmappingInfo();
   fields.apiUrl.value = "https://mancity.thrio.io/data/api/ai/prediction";
   fields.workitemApiUrl.value = "https://mancity.thrio.io/users/api/workitems";
   fields.agentChatApiUrl.value = "https://mancity.thrio.io/chats/api/agent/chats";

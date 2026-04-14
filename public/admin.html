@@ -588,6 +588,18 @@
                 </div>
 
                 <div class="admin-field">
+                  <label for="wielandUploadFileName">Upload file name</label>
+                  <input id="wielandUploadFileName" type="text" placeholder="contacts.csv" />
+                  <span class="admin-field-note">Permanent CSV filename used when creating outbound lists. If blank, the backend falls back to the NCC field mapping file name or <code>contacts.csv</code>.</span>
+                </div>
+
+                <div class="admin-field">
+                  <label for="wielandNccFieldmappingId">NCC Field Mapping ID</label>
+                  <input id="wielandNccFieldmappingId" type="text" placeholder="69afe36e71526d11f92b628b" />
+                  <span class="admin-field-note">Optional. Forces the exact NCC contact fieldmapping used for list creation instead of auto-selecting one.</span>
+                </div>
+
+                <div class="admin-field">
                   <label for="wielandNccAuthType">NCC Auth type</label>
                   <select id="wielandNccAuthType">
                     <option value="token">Token (NCC/Thrio format)</option>
@@ -606,6 +618,50 @@
                 <div class="admin-field admin-field--full">
                   <a id="wielandOpenLink" href="./wieland.html" target="_blank" class="admin-wieland-link" hidden>Open Wieland Manager →</a>
                   <span class="admin-field-note">Save the campaign first, then open the manager.</span>
+                </div>
+
+                <div class="admin-field admin-field--full">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:8px;">
+                    <div>
+                      <label style="display:block;margin:0;">Field Mapping</label>
+                      <span class="admin-field-note">Editable campaign mappings. Save the campaign after changes. NCC reference stays visible below.</span>
+                    </div>
+                    <button type="button" id="wielandRefreshFieldmappings" class="secondary-button">Refresh field mappings</button>
+                  </div>
+                  <div style="display:grid;gap:22px;margin-bottom:18px;">
+                    <div>
+                      <h4 style="margin:0 0 8px;">Widget → Contact Mapping</h4>
+                      <div class="admin-table-wrap">
+                        <table class="admin-table">
+                          <thead>
+                            <tr><th>Widget field</th><th>Contact field</th><th>Description</th></tr>
+                          </thead>
+                          <tbody id="wielandWidgetMappingRows"></tbody>
+                        </table>
+                      </div>
+                    </div>
+                    <div>
+                      <h4 style="margin:0 0 8px;">Contact → NCC List Mapping</h4>
+                      <div class="admin-table-wrap">
+                        <table class="admin-table">
+                          <thead>
+                            <tr><th>Contact field</th><th>NCC list column</th><th>Description</th></tr>
+                          </thead>
+                          <tbody id="wielandContactToListRows"></tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;">
+                    <div>
+                      <label for="wielandConfiguredFieldmappingInfo">Configured campaign / forced field mapping</label>
+                      <textarea id="wielandConfiguredFieldmappingInfo" rows="10" readonly placeholder="Save the campaign to load field mapping details."></textarea>
+                    </div>
+                    <div>
+                      <label for="wielandAvailableFieldmappingsInfo">Available NCC contact field mappings</label>
+                      <textarea id="wielandAvailableFieldmappingsInfo" rows="10" readonly placeholder="Save the campaign to load field mapping details."></textarea>
+                    </div>
+                  </div>
                 </div>
               </div>
             </details>

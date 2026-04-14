@@ -1922,6 +1922,10 @@ function normalizeCampaign(input) {
     wieland: {
       nccCampaignId: String(input.wieland?.nccCampaignId || input.wielandNccCampaignId || "").trim(),
       slotsNeeded: Math.max(1, parseInt(input.wieland?.slotsNeeded ?? input.wielandSlotsNeeded ?? 0) || 8),
+      uploadFileName: String(input.wieland?.uploadFileName || input.wielandUploadFileName || "").trim(),
+      nccFieldmappingId: String(input.wieland?.nccFieldmappingId || input.wielandNccFieldmappingId || "").trim(),
+      widgetToContactMap: sanitizeStringMapping(input.wieland?.widgetToContactMap || input.wielandWidgetToContactMap || {}),
+      contactToListMap: sanitizeStringMapping(input.wieland?.contactToListMap || input.wielandContactToListMap || {}),
       nccAuthType: (["token", "key", "none"].includes(input.wieland?.nccAuthType) ? input.wieland.nccAuthType : null)
         || (["token", "key", "none"].includes(input.wielandNccAuthType) ? input.wielandNccAuthType : "token")
     },
@@ -3653,8 +3657,10 @@ async function writeWielandContactLocal(externalId, fields) {
     active_status: String(fields.active_status || "Active"),
     do_not_call: Boolean(fields.do_not_call),
     seniority_years: Number(fields.seniority_years) || 0,
+    seniority_start_date: String(fields.seniority_start_date || ""),
     plant_location: String(fields.plant_location || ""),
-    trade: String(fields.trade || "")
+    trade: String(fields.trade || ""),
+    shift_type: String(fields.shift_type || "")
   };
   if (firestore) {
     await firestore.collection(WIELAND_CONTACTS_COLLECTION).doc(externalId).set(clean, { merge: true });
@@ -3665,6 +3671,20 @@ async function writeWielandContactLocal(externalId, fields) {
   fs.writeFileSync(WIELAND_CONTACTS_FILE, `${JSON.stringify(all, null, 2)}\n`, "utf8");
 }
 
+function calculateSeniorityYears(startDate, fallbackYears = 0) {
+  const normalized = String(startDate || "").trim();
+  if (!normalized) return Number(fallbackYears) || 0;
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return Number(fallbackYears) || 0;
+  const years = (Date.now() - date.getTime()) / (365.25 * 24 * 60 * 60 * 1000);
+  return years > 0 ? Math.floor(years) : 0;
+}
+
+function isUnionZip(value) {
+  const normalized = String(value == null ? "" : value).trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "y";
+}
+
 function calcCallPriority(contacts) {
   const eligible = contacts.filter(c =>
     c.active_status === "Active" &&
@@ -3673,32 +3693,98 @@ function calcCallPriority(contacts) {
   );
   eligible.sort((a, b) => (b.seniority_years || 0) - (a.seniority_years || 0));
   const eligibleIds = new Set(eligible.map(c => c.externalId || c.id || c._id));
-  eligible.forEach((c, i) => { c.call_priority = i + 1; });
+  const maxPriority = eligible.length;
+  eligible.forEach((c, i) => { c.call_priority = maxPriority - i; });
   contacts.forEach(c => {
     if (!eligibleIds.has(c.externalId || c.id || c._id)) c.call_priority = 9999;
   });
   return contacts;
 }
 
-function generateWielandCSV(contacts) {
-  const headers = [
-    "employee_id", "firstName", "lastName", "phone_primary", "phone_alternate",
-    "union_eligible", "active_status", "do_not_call", "plant_location", "trade",
-    "seniority_years", "call_priority", "campaign_ready"
-  ];
+function buildLeadPayloadFromContact(contact, listId, contactToList = {}) {
+  const fullName = contact.name || `${contact.firstName || ""} ${contact.lastName || ""}`.trim();
+  const lead = {
+    name: fullName,
+    firstName: contact.firstName || "",
+    lastName: contact.lastName || "",
+    phone: contact.phone || "",
+    mobile: contact.mobile || "",
+    email: contact.email || "",
+    externalId: contact.externalId || "",
+    outboundListId: listId
+  };
+  for (const [contactField, listColumn] of Object.entries(contactToList || {})) {
+    if (listColumn && contact[contactField] !== undefined && contact[contactField] !== null) {
+      lead[listColumn] = contact[contactField];
+    }
+  }
+  return lead;
+}
+
+function generateWielandCSV(contacts, contactToList = {}, nccFieldmapping = null) {
+  const headers = Array.isArray(nccFieldmapping?.fileFields) && nccFieldmapping.fileFields.length
+    ? nccFieldmapping.fileFields
+    : ["name", "phone", ...Object.values(contactToList || {}).filter(Boolean)];
+  const uniqueHeaders = [...new Set(headers)];
   const esc = (v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
-  const rows = [headers.join(",")];
+  const rows = [uniqueHeaders.join(",")];
   for (const c of contacts) {
-    const campaignReady = (c.active_status === "Active" && c.union_eligible === true && c.do_not_call === false) ? "YES" : "NO";
-    rows.push([
-      esc(c.externalId || ""), esc(c.firstName || ""), esc(c.lastName || ""),
-      esc(c.phone || ""), esc(c.mobile || ""),
-      esc(c.union_eligible ? "Yes" : "No"), esc(c.active_status || ""),
-      esc(c.do_not_call ? "Yes" : "No"), esc(c.plant_location || ""), esc(c.trade || ""),
-      esc(c.seniority_years || 0), esc(c.call_priority || 9999), esc(campaignReady)
-    ].join(","));
+    const lead = buildLeadPayloadFromContact(c, "", contactToList);
+    rows.push(uniqueHeaders.map((header) => esc(lead[header] ?? "")).join(","));
   }
   return rows.join("\n");
+}
+
+function sanitizeStringMapping(mapping) {
+  const clean = {};
+  if (!mapping || typeof mapping !== "object" || Array.isArray(mapping)) return clean;
+  for (const [key, value] of Object.entries(mapping)) {
+    if (typeof key === "string" && typeof value === "string") clean[key] = value;
+  }
+  return clean;
+}
+
+function buildWielandContactFingerprints(contact) {
+  const fingerprints = new Set();
+  const add = (value) => {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (normalized) fingerprints.add(normalized);
+  };
+  add(contact?.externalId);
+  add(contact?.phone);
+  add(contact?.mobile);
+  add(`${contact?.firstName || ""} ${contact?.lastName || ""}`.trim());
+  add(contact?.name);
+  return fingerprints;
+}
+
+function buildWielandLeadFingerprints(lead) {
+  return buildWielandContactFingerprints(lead);
+}
+
+function findMatchingContactForLead(lead, contacts) {
+  const leadFingerprints = buildWielandLeadFingerprints(lead);
+  if (!leadFingerprints.size) return null;
+  for (const contact of contacts || []) {
+    const contactFingerprints = buildWielandContactFingerprints(contact);
+    for (const fingerprint of leadFingerprints) {
+      if (contactFingerprints.has(fingerprint)) return contact;
+    }
+  }
+  return null;
+}
+
+function selectBestNccContactFieldmapping(fieldmappings, savedContactToList = {}) {
+  const preferredSize = Object.keys(savedContactToList || {}).length;
+  return (fieldmappings || [])
+    .filter((item) => item?.schema === "contact")
+    .sort((a, b) => {
+      const aFields = Object.keys(a?.fields || {}).length;
+      const bFields = Object.keys(b?.fields || {}).length;
+      const aScore = preferredSize && aFields >= preferredSize ? 1 : 0;
+      const bScore = preferredSize && bFields >= preferredSize ? 1 : 0;
+      return bScore - aScore || bFields - aFields;
+    })[0] || null;
 }
 
 function buildNccAuthHeader(nccConfig) {
@@ -3730,14 +3816,39 @@ async function mergeWielandContacts(rawContacts, localMap) {
     const local = localMap[key] || {};
     return {
       ...c,
-      union_eligible: local.union_eligible !== undefined ? local.union_eligible : false,
-      active_status: local.active_status || "Active",
+      union_eligible: local.union_eligible !== undefined ? local.union_eligible : isUnionZip(c.zip),
+      active_status: local.active_status || c.state || "Active",
       do_not_call: local.do_not_call !== undefined ? local.do_not_call : false,
-      seniority_years: local.seniority_years || 0,
-      plant_location: local.plant_location || "",
-      trade: local.trade || ""
+      seniority_start_date: local.seniority_start_date || c.dob || "",
+      seniority_years: calculateSeniorityYears(local.seniority_start_date || c.dob || "", local.seniority_years || 0),
+      plant_location: local.plant_location || c.addresss || "",
+      trade: local.trade || c.city || "",
+      shift_type: local.shift_type || ""
     };
   });
+}
+
+async function syncWielandContactFaxPriority(nccConfig) {
+  const contactsResult = await nccFetch(nccConfig, "/contact");
+  if (!contactsResult.ok) return contactsResult;
+
+  const rawContacts = Array.isArray(contactsResult.data)
+    ? contactsResult.data
+    : (contactsResult.data?.objects || contactsResult.data?.results || contactsResult.data?.data || []);
+  const localMap = await readWielandContactsLocal();
+  const contacts = await mergeWielandContacts(rawContacts, localMap);
+  calcCallPriority(contacts);
+
+  for (const contact of contacts) {
+    const contactId = contact?.externalId || contact?.id || contact?._id || contact?.contactId || "";
+    if (!contactId) continue;
+    const nextFax = contact.call_priority >= 9999 ? "" : String(contact.call_priority);
+    if (String(contact.fax || "") === nextFax) continue;
+    const patchResult = await nccFetch(nccConfig, `/contact/${contactId}`, "PATCH", { fax: nextFax });
+    if (!patchResult.ok) return patchResult;
+  }
+
+  return { ok: true, status: 200, data: { ok: true } };
 }
 
 async function handleWieland(req, res, url) {
@@ -3787,12 +3898,17 @@ async function handleWieland(req, res, url) {
     try { body = await readJson(req); } catch {
       sendJson(res, 400, { error: "Invalid JSON." }); return;
     }
-    const { union_eligible, active_status, do_not_call, seniority_years, plant_location, trade, ...nccFields } = body;
+    const { union_eligible, active_status, do_not_call, seniority_years, seniority_start_date, plant_location, trade, shift_type, ...nccFields } = body;
     const result = await nccFetch(nccConfig, "/contact", "POST", { objectType: "contact", ...nccFields });
     if (!result.ok) { sendJson(res, result.status, { error: "NCC API error", details: result.data }); return; }
     const externalId = body.externalId || result.data?.externalId || result.data?.id || result.data?._id;
     if (externalId) {
-      await writeWielandContactLocal(externalId, { union_eligible, active_status, do_not_call, seniority_years, plant_location, trade });
+      await writeWielandContactLocal(externalId, { union_eligible, active_status, do_not_call, seniority_years, seniority_start_date, plant_location, trade, shift_type });
+    }
+    const syncResult = await syncWielandContactFaxPriority(nccConfig);
+    if (!syncResult.ok) {
+      sendJson(res, syncResult.status, { error: "Failed to sync contact priorities", details: syncResult.data });
+      return;
     }
     sendJson(res, 200, { ok: true, contact: result.data });
     return;
@@ -3805,11 +3921,16 @@ async function handleWieland(req, res, url) {
     try { body = await readJson(req); } catch {
       sendJson(res, 400, { error: "Invalid JSON." }); return;
     }
-    const { union_eligible, active_status, do_not_call, seniority_years, plant_location, trade, ...nccFields } = body;
+    const { union_eligible, active_status, do_not_call, seniority_years, seniority_start_date, plant_location, trade, shift_type, ...nccFields } = body;
     const result = await nccFetch(nccConfig, `/contact/${contactId}`, "PATCH", nccFields);
     if (!result.ok) { sendJson(res, result.status, { error: "NCC API error", details: result.data }); return; }
     const externalId = body.externalId || contactId;
-    await writeWielandContactLocal(externalId, { union_eligible, active_status, do_not_call, seniority_years, plant_location, trade });
+    await writeWielandContactLocal(externalId, { union_eligible, active_status, do_not_call, seniority_years, seniority_start_date, plant_location, trade, shift_type });
+    const syncResult = await syncWielandContactFaxPriority(nccConfig);
+    if (!syncResult.ok) {
+      sendJson(res, syncResult.status, { error: "Failed to sync contact priorities", details: syncResult.data });
+      return;
+    }
     sendJson(res, 200, { ok: true, contact: result.data });
     return;
   }
@@ -3830,6 +3951,21 @@ async function handleWieland(req, res, url) {
     return;
   }
 
+  const listPatchMatch = url.pathname.match(/^\/api\/wieland\/lists\/([^/]+)$/);
+  if (req.method === "PATCH" && listPatchMatch) {
+    let body;
+    try { body = await readJson(req); } catch {
+      sendJson(res, 400, { error: "Invalid JSON." }); return;
+    }
+    const result = await nccFetch(nccConfig, `/outboundlist/${listPatchMatch[1]}`, "PATCH", { active: body.active });
+    sendJson(
+      res,
+      result.ok ? 200 : result.status,
+      result.ok ? { ok: true, list: result.data } : { error: "NCC API error", details: result.data }
+    );
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/wieland/lists") {
     let body;
     try { body = await readJson(req); } catch {
@@ -3840,13 +3976,32 @@ async function handleWieland(req, res, url) {
     if (!nccConfig.campaignId) { sendJson(res, 400, { error: "Campaign ID not configured." }); return; }
 
     // Build contacts + CSV
+    const campaignKey = nccConfig.campaignId || campaignParam;
     const contactsResult = await nccFetch(nccConfig, "/contact");
     const raw = contactsResult.ok ? (Array.isArray(contactsResult.data) ? contactsResult.data : (contactsResult.data?.results || contactsResult.data?.data || [])) : [];
     const localMap = await readWielandContactsLocal();
     const contacts = await mergeWielandContacts(raw, localMap);
     calcCallPriority(contacts);
     const eligible = contacts.filter(c => c.call_priority !== 9999);
-    const csvContent = generateWielandCSV(eligible);
+    const fieldmappingsResult = await nccFetch(nccConfig, "/fieldmappings");
+    const nccFieldmappings = fieldmappingsResult.ok
+      ? (Array.isArray(fieldmappingsResult.data) ? fieldmappingsResult.data : (fieldmappingsResult.data?.objects || fieldmappingsResult.data?.results || fieldmappingsResult.data?.data || []))
+      : [];
+    const selectedFieldmapping = nccFieldmappings.find((item) => {
+      const itemId = item?.fieldmappingsId || item?._id || item?.id || "";
+      return item?.schema === "contact" && itemId === String(campaign.wieland?.nccFieldmappingId || "").trim();
+    }) || selectBestNccContactFieldmapping(nccFieldmappings);
+    if (!selectedFieldmapping) {
+      sendJson(res, 400, { error: "No NCC contact field mapping found for this campaign." });
+      return;
+    }
+    const contactToList = sanitizeStringMapping(campaign.wieland?.contactToListMap || selectedFieldmapping?.fields || {});
+    const csvContent = generateWielandCSV(eligible, contactToList, selectedFieldmapping);
+    const uploadFileName = String(
+      campaign.wieland?.uploadFileName
+      || selectedFieldmapping?.fileName
+      || "contacts.csv"
+    ).trim() || "contacts.csv";
 
     // Multipart upload
     const listPayload = {
@@ -3865,7 +4020,7 @@ async function handleWieland(req, res, url) {
 
     const formData = new FormData();
     formData.append("object", new Blob([JSON.stringify(listPayload)], { type: "application/json" }), "object.json");
-    formData.append("file", new Blob([csvContent], { type: "text/csv" }), "contacts.csv");
+    formData.append("file", new Blob([csvContent], { type: "text/csv" }), uploadFileName);
 
     const baseUrl = (nccConfig.nccBaseUrl || "https://mancity.thrio.io/data/api/types").replace(/\/$/, "");
     let createRes;
@@ -3926,6 +4081,51 @@ async function handleWieland(req, res, url) {
     return;
   }
 
+  const listRefreshPriorityMatch = url.pathname.match(/^\/api\/wieland\/lists\/([^/]+)\/refresh-priority$/);
+  if (req.method === "POST" && listRefreshPriorityMatch) {
+    const listId = listRefreshPriorityMatch[1];
+    const merged = await fetchMergedWielandContacts(nccConfig);
+    if (!merged.ok) {
+      sendJson(res, merged.status, { error: "NCC API error", details: merged.data });
+      return;
+    }
+    const leadsResult = await nccFetch(nccConfig, `/lead?rows=100&start=0&q=&outboundListId=${encodeURIComponent(listId)}`);
+    if (!leadsResult.ok) {
+      sendJson(res, leadsResult.status, { error: "NCC API error", details: leadsResult.data });
+      return;
+    }
+    const leads = Array.isArray(leadsResult.data)
+      ? leadsResult.data
+      : (leadsResult.data?.objects || leadsResult.data?.results || leadsResult.data?.data || []);
+    let skipped = 0;
+    let updated = 0;
+    for (const lead of leads) {
+      const leadId = lead.id || lead._id || lead.resId;
+      if (!leadId) {
+        skipped += 1;
+        continue;
+      }
+      const contact = findMatchingContactForLead(lead, merged.contacts);
+      if (!contact) {
+        skipped += 1;
+        continue;
+      }
+      const patchResult = await nccFetch(
+        nccConfig,
+        `/outboundlist/${listId}/lead/${leadId}`,
+        "PATCH",
+        { fax: String(contact.call_priority || 9999) }
+      );
+      if (!patchResult.ok) {
+        sendJson(res, patchResult.status, { error: "Failed to refresh list priority", details: patchResult.data });
+        return;
+      }
+      updated += 1;
+    }
+    sendJson(res, 200, { ok: true, updated, skipped, totalLeads: leads.length });
+    return;
+  }
+
   // PATCH /api/wieland/lists/:listId/leads/:leadId
   const leadPatchMatch = url.pathname.match(/^\/api\/wieland\/lists\/([^/]+)\/leads\/([^/]+)$/);
   if (req.method === "PATCH" && leadPatchMatch) {
@@ -3957,12 +4157,25 @@ async function handleWieland(req, res, url) {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/wieland/fieldmap/ncc") {
+    const result = await nccFetch(nccConfig, "/fieldmappings");
+    if (!result.ok) {
+      sendJson(res, result.status, { error: "NCC API error", details: result.data });
+      return;
+    }
+    const fieldmappings = Array.isArray(result.data)
+      ? result.data
+      : (result.data?.objects || result.data?.results || result.data?.data || []);
+    sendJson(res, 200, { fieldmappings });
+    return;
+  }
+
   // ── Campaign status ──────────────────────────────────────────────────────
   if (req.method === "GET" && url.pathname === "/api/wieland/campaign/status") {
     if (!nccConfig.campaignId) { sendJson(res, 400, { error: "Campaign ID not configured." }); return; }
     const result = await nccFetch(nccConfig, `/campaign/${nccConfig.campaignId}`);
     sendJson(res, result.ok ? 200 : result.status, result.ok
-      ? { campaign: result.data, slotsNeeded: Number(nccConfig.slotsNeeded) || 8 }
+      ? { campaign: result.data, slotsNeeded: Number(nccConfig.slotsNeeded) || 8, localConfig: campaign.wieland || {} }
       : { error: "NCC API error", details: result.data }
     );
     return;
