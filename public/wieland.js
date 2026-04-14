@@ -104,10 +104,12 @@ tabs.forEach(tab => {
 });
 
 // ── Priority chip ─────────────────────────────────────────────────────────────
-function priorityChip(p) {
-  const cls = p <= 3 ? "top" : p <= 9 ? "mid" : "low";
-  const label = p >= INELIGIBLE_PRIORITY ? "—" : p;
-  return `<span class="w-priority ${cls}">${label}</span>`;
+function priorityChip(p, total) {
+  if (p >= INELIGIBLE_PRIORITY) return `<span class="w-priority low">—</span>`;
+  // Higher number = higher priority; color by relative position
+  const pct = total > 0 ? p / total : 0;
+  const cls = pct > 0.66 ? "top" : pct > 0.33 ? "mid" : "low";
+  return `<span class="w-priority ${cls}">${p}</span>`;
 }
 
 // ── Status badge ──────────────────────────────────────────────────────────────
@@ -170,7 +172,7 @@ function renderContactsTable() {
     const dncBadge = c.do_not_call ? `<span class="w-badge dnc">DNC</span>` : "";
     const cid = escHtml(getContactKey(c));
     return `<tr>
-      <td>${priorityChip(c.call_priority || INELIGIBLE_PRIORITY)}</td>
+      <td>${priorityChip(c.call_priority || INELIGIBLE_PRIORITY, allContacts.length)}</td>
       <td>${escHtml(c.externalId || c.contactId || c._id || "—")}</td>
       <td><strong>${escHtml(name)}</strong></td>
       <td>${escHtml(c.shift_type || "—")}</td>
@@ -581,7 +583,7 @@ function openAssignModal(listId) {
       const cid = escHtml(getContactKey(c));
       return `<label class="w-check-item">
         <input type="checkbox" value="${cid}" checked />
-        ${priorityChip(c.call_priority)} ${escHtml(name)} — ${escHtml(c.shift_type || c.trade || "—")} (${c.seniority_years || 0}y)
+        ${priorityChip(c.call_priority, allContacts.length)} ${escHtml(name)} — ${escHtml(c.shift_type || c.trade || "—")} (${c.seniority_years || 0}y)
       </label>`;
     }).join("");
   }

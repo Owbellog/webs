@@ -3686,14 +3686,20 @@ function isUnionZip(value) {
 }
 
 function calcCallPriority(contacts) {
+  // Active + no DNC qualifies — both union and non-union
   const eligible = contacts.filter(c =>
     c.active_status === "Active" &&
-    c.union_eligible === true &&
     c.do_not_call === false
   );
-  eligible.sort((a, b) => (b.seniority_years || 0) - (a.seniority_years || 0));
+  // Union first, then non-union; within each group by seniority descending
+  eligible.sort((a, b) => {
+    if (Boolean(b.union_eligible) !== Boolean(a.union_eligible))
+      return Boolean(b.union_eligible) ? 1 : -1;
+    return (b.seniority_years || 0) - (a.seniority_years || 0);
+  });
   const eligibleIds = new Set(eligible.map(c => c.externalId || c.id || c._id));
   const maxPriority = eligible.length;
+  // Highest number = highest priority (position 0 gets maxPriority)
   eligible.forEach((c, i) => { c.call_priority = maxPriority - i; });
   contacts.forEach(c => {
     if (!eligibleIds.has(c.externalId || c.id || c._id)) c.call_priority = 9999;
