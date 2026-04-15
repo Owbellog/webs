@@ -4153,6 +4153,7 @@ async function handleWieland(req, res, url) {
     const contacts = await mergeWielandContacts(raw, localMap);
     calcCallPriority(contacts);
     const eligible = contacts.filter(c => c.call_priority !== 9999);
+    const initialLeads = eligible.length ? [eligible[0]] : [];
     const fieldmappingsResult = await nccFetch(nccConfig, "/fieldmappings");
     const nccFieldmappings = fieldmappingsResult.ok
       ? (Array.isArray(fieldmappingsResult.data) ? fieldmappingsResult.data : (fieldmappingsResult.data?.objects || fieldmappingsResult.data?.results || fieldmappingsResult.data?.data || []))
@@ -4169,7 +4170,7 @@ async function handleWieland(req, res, url) {
     const contactToList = Object.keys(configuredContactToList).length
       ? configuredContactToList
       : sanitizeStringMapping(selectedFieldmapping?.fields || {});
-    const csvContent = generateWielandCSV(eligible, contactToList, selectedFieldmapping);
+    const csvContent = generateWielandCSV(initialLeads, contactToList, selectedFieldmapping);
     const csvLines = csvContent.split("\n");
     const csvHeaders = csvLines[0] ? csvLines[0].split(",") : [];
     const uploadFileName = String(
@@ -4236,6 +4237,7 @@ async function handleWieland(req, res, url) {
         debug: {
           campaignId: nccConfig.campaignId,
           eligibleCount: eligible.length,
+          initialLeadCount: initialLeads.length,
           uploadFileName,
           selectedFieldmappingId: selectedFieldmapping?._id || selectedFieldmapping?.fieldmappingsId || selectedFieldmapping?.id || "",
           selectedFieldmappingName: selectedFieldmapping?.name || selectedFieldmapping?.localizations?.name?.en?.value || "",
@@ -4243,15 +4245,15 @@ async function handleWieland(req, res, url) {
           contactToList,
           csvHeaders,
           firstCsvRow: csvLines[1] || "",
-          firstEligibleContact: eligible[0] ? {
-            firstName: eligible[0].firstName || "",
-            lastName: eligible[0].lastName || "",
-            phone: eligible[0].phone || "",
-            mobile: eligible[0].mobile || "",
-            email: eligible[0].email || "",
-            externalId: eligible[0].externalId || "",
-            fax: eligible[0].fax || "",
-            contactId: eligible[0].contactId || eligible[0]._id || ""
+          firstEligibleContact: initialLeads[0] ? {
+            firstName: initialLeads[0].firstName || "",
+            lastName: initialLeads[0].lastName || "",
+            phone: initialLeads[0].phone || "",
+            mobile: initialLeads[0].mobile || "",
+            email: initialLeads[0].email || "",
+            externalId: initialLeads[0].externalId || "",
+            fax: initialLeads[0].fax || "",
+            contactId: initialLeads[0].contactId || initialLeads[0]._id || ""
           } : null,
           responseContentType: createRes.headers.get("content-type") || ""
         }
@@ -4279,7 +4281,8 @@ async function handleWieland(req, res, url) {
     sendJson(res, 200, {
       ok: true,
       list: listData,
-      contactsInCsv: eligible.length,
+      contactsInCsv: initialLeads.length,
+      totalEligibleContacts: eligible.length,
       attach: attachResult
         ? (attachResult.ok
           ? { ok: true, data: attachResult.data }
@@ -4419,11 +4422,17 @@ async function handleWieland(req, res, url) {
   const listRefreshPriorityMatch = url.pathname.match(/^\/api\/wieland\/lists\/([^/]+)\/refresh-priority$/);
   if (req.method === "POST" && listRefreshPriorityMatch) {
     const listId = listRefreshPriorityMatch[1];
-    const merged = await fetchMergedWielandContacts(nccConfig);
-    if (!merged.ok) {
-      sendJson(res, merged.status, { error: "NCC API error", details: merged.data });
+    const contactsResult = await nccFetch(nccConfig, "/contact");
+    if (!contactsResult.ok) {
+      sendJson(res, contactsResult.status, { error: "NCC API error", details: contactsResult.data });
       return;
     }
+    const rawContacts = Array.isArray(contactsResult.data)
+      ? contactsResult.data
+      : (contactsResult.data?.objects || contactsResult.data?.results || contactsResult.data?.data || []);
+    const localMap = await readWielandContactsLocal();
+    const contacts = await mergeWielandContacts(rawContacts, localMap);
+    calcCallPriority(contacts);
     const leadsResult = await nccFetch(nccConfig, `/lead?rows=100&start=0&q=&outboundListId=${encodeURIComponent(listId)}`);
     if (!leadsResult.ok) {
       sendJson(res, leadsResult.status, { error: "NCC API error", details: leadsResult.data });
@@ -4440,7 +4449,7 @@ async function handleWieland(req, res, url) {
         skipped += 1;
         continue;
       }
-      const contact = findMatchingContactForLead(lead, merged.contacts);
+      const contact = findMatchingContactForLead(lead, contacts);
       if (!contact) {
         skipped += 1;
         continue;

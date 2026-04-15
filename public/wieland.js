@@ -22,9 +22,16 @@ async function api(path, options = {}) {
     credentials: "include",
     headers: { "Content-Type": "application/json", ...(options.headers || {}) }
   });
-  const data = await res.json();
+  const text = await res.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { raw: text };
+  }
   if (!res.ok) {
-    const detail = data.details ? ` — ${typeof data.details === "string" ? data.details : JSON.stringify(data.details)}` : "";
+    const detailSource = data.details ?? data.raw ?? "";
+    const detail = detailSource ? ` — ${typeof detailSource === "string" ? detailSource : JSON.stringify(detailSource)}` : "";
     throw new Error(`[${res.status}] ${data.error || "Request failed."}${detail}`);
   }
   return data;
@@ -611,7 +618,7 @@ async function openAssignModal(listId) {
       const name = `${c.firstName || ""} ${c.lastName || ""}`.trim();
       const cid = escHtml(getContactKey(c));
       return `<label class="w-check-item">
-        <input type="checkbox" value="${cid}" checked />
+        <input type="checkbox" value="${cid}" />
         ${priorityChip(c.call_priority, allContacts.length)} ${escHtml(name)} — ${escHtml(c.shift_type || c.trade || "—")} (${c.seniority_years || 0}y)
       </label>`;
     }).join("");
@@ -620,6 +627,16 @@ async function openAssignModal(listId) {
 }
 
 document.getElementById("assignModalCancel").addEventListener("click", () => assignModal.classList.add("hidden"));
+document.getElementById("assignSelectAll").addEventListener("click", () => {
+  document.querySelectorAll("#assignContactList input[type='checkbox']").forEach((input) => {
+    input.checked = true;
+  });
+});
+document.getElementById("assignClearAll").addEventListener("click", () => {
+  document.querySelectorAll("#assignContactList input[type='checkbox']").forEach((input) => {
+    input.checked = false;
+  });
+});
 document.getElementById("assignModalSave").addEventListener("click", assignContacts);
 
 async function assignContacts() {
@@ -649,8 +666,20 @@ async function assignContacts() {
 
   try {
     const result = await apiPost(`/api/wieland/lists/${encodeURIComponent(listId)}/leads`, { leads });
+    let priorityRefreshError = null;
+    if ((result.added || 0) > 0) {
+      try {
+        await apiPost(`/api/wieland/lists/${encodeURIComponent(listId)}/refresh-priority`, {});
+      } catch (err) {
+        priorityRefreshError = err;
+      }
+    }
     assignModal.classList.add("hidden");
-    showToast(`${result.added || 0} leads added.${result.skippedExisting ? ` ${result.skippedExisting} already existed.` : ""}`);
+    if (priorityRefreshError) {
+      showToast(`${result.added || 0} leads added.${result.skippedExisting ? ` ${result.skippedExisting} already existed.` : ""} Priority refresh failed.`);
+    } else {
+      showToast(`${result.added || 0} leads added.${result.skippedExisting ? ` ${result.skippedExisting} already existed.` : ""}`);
+    }
     await loadListLeads(listId);
   } catch (err) {
     showModalAlert(assignModalAlert, err.message);
