@@ -1408,7 +1408,7 @@ async function handleSummaryAgenticSummary(req, res, url) {
       throwConfig(`Campaign "${config.id}" is missing the AI API key for Summary Agentic.`);
     }
 
-    const contextText = buildSummaryContext(identifiers, sourceData);
+    const contextText = buildSummaryContext(identifiers, sourceData, enabledSources);
     const rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, aiPrompt, contextText);
     const sections = parseSummarySections(rawText);
 
@@ -1691,13 +1691,22 @@ function interpolateSummaryTemplate(template, identifiers) {
   });
 }
 
-function buildSummaryContext(identifiers, sourceData) {
+function buildSummaryContext(identifiers, sourceData, enabledSources = []) {
+  // Build a description map from source config
+  const descMap = {};
+  for (const src of enabledSources) {
+    if (src.description) descMap[src.id] = src.description;
+  }
+
   const lines = [
-    `Customer identifier: phone=${identifiers.phone || "N/A"}, id=${identifiers.customerId || "N/A"}`,
+    `Customer identifier: phone=${identifiers.phone || "N/A"}, customer_id=${identifiers.customerId || "N/A"}`,
     ""
   ];
+
   for (const source of sourceData) {
     lines.push(`=== ${source.name} ===`);
+    const desc = descMap[source.id];
+    if (desc) lines.push(`[Description: ${desc}]`);
     if (source.error) {
       lines.push(`[Error fetching data: ${source.error}]`);
     } else {
@@ -3035,7 +3044,8 @@ function normalizeSummaryDataSources(sources) {
       selectedFields: Array.isArray(src.selectedFields) ? src.selectedFields.map(String) : [],
       enabled: src.enabled !== false,
       testPhone: String(src.testPhone || "").trim(),
-      fixedParams: String(src.fixedParams || "").trim()
+      fixedParams: String(src.fixedParams || "").trim(),
+      description: String(src.description || "").trim()
     }))
     .filter((src) => src.url);
 }

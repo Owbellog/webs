@@ -457,6 +457,10 @@ function addSummarySourceCard(src = {}) {
         <button type="button" class="sa-add-param-btn">+ Add param</button>
       </div>
       <div class="sa-source-field sa-source-field--full">
+        <label>¿Qué información contiene este endpoint? <span style="font-weight:400;color:var(--muted)">(ayuda a la IA a interpretar los datos)</span></label>
+        <textarea class="sa-field-description" rows="2" placeholder="Ej: Historial de llamadas del cliente — incluye fecha, duración, motivo, agente asignado y estado de resolución.">${escapeHtml(src.description || "")}</textarea>
+      </div>
+      <div class="sa-source-field sa-source-field--full">
         <label><input class="sa-field-enabled" type="checkbox"${src.enabled !== false ? " checked" : ""} /> Enabled</label>
       </div>
     </div>
@@ -685,7 +689,8 @@ function readSummaryDataSources() {
     selectedFields: [],
     enabled: card.querySelector(".sa-field-enabled")?.checked !== false,
     testPhone: card.querySelector(".sa-test-phone")?.value.trim() || "",
-    fixedParams: readParamsKv(card.querySelector(".sa-params-kv"))
+    fixedParams: readParamsKv(card.querySelector(".sa-params-kv")),
+    description: card.querySelector(".sa-field-description")?.value.trim() || ""
   })).filter((s) => s.url);
 }
 // ─────────────────────────────────────────────────────────────────────────────
