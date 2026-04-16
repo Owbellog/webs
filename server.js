@@ -1724,9 +1724,9 @@ function buildSummaryContext(identifiers, sourceData, enabledSources = []) {
     if (source.error) {
       lines.push(`[Error fetching data: ${source.error}]`);
     } else {
-      // Truncate large arrays to avoid exceeding AI token limits
-      const safe = truncateSourceData(source.data, 20);
-      lines.push(JSON.stringify(safe, null, 2));
+      // Truncate large arrays and compact JSON to save input tokens
+      const safe = truncateSourceData(source.data, 10);
+      lines.push(JSON.stringify(safe));
     }
     lines.push("");
   }
@@ -1861,7 +1861,7 @@ async function callClaudeForSummary(apiKey, model, systemPrompt, contextText) {
     },
     body: JSON.stringify({
       model: model || "claude-sonnet-4-6",
-      max_tokens: 4096,
+      max_tokens: 8192,
       system: systemPrompt,
       messages: [{ role: "user", content: contextText }]
     }),
@@ -1888,7 +1888,7 @@ async function callOpenAiForSummary(apiKey, model, systemPrompt, contextText) {
     },
     body: JSON.stringify({
       model: model || "gpt-4o",
-      max_tokens: 4096,
+      max_tokens: 8192,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: systemPrompt },
@@ -1920,7 +1920,7 @@ async function callGeminiForSummary(apiKey, model, systemPrompt, contextText) {
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: systemPrompt }] },
       contents: [{ parts: [{ text: contextText }] }],
-      generationConfig: { temperature: 0.2, maxOutputTokens: 4096, responseMimeType: "application/json" }
+      generationConfig: { temperature: 0.2, maxOutputTokens: 8192, responseMimeType: "application/json" }
     }),
     signal: AbortSignal.timeout(30000)
   });
