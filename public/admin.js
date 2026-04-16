@@ -392,6 +392,10 @@ function addSummarySourceCard(src = {}) {
         <textarea class="sa-field-body" rows="2" placeholder='{"phone":"{{phone}}"}'>${escapeHtml(src.bodyTemplate || "")}</textarea>
       </div>
       <div class="sa-source-field sa-source-field--full">
+        <label>Fixed params <span style="font-weight:400;color:var(--muted)">(key=value per line — always applied, URL params override)</span></label>
+        <textarea class="sa-field-fixed-params" rows="3" placeholder="days=30&#10;limit=50&#10;status=active">${escapeHtml(src.fixedParams || "")}</textarea>
+      </div>
+      <div class="sa-source-field sa-source-field--full">
         <label><input class="sa-field-enabled" type="checkbox"${src.enabled !== false ? " checked" : ""} /> Enabled</label>
       </div>
     </div>
@@ -512,7 +516,8 @@ function readSummaryDataSources() {
     bodyTemplate: card.querySelector(".sa-field-body")?.value.trim() || "",
     selectedFields: [],
     enabled: card.querySelector(".sa-field-enabled")?.checked !== false,
-    testPhone: card.querySelector(".sa-test-phone")?.value.trim() || ""
+    testPhone: card.querySelector(".sa-test-phone")?.value.trim() || "",
+    fixedParams: card.querySelector(".sa-field-fixed-params")?.value.trim() || ""
   })).filter((s) => s.url);
 }
 // ─────────────────────────────────────────────────────────────────────────────

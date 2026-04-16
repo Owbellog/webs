@@ -1475,8 +1475,23 @@ async function handleSummaryAgenticTestSource(req, res) {
   }
 }
 
+function parseFixedParams(fixedParamsStr) {
+  const result = {};
+  for (const line of String(fixedParamsStr || "").split(/\n|,/)) {
+    const eq = line.indexOf("=");
+    if (eq === -1) continue;
+    const key = line.slice(0, eq).trim();
+    const val = line.slice(eq + 1).trim();
+    if (key) result[key] = val;
+  }
+  return result;
+}
+
 async function fetchSummaryDataSource(source, identifiers) {
-  const resolvedUrl = interpolateSummaryTemplate(source.url, identifiers);
+  // Merge: fixedParams first (defaults), then identifiers (URL params override)
+  const fixed = parseFixedParams(source.fixedParams);
+  const merged = { ...fixed, ...identifiers };
+  const resolvedUrl = interpolateSummaryTemplate(source.url, merged);
   const method = source.method || "GET";
 
   let parsedHeaders = {};
@@ -1493,7 +1508,7 @@ async function fetchSummaryDataSource(source, identifiers) {
   };
 
   if (method === "POST" && source.bodyTemplate) {
-    fetchOptions.body = interpolateSummaryTemplate(source.bodyTemplate, identifiers);
+    fetchOptions.body = interpolateSummaryTemplate(source.bodyTemplate, merged);
   }
 
   const response = await fetch(resolvedUrl, fetchOptions);
@@ -2830,7 +2845,8 @@ function normalizeSummaryDataSources(sources) {
       bodyTemplate: String(src.bodyTemplate || "").trim(),
       selectedFields: Array.isArray(src.selectedFields) ? src.selectedFields.map(String) : [],
       enabled: src.enabled !== false,
-      testPhone: String(src.testPhone || "").trim()
+      testPhone: String(src.testPhone || "").trim(),
+      fixedParams: String(src.fixedParams || "").trim()
     }))
     .filter((src) => src.url);
 }
