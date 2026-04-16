@@ -1355,6 +1355,13 @@ async function handleSummaryAgenticSummary(req, res, url) {
       throwConfig("Missing identifier. Provide ?phone= or ?customer_id= in the URL.");
     }
 
+    // Collect ALL extra URL params — they become template variables in data source URLs/bodies
+    const RESERVED = new Set(["campaign", "domain", "kb_id", "kb_ids", "phone", "customer_id", "customerId", "embed"]);
+    const extraParams = {};
+    for (const [key, value] of url.searchParams.entries()) {
+      if (!RESERVED.has(key)) extraParams[key] = value;
+    }
+
     const config = await resolveCampaignConfigAsync(selection);
     const saConfig = config.summaryagentic || {};
 
@@ -1362,15 +1369,16 @@ async function handleSummaryAgenticSummary(req, res, url) {
       throwConfig(`Summary Agentic is not enabled for campaign "${config.id}".`);
     }
 
-    // Check cache
-    const cacheKey = `${config.id}:${phone || customerId}`;
+    // Check cache — include extra params in cache key so different param combos don't collide
+    const extraKey = Object.entries(extraParams).sort().map(([k,v]) => `${k}=${v}`).join("&");
+    const cacheKey = `${config.id}:${phone || customerId}${extraKey ? ":" + extraKey : ""}`;
     const cached = summaryAgenticCache.get(cacheKey);
     if (cached && Date.now() < cached.expiresAt) {
       sendJson(res, 200, { ...cached.data, fromCache: true });
       return;
     }
 
-    const identifiers = { phone, customerId };
+    const identifiers = { phone, customerId, ...extraParams };
     const enabledSources = (saConfig.dataSources || []).filter((s) => s.enabled && s.url);
 
     // Fetch all data sources in parallel
@@ -1442,7 +1450,7 @@ async function handleSummaryAgenticTestSource(req, res) {
       return;
     }
 
-    const { url: sourceUrl, method = "GET", headersJson = "{}", bodyTemplate = "", testPhone = "1234567890", testCustomerId = "" } = body;
+    const { url: sourceUrl, method = "GET", headersJson = "{}", bodyTemplate = "", testPhone = "1234567890", testCustomerId = "", extraParams = {} } = body;
     if (!sourceUrl) {
       sendJson(res, 400, { error: "url is required" });
       return;
@@ -1455,7 +1463,7 @@ async function handleSummaryAgenticTestSource(req, res) {
       return;
     }
 
-    const identifiers = { phone: testPhone, customerId: testCustomerId };
+    const identifiers = { phone: testPhone, customerId: testCustomerId, ...extraParams };
     const source = { url: sourceUrl, method, headersJson, bodyTemplate };
 
     const data = await fetchSummaryDataSource(source, identifiers);
@@ -1502,10 +1510,19 @@ async function fetchSummaryDataSource(source, identifiers) {
 }
 
 function interpolateSummaryTemplate(template, identifiers) {
-  return template
-    .replace(/\{\{phone\}\}/g, encodeURIComponent(identifiers.phone || ""))
-    .replace(/\{\{customerId\}\}/g, encodeURIComponent(identifiers.customerId || ""))
-    .replace(/\{\{customer_id\}\}/g, encodeURIComponent(identifiers.customerId || ""));
+  // Replace {{key}} with the corresponding value from identifiers (URL-encoded)
+  // Supports: {{phone}}, {{customer_id}}, {{customerId}}, and ANY extra URL param
+  return template.replace(/\{\{([^}]+)\}\}/g, (match, key) => {
+    const k = key.trim();
+    // Normalize customer_id / customerId
+    if (k === "customer_id" || k === "customerId") {
+      return encodeURIComponent(identifiers.customerId || identifiers.customer_id || "");
+    }
+    if (Object.prototype.hasOwnProperty.call(identifiers, k)) {
+      return encodeURIComponent(identifiers[k] ?? "");
+    }
+    return match; // leave unreplaced if key not found
+  });
 }
 
 function buildSummaryContext(identifiers, sourceData) {

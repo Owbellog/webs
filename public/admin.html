@@ -733,7 +733,10 @@
                   <summary>Data Sources <span class="chevron">▼</span></summary>
                   <div class="admin-section-grid admin-subsection-grid">
                     <p class="admin-field-note" style="margin:0 0 8px;">
-                      Configure the external APIs to query when a call comes in. Use <code>{{phone}}</code> and <code>{{customer_id}}</code> as placeholders in the URL or body.
+                      Configure the external APIs to query when a call comes in.<br>
+                      <strong>Built-in placeholders:</strong> <code>{{phone}}</code>, <code>{{customer_id}}</code><br>
+                      <strong>Custom placeholders:</strong> any extra parameter you add to the widget URL becomes available automatically.<br>
+                      Example: <code>?campaign=x&amp;phone={{phone}}&amp;date_from=2024-01-01&amp;agent_id=A123</code> → use <code>{{date_from}}</code> and <code>{{agent_id}}</code> in your URL or body.
                     </p>
                     <div class="sa-datasources-list" id="summaryagenticSourcesList"></div>
                     <button type="button" class="secondary" id="summaryagenticAddSource">+ Add data source</button>

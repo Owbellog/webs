@@ -396,8 +396,10 @@ function addSummarySourceCard(src = {}) {
       </div>
     </div>
     <div class="sa-test-bar">
-      <span style="font-size:.82rem;font-weight:600;color:var(--muted);">Test with phone:</span>
-      <input class="sa-test-phone" type="text" placeholder="+15551234567" value="${escapeHtml(src.testPhone || "")}" />
+      <span style="font-size:.82rem;font-weight:600;color:var(--muted);">Test phone:</span>
+      <input class="sa-test-phone" type="text" placeholder="+15551234567" value="${escapeHtml(src.testPhone || "")}" style="max-width:160px;" />
+      <span style="font-size:.82rem;font-weight:600;color:var(--muted);">Extra params:</span>
+      <input class="sa-test-extra" type="text" placeholder="date_from=2024-01-01&agent_id=A1" style="flex:2;" />
       <button type="button" class="sa-test-btn">Test endpoint</button>
       <div class="sa-test-result" style="display:none;"></div>
     </div>
@@ -438,6 +440,16 @@ function addSummarySourceCard(src = {}) {
     const headersJson = card.querySelector(".sa-field-headers").value.trim();
     const bodyTemplate = card.querySelector(".sa-field-body").value.trim();
     const testPhone = card.querySelector(".sa-test-phone").value.trim() || "1234567890";
+    const extraRaw = card.querySelector(".sa-test-extra").value.trim();
+
+    // Parse extra params: "date_from=2024-01-01&agent_id=A1" → { date_from: "2024-01-01", agent_id: "A1" }
+    const extraParams = {};
+    if (extraRaw) {
+      for (const pair of extraRaw.split("&")) {
+        const [k, v] = pair.split("=");
+        if (k) extraParams[k.trim()] = (v || "").trim();
+      }
+    }
 
     if (!sourceUrl) {
       testResult.style.display = "block";
@@ -453,7 +465,7 @@ function addSummarySourceCard(src = {}) {
     try {
       const data = await apiRequest("/api/summaryagentic/test-source", {
         method: "POST",
-        body: JSON.stringify({ url: sourceUrl, method, headersJson, bodyTemplate, testPhone })
+        body: JSON.stringify({ url: sourceUrl, method, headersJson, bodyTemplate, testPhone, extraParams })
       });
       const preview = JSON.stringify(data.data, null, 2);
       const fieldsLine = data.fields?.length ? `\n\nDetected fields:\n${data.fields.join("\n")}` : "";
