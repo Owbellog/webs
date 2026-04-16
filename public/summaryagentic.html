@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Summary Agentic</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+    <style>
+      /* ── Widget shell ─────────────────────────────────────────────────── */
+      :root {
+        --sa-accent: #4a6cf7;
+        --sa-green: #18b26b;
+        --sa-yellow: #e8a020;
+        --sa-red: #e53935;
+        --sa-card-bg: #ffffff;
+        --sa-card-radius: 18px;
+        --sa-card-shadow: 0 8px 32px rgba(28, 40, 83, 0.10);
+      }
+
+      html, body {
+        margin: 0;
+        padding: 0;
+        font-family: var(--campaign-font-family, "Manrope", sans-serif);
+        font-size: var(--campaign-base-font-size, 16px);
+        background: linear-gradient(160deg, #f8f7ff 0%, #f0f4ff 100%);
+        color: var(--text, #1c2040);
+        min-height: 100vh;
+      }
+
+      .sa-shell {
+        padding: 16px;
+        max-width: 720px;
+        margin: 0 auto;
+        box-sizing: border-box;
+      }
+
+      html.embedded .sa-shell {
+        padding: 10px 12px;
+      }
+
+      /* ── Header ──────────────────────────────────────────────────────── */
+      .sa-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+
+      .sa-header-icon {
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
+        background: var(--sa-accent);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+
+      .sa-header-icon svg {
+        width: 20px;
+        height: 20px;
+        fill: none;
+        stroke: #fff;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      .sa-header-title {
+        font-size: 1.1rem;
+        font-weight: 700;
+        color: var(--text, #1c2040);
+        flex: 1;
+      }
+
+      .sa-header-phone {
+        font-size: .82rem;
+        color: var(--muted, #666d7d);
+        background: rgba(74,108,247,.08);
+        border: 1px solid rgba(74,108,247,.18);
+        border-radius: 20px;
+        padding: 3px 10px;
+        font-weight: 600;
+      }
+
+      .sa-refresh-btn {
+        background: none;
+        border: 1px solid var(--line, #e8eaf0);
+        border-radius: 8px;
+        padding: 5px 10px;
+        font-size: .8rem;
+        cursor: pointer;
+        color: var(--muted, #666d7d);
+        font-family: inherit;
+        font-weight: 600;
+      }
+
+      .sa-refresh-btn:hover { background: rgba(0,0,0,.04); }
+
+      /* ── Loading ─────────────────────────────────────────────────────── */
+      .sa-loading {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        padding: 40px 20px;
+        color: var(--muted, #666d7d);
+        font-size: .9rem;
+      }
+
+      .sa-spinner {
+        width: 36px;
+        height: 36px;
+        border: 3px solid rgba(74,108,247,.15);
+        border-top-color: var(--sa-accent);
+        border-radius: 50%;
+        animation: sa-spin .8s linear infinite;
+      }
+
+      @keyframes sa-spin { to { transform: rotate(360deg); } }
+
+      .sa-step-list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        font-size: .82rem;
+        text-align: left;
+        min-width: 200px;
+      }
+
+      .sa-step { display: flex; align-items: center; gap: 8px; color: var(--muted, #666d7d); }
+      .sa-step.sa-step--done { color: var(--sa-green); }
+      .sa-step.sa-step--active { color: var(--sa-accent); font-weight: 600; }
+      .sa-step.sa-step--error { color: var(--sa-red); }
+
+      /* ── Error ───────────────────────────────────────────────────────── */
+      .sa-error {
+        background: #fff8f8;
+        border: 1px solid #fdd;
+        border-radius: var(--sa-card-radius);
+        padding: 20px 22px;
+        color: var(--sa-red);
+        font-size: .9rem;
+        line-height: 1.5;
+      }
+
+      .sa-error strong { display: block; margin-bottom: 4px; }
+
+      /* ── Summary card ─────────────────────────────────────────────────── */
+      .sa-card {
+        background: var(--sa-card-bg);
+        border-radius: var(--sa-card-radius);
+        box-shadow: var(--sa-card-shadow);
+        overflow: hidden;
+        margin-bottom: 12px;
+      }
+
+      .sa-card-body {
+        padding: 18px 20px;
+        white-space: pre-wrap;
+        font-size: .92rem;
+        line-height: 1.65;
+        color: var(--text, #1c2040);
+      }
+
+      /* Markdown-like rendering */
+      .sa-card-body h1,
+      .sa-card-body h2,
+      .sa-card-body h3 {
+        margin: .8em 0 .3em;
+        font-weight: 700;
+        color: var(--sa-accent);
+      }
+
+      .sa-card-body h1 { font-size: 1.1rem; }
+      .sa-card-body h2 { font-size: 1rem; }
+      .sa-card-body h3 { font-size: .95rem; }
+
+      .sa-card-body p { margin: .4em 0; }
+      .sa-card-body ul, .sa-card-body ol { margin: .4em 0 .4em 1.2em; }
+      .sa-card-body strong { font-weight: 700; }
+
+      /* ── Sources footer ───────────────────────────────────────────────── */
+      .sa-sources {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        padding: 10px 20px 14px;
+        border-top: 1px solid rgba(0,0,0,.05);
+      }
+
+      .sa-source-badge {
+        font-size: .74rem;
+        font-weight: 600;
+        padding: 3px 9px;
+        border-radius: 20px;
+        border: 1px solid;
+      }
+
+      .sa-source-badge--ok {
+        color: var(--sa-green);
+        border-color: rgba(24,178,107,.25);
+        background: rgba(24,178,107,.07);
+      }
+
+      .sa-source-badge--error {
+        color: var(--sa-red);
+        border-color: rgba(229,57,53,.25);
+        background: rgba(229,57,53,.07);
+      }
+
+      /* ── Footer meta ──────────────────────────────────────────────────── */
+      .sa-meta {
+        font-size: .76rem;
+        color: var(--muted, #666d7d);
+        text-align: right;
+        padding: 0 4px 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="sa-shell" id="saShell">
+      <header class="sa-header" id="saHeader">
+        <div class="sa-header-icon">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2Z"/>
+            <path d="M12 8v4l3 3"/>
+          </svg>
+        </div>
+        <span class="sa-header-title">Customer Summary</span>
+        <span class="sa-header-phone" id="saPhoneLabel"></span>
+        <button type="button" class="sa-refresh-btn" id="saRefreshBtn" hidden>↻ Refresh</button>
+      </header>
+
+      <div id="saContent">
+        <!-- filled by JS -->
+      </div>
+    </main>
+
+    <script src="./i18n.js"></script>
+    <script src="./summaryagentic.js"></script>
+  </body>
+</html>

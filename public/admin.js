@@ -40,6 +40,8 @@ const wielandAvailableFieldmappingsInfo = document.getElementById("wielandAvaila
 const wielandRefreshFieldmappingsButton = document.getElementById("wielandRefreshFieldmappings");
 const wielandWidgetMappingRows = document.getElementById("wielandWidgetMappingRows");
 const wielandContactToListRows = document.getElementById("wielandContactToListRows");
+const summaryagenticSourcesList = document.getElementById("summaryagenticSourcesList");
+const summaryagenticAddSourceButton = document.getElementById("summaryagenticAddSource");
 
 const DEFAULT_WIELAND_WIDGET_TO_CONTACT_MAP = {
   firstName: "firstName",
@@ -204,7 +206,13 @@ const fields = {
   sentimentRefreshIntervalSeconds: document.getElementById("sentimentRefreshIntervalSeconds"),
   sentimentShowTitle: document.getElementById("sentimentShowTitle"),
   sentimentShowPageHeader: document.getElementById("sentimentShowPageHeader"),
-  sentimentShowMeta: document.getElementById("sentimentShowMeta")
+  sentimentShowMeta: document.getElementById("sentimentShowMeta"),
+  summaryagenticEnabled: document.getElementById("summaryagenticEnabled"),
+  summaryagenticCacheSeconds: document.getElementById("summaryagenticCacheSeconds"),
+  summaryagenticAiProvider: document.getElementById("summaryagenticAiProvider"),
+  summaryagenticAiModel: document.getElementById("summaryagenticAiModel"),
+  summaryagenticAiApiKey: document.getElementById("summaryagenticAiApiKey"),
+  summaryagenticAiPrompt: document.getElementById("summaryagenticAiPrompt")
 };
 
 const state = {
@@ -340,6 +348,141 @@ function readWielandContactToListMap() {
   return result;
 }
 
+// ── Summary Agentic data-source management ───────────────────────────────────
+function renderSummaryDataSources(sources) {
+  summaryagenticSourcesList.innerHTML = "";
+  (sources || []).forEach((src) => addSummarySourceCard(src));
+}
+
+function addSummarySourceCard(src = {}) {
+  const id = src.id || crypto.randomUUID();
+  const card = document.createElement("div");
+  card.className = "sa-source-card";
+  card.dataset.sourceId = id;
+
+  card.innerHTML = `
+    <div class="sa-source-card-header">
+      <strong class="sa-source-name-label">${escapeHtml(src.name || "New source")}</strong>
+      <button type="button" class="sa-source-toggle">▲ Collapse</button>
+      <button type="button" class="sa-source-remove">✕ Remove</button>
+    </div>
+    <div class="sa-source-body">
+      <div class="sa-source-field">
+        <label>Name</label>
+        <input class="sa-field-name" type="text" value="${escapeHtml(src.name || "")}" placeholder="e.g. CRM History" />
+      </div>
+      <div class="sa-source-field">
+        <label>Method</label>
+        <select class="sa-field-method">
+          <option value="GET"${(src.method || "GET") === "GET" ? " selected" : ""}>GET</option>
+          <option value="POST"${src.method === "POST" ? " selected" : ""}>POST</option>
+        </select>
+      </div>
+      <div class="sa-source-field sa-source-field--full">
+        <label>URL (use <code>{{phone}}</code> / <code>{{customer_id}}</code>)</label>
+        <input class="sa-field-url" type="text" value="${escapeHtml(src.url || "")}" placeholder="https://api.example.com/calls?phone={{phone}}" />
+      </div>
+      <div class="sa-source-field sa-source-field--full">
+        <label>Headers (JSON)</label>
+        <textarea class="sa-field-headers" rows="3" placeholder='{"Authorization":"Bearer TOKEN"}'>${escapeHtml(src.headersJson || "{}")}</textarea>
+      </div>
+      <div class="sa-source-field sa-source-field--full">
+        <label>Body template (POST only, JSON)</label>
+        <textarea class="sa-field-body" rows="2" placeholder='{"phone":"{{phone}}"}'>${escapeHtml(src.bodyTemplate || "")}</textarea>
+      </div>
+      <div class="sa-source-field sa-source-field--full">
+        <label><input class="sa-field-enabled" type="checkbox"${src.enabled !== false ? " checked" : ""} /> Enabled</label>
+      </div>
+    </div>
+    <div class="sa-test-bar">
+      <span style="font-size:.82rem;font-weight:600;color:var(--muted);">Test with phone:</span>
+      <input class="sa-test-phone" type="text" placeholder="+15551234567" value="${escapeHtml(src.testPhone || "")}" />
+      <button type="button" class="sa-test-btn">Test endpoint</button>
+      <div class="sa-test-result" style="display:none;"></div>
+    </div>
+  `;
+
+  const nameInput = card.querySelector(".sa-field-name");
+  const nameLabel = card.querySelector(".sa-source-name-label");
+  const bodyEl = card.querySelector(".sa-source-body");
+  const toggleBtn = card.querySelector(".sa-source-toggle");
+  const removeBtn = card.querySelector(".sa-source-remove");
+  const testBtn = card.querySelector(".sa-test-btn");
+  const testResult = card.querySelector(".sa-test-result");
+
+  nameInput.addEventListener("input", () => {
+    nameLabel.textContent = nameInput.value || "New source";
+    markDirty();
+  });
+
+  card.querySelectorAll("input, select, textarea").forEach((el) => {
+    el.addEventListener("input", markDirty);
+    el.addEventListener("change", markDirty);
+  });
+
+  toggleBtn.addEventListener("click", () => {
+    const collapsed = bodyEl.classList.toggle("sa-source-body--hidden");
+    toggleBtn.textContent = collapsed ? "▼ Expand" : "▲ Collapse";
+  });
+
+  removeBtn.addEventListener("click", () => {
+    if (!confirm(`Remove data source "${nameInput.value || "this source"}"?`)) return;
+    card.remove();
+    markDirty();
+  });
+
+  testBtn.addEventListener("click", async () => {
+    const sourceUrl = card.querySelector(".sa-field-url").value.trim();
+    const method = card.querySelector(".sa-field-method").value;
+    const headersJson = card.querySelector(".sa-field-headers").value.trim();
+    const bodyTemplate = card.querySelector(".sa-field-body").value.trim();
+    const testPhone = card.querySelector(".sa-test-phone").value.trim() || "1234567890";
+
+    if (!sourceUrl) {
+      testResult.style.display = "block";
+      testResult.textContent = "Please enter a URL first.";
+      return;
+    }
+
+    testBtn.disabled = true;
+    testBtn.textContent = "Testing…";
+    testResult.style.display = "block";
+    testResult.textContent = "Calling endpoint…";
+
+    try {
+      const data = await apiRequest("/api/summaryagentic/test-source", {
+        method: "POST",
+        body: JSON.stringify({ url: sourceUrl, method, headersJson, bodyTemplate, testPhone })
+      });
+      const preview = JSON.stringify(data.data, null, 2);
+      const fieldsLine = data.fields?.length ? `\n\nDetected fields:\n${data.fields.join("\n")}` : "";
+      testResult.textContent = preview + fieldsLine;
+    } catch (err) {
+      testResult.textContent = "Error: " + err.message;
+    } finally {
+      testBtn.disabled = false;
+      testBtn.textContent = "Test endpoint";
+    }
+  });
+
+  summaryagenticSourcesList.appendChild(card);
+}
+
+function readSummaryDataSources() {
+  const cards = summaryagenticSourcesList.querySelectorAll(".sa-source-card");
+  return Array.from(cards).map((card) => ({
+    id: card.dataset.sourceId || crypto.randomUUID(),
+    name: card.querySelector(".sa-field-name")?.value.trim() || "",
+    url: card.querySelector(".sa-field-url")?.value.trim() || "",
+    method: card.querySelector(".sa-field-method")?.value || "GET",
+    headersJson: card.querySelector(".sa-field-headers")?.value.trim() || "{}",
+    bodyTemplate: card.querySelector(".sa-field-body")?.value.trim() || "",
+    selectedFields: [],
+    enabled: card.querySelector(".sa-field-enabled")?.checked !== false
+  })).filter((s) => s.url);
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 const apiBaseUrl = new URL(".", window.location.href);
 
 previewPageType.addEventListener("change", schedulePreviewRender);
@@ -395,6 +538,11 @@ addQuestionButton.addEventListener("click", () => {
 
 wielandRefreshFieldmappingsButton?.addEventListener("click", () => {
   loadWielandFieldmappingInfo();
+});
+
+summaryagenticAddSourceButton?.addEventListener("click", () => {
+  addSummarySourceCard({});
+  markDirty();
 });
 
 collapseAllButton.addEventListener("click", () => {
@@ -718,6 +866,22 @@ function fillForm(campaign) {
   fields.sentimentShowTitle.checked = campaign.ui?.sentiment?.showTitle !== false;
   fields.sentimentShowPageHeader.checked = campaign.ui?.sentiment?.showPageHeader !== false;
   fields.sentimentShowMeta.checked = campaign.ui?.sentiment?.showMeta !== false;
+  // Summary Agentic
+  const sa = campaign.summaryagentic || {};
+  fields.summaryagenticEnabled.checked = sa.enabled !== false;
+  fields.summaryagenticCacheSeconds.value = sa.cacheSeconds ?? 60;
+  fields.summaryagenticAiProvider.value = sa.aiProvider || "claude";
+  fields.summaryagenticAiModel.value = sa.aiModel || "";
+  fields.summaryagenticAiApiKey.value = campaign.summaryagenticAiApiKey || "";
+  fields.summaryagenticAiPrompt.value = sa.aiPrompt || "";
+  renderSummaryDataSources(sa.dataSources || []);
+  const saLink = document.getElementById("summaryagenticOpenLink");
+  if (campaign.id && saLink) {
+    saLink.href = `./summaryagentic.html?campaign=${encodeURIComponent(campaign.id)}`;
+    saLink.hidden = false;
+  } else if (saLink) {
+    saLink.hidden = true;
+  }
   updateBreadcrumb(campaign.name || campaign.id || "");
   updateAdminPermissionUi();
   schedulePreviewRender();
@@ -865,6 +1029,15 @@ function readForm() {
         showPageHeader: fields.sentimentShowPageHeader.checked,
         showMeta: fields.sentimentShowMeta.checked
       }
+    },
+    summaryagenticAiApiKey: fields.summaryagenticAiApiKey.value.trim(),
+    summaryagentic: {
+      enabled: fields.summaryagenticEnabled.checked,
+      cacheSeconds: Number(fields.summaryagenticCacheSeconds.value || 60),
+      aiProvider: fields.summaryagenticAiProvider.value || "claude",
+      aiModel: fields.summaryagenticAiModel.value.trim(),
+      aiPrompt: fields.summaryagenticAiPrompt.value.trim(),
+      dataSources: readSummaryDataSources()
     }
   };
 }
@@ -1075,6 +1248,16 @@ function applyDefaultUiValues() {
   fields.sentimentShowTitle.checked = true;
   fields.sentimentShowPageHeader.checked = true;
   fields.sentimentShowMeta.checked = true;
+  // Summary Agentic defaults
+  fields.summaryagenticEnabled.checked = true;
+  fields.summaryagenticCacheSeconds.value = 60;
+  fields.summaryagenticAiProvider.value = "claude";
+  fields.summaryagenticAiModel.value = "";
+  fields.summaryagenticAiApiKey.value = "";
+  fields.summaryagenticAiPrompt.value = "";
+  renderSummaryDataSources([]);
+  const saLink = document.getElementById("summaryagenticOpenLink");
+  if (saLink) saLink.hidden = true;
   schedulePreviewRender();
 }
 

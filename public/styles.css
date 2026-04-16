@@ -5486,3 +5486,139 @@ body.embedded .copilot-shell {
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 14px;
 }
+
+/* ── Summary Agentic data-source editor ─────────────────────────────────── */
+.sa-datasources-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+}
+
+.sa-source-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.sa-source-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: rgba(0,0,0,.025);
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.sa-source-card-header strong {
+  flex: 1;
+  font-size: .92rem;
+  color: var(--text);
+}
+
+.sa-source-toggle {
+  font-size: .78rem;
+  color: var(--muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.sa-source-toggle:hover { background: var(--line); }
+
+.sa-source-remove {
+  font-size: .8rem;
+  color: #c0392b;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.sa-source-remove:hover { background: #ffeaea; }
+
+.sa-source-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  padding: 14px;
+}
+
+.sa-source-body.sa-source-body--hidden { display: none; }
+
+.sa-source-field { display: flex; flex-direction: column; gap: 4px; }
+.sa-source-field label { font-size: .82rem; font-weight: 600; color: var(--muted); }
+.sa-source-field input,
+.sa-source-field select,
+.sa-source-field textarea {
+  font-size: .9rem;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+}
+.sa-source-field textarea { resize: vertical; min-height: 60px; }
+
+.sa-source-field--full { grid-column: 1 / -1; }
+
+.sa-test-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.sa-test-bar input {
+  flex: 1;
+  min-width: 140px;
+  font-size: .86rem;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+}
+
+.sa-test-btn {
+  font-size: .84rem;
+  padding: 6px 14px;
+  border: 1px solid var(--brand, #4a6cf7);
+  color: var(--brand, #4a6cf7);
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.sa-test-btn:hover { background: rgba(74,108,247,.06); }
+
+.sa-test-result {
+  width: 100%;
+  font-size: .8rem;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 120px;
+  overflow-y: auto;
+  background: rgba(0,0,0,.02);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-top: 2px;
+}
+
+.sa-fields-detected {
+  width: 100%;
+  font-size: .8rem;
+  color: var(--muted);
+  padding: 4px 10px;
+}

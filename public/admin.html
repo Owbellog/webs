@@ -674,6 +674,80 @@
               </div>
             </details>
 
+            <details class="admin-section" data-page="summaryagentic">
+              <summary>Summary Agentic <span class="chevron">▼</span></summary>
+              <div class="admin-subsections">
+
+                <details class="admin-subsection" open>
+                  <summary>General <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
+                    <div class="admin-field">
+                      <label><input id="summaryagenticEnabled" type="checkbox" checked /> Enable Summary Agentic</label>
+                      <span class="admin-field-note">When enabled, the widget generates an AI summary when a call comes in.</span>
+                    </div>
+                    <div class="admin-field">
+                      <label for="summaryagenticCacheSeconds">Cache duration (seconds)</label>
+                      <input id="summaryagenticCacheSeconds" type="number" min="0" max="3600" step="5" placeholder="60" />
+                      <span class="admin-field-note">Summaries for the same caller are cached for this long to avoid redundant AI calls.</span>
+                    </div>
+                  </div>
+                </details>
+
+                <details class="admin-subsection" open>
+                  <summary>AI Provider <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
+                    <div class="admin-field">
+                      <label for="summaryagenticAiProvider">AI provider</label>
+                      <select id="summaryagenticAiProvider">
+                        <option value="claude">Claude (Anthropic)</option>
+                        <option value="gemini">Gemini (Google)</option>
+                        <option value="openai">ChatGPT (OpenAI)</option>
+                      </select>
+                    </div>
+                    <div class="admin-field">
+                      <label for="summaryagenticAiModel">Model</label>
+                      <input id="summaryagenticAiModel" type="text" placeholder="claude-sonnet-4-6" />
+                      <span class="admin-field-note">Claude: claude-sonnet-4-6 · Gemini: gemini-2.5-flash · OpenAI: gpt-4o</span>
+                    </div>
+                    <div class="admin-field">
+                      <label for="summaryagenticAiApiKey">API key</label>
+                      <input id="summaryagenticAiApiKey" type="password" autocomplete="off" placeholder="sk-… / AIza… / sk-ant-…" />
+                      <span class="admin-field-note">Stored encrypted. Required to generate summaries.</span>
+                    </div>
+                    <div class="admin-field admin-field--full">
+                      <label for="summaryagenticAiPrompt">System prompt</label>
+                      <textarea id="summaryagenticAiPrompt" rows="5" placeholder="Leave blank to use the default BPO prompt."></textarea>
+                      <span class="admin-field-note">Customize how the AI generates the summary. Leave blank for the default prompt.</span>
+                    </div>
+                  </div>
+                </details>
+
+                <details class="admin-subsection" open>
+                  <summary>Data Sources <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
+                    <p class="admin-field-note" style="margin:0 0 8px;">
+                      Configure the external APIs to query when a call comes in. Use <code>{{phone}}</code> and <code>{{customer_id}}</code> as placeholders in the URL or body.
+                    </p>
+                    <div class="sa-datasources-list" id="summaryagenticSourcesList"></div>
+                    <button type="button" class="secondary" id="summaryagenticAddSource">+ Add data source</button>
+                  </div>
+                </details>
+
+                <details class="admin-subsection">
+                  <summary>Widget URL <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
+                    <div class="admin-field admin-field--full">
+                      <a id="summaryagenticOpenLink" href="./summaryagentic.html" target="_blank" class="admin-wieland-link" hidden>Open Summary Agentic →</a>
+                      <span class="admin-field-note">
+                        Embed with: <code>?campaign=YOUR_ID&amp;phone={{phone}}</code> or <code>&amp;customer_id={{id}}</code>
+                      </span>
+                    </div>
+                  </div>
+                </details>
+
+              </div>
+            </details>
+
             <details class="admin-section" data-page="secrets">
               <summary>Secrets <span class="chevron">▼</span></summary>
               <div class="admin-section-grid">
@@ -880,6 +954,7 @@
                       <option value="questions">Questions</option>
                       <option value="workitem">Workitem</option>
                       <option value="chat">Chat</option>
+                      <option value="summaryagentic">Summary Agentic</option>
                     </select>
                   </div>
 

@@ -114,7 +114,7 @@ function decryptSecret(value) {
 }
 
 // Fields that must be encrypted at rest
-const SECRET_FIELDS = ["token", "cookie", "geminiApiKey", "questionsGeminiApiKey", "wielandNccCredential"];
+const SECRET_FIELDS = ["token", "cookie", "geminiApiKey", "questionsGeminiApiKey", "wielandNccCredential", "summaryagenticAiApiKey"];
 
 function encryptCampaignSecrets(campaign) {
   const result = { ...campaign };
@@ -664,6 +664,16 @@ async function handleRequest(req, res) {
 
   if (req.method === "POST" && url.pathname === "/api/prediction") {
     await handlePrediction(req, res);
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/summaryagentic/summary") {
+    await handleSummaryAgenticSummary(req, res, url);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/summaryagentic/test-source") {
+    await handleSummaryAgenticTestSource(req, res);
     return;
   }
 
@@ -1331,6 +1341,317 @@ async function handlePrediction(req, res) {
   }
 }
 
+// ── Summary Agentic ───────────────────────────────────────────────────────────
+// In-memory cache: key = "campaignId:phone" → { data, expiresAt }
+const summaryAgenticCache = new Map();
+
+async function handleSummaryAgenticSummary(req, res, url) {
+  try {
+    const selection = readSelection(url.searchParams);
+    const phone = String(url.searchParams.get("phone") || "").trim();
+    const customerId = String(url.searchParams.get("customer_id") || url.searchParams.get("customerId") || "").trim();
+
+    if (!phone && !customerId) {
+      throwConfig("Missing identifier. Provide ?phone= or ?customer_id= in the URL.");
+    }
+
+    const config = await resolveCampaignConfigAsync(selection);
+    const saConfig = config.summaryagentic || {};
+
+    if (!saConfig.enabled) {
+      throwConfig(`Summary Agentic is not enabled for campaign "${config.id}".`);
+    }
+
+    // Check cache
+    const cacheKey = `${config.id}:${phone || customerId}`;
+    const cached = summaryAgenticCache.get(cacheKey);
+    if (cached && Date.now() < cached.expiresAt) {
+      sendJson(res, 200, { ...cached.data, fromCache: true });
+      return;
+    }
+
+    const identifiers = { phone, customerId };
+    const enabledSources = (saConfig.dataSources || []).filter((s) => s.enabled && s.url);
+
+    // Fetch all data sources in parallel
+    const sourceResults = await Promise.allSettled(
+      enabledSources.map((source) => fetchSummaryDataSource(source, identifiers))
+    );
+
+    const sourceData = enabledSources.map((source, i) => {
+      const result = sourceResults[i];
+      if (result.status === "fulfilled") {
+        return { id: source.id, name: source.name, data: result.value, error: null };
+      }
+      return { id: source.id, name: source.name, data: null, error: result.reason?.message || "Failed" };
+    });
+
+    const aiProvider = saConfig.aiProvider || "claude";
+    const aiApiKey = config.summaryagenticAiApiKey || "";
+    const aiModel = saConfig.aiModel || defaultAiModel(aiProvider);
+    const aiPrompt = saConfig.aiPrompt || defaultSummaryPrompt();
+
+    if (!aiApiKey) {
+      throwConfig(`Campaign "${config.id}" is missing the AI API key for Summary Agentic.`);
+    }
+
+    const contextText = buildSummaryContext(identifiers, sourceData);
+    const summaryText = await callAiForSummary(aiProvider, aiApiKey, aiModel, aiPrompt, contextText);
+
+    const responseData = {
+      ok: true,
+      campaign: { id: config.id, name: config.name },
+      identifiers,
+      summary: summaryText,
+      sources: sourceData.map((s) => ({ id: s.id, name: s.name, ok: !s.error, error: s.error })),
+      generatedAt: Date.now()
+    };
+
+    // Store in cache
+    const cacheTtl = (saConfig.cacheSeconds || 60) * 1000;
+    if (cacheTtl > 0) {
+      summaryAgenticCache.set(cacheKey, { data: responseData, expiresAt: Date.now() + cacheTtl });
+    }
+
+    sendJson(res, 200, responseData);
+  } catch (error) {
+    const status = error.code === "CONFIG" ? 400 : 502;
+    sendJson(res, status, {
+      error: status === 400 ? error.message : "Failed to generate summary",
+      details: status === 400 ? undefined : error.message
+    });
+  }
+}
+
+async function handleSummaryAgenticTestSource(req, res) {
+  try {
+    let body;
+    try {
+      body = await readJson(req);
+    } catch {
+      sendJson(res, 400, { error: "Invalid JSON body" });
+      return;
+    }
+
+    // Validate session — test-source requires admin auth
+    const session = getAdminSession(req);
+    if (!session) {
+      sendJson(res, 401, { error: "Unauthorized" });
+      return;
+    }
+
+    const { url: sourceUrl, method = "GET", headersJson = "{}", bodyTemplate = "", testPhone = "1234567890", testCustomerId = "" } = body;
+    if (!sourceUrl) {
+      sendJson(res, 400, { error: "url is required" });
+      return;
+    }
+
+    try {
+      JSON.parse(headersJson || "{}");
+    } catch {
+      sendJson(res, 400, { error: "headersJson is not valid JSON" });
+      return;
+    }
+
+    const identifiers = { phone: testPhone, customerId: testCustomerId };
+    const source = { url: sourceUrl, method, headersJson, bodyTemplate };
+
+    const data = await fetchSummaryDataSource(source, identifiers);
+    const fields = flattenObjectKeys(data);
+
+    sendJson(res, 200, { ok: true, data, fields });
+  } catch (error) {
+    sendJson(res, 502, { error: "Source test failed", details: error.message });
+  }
+}
+
+async function fetchSummaryDataSource(source, identifiers) {
+  const resolvedUrl = interpolateSummaryTemplate(source.url, identifiers);
+  const method = source.method || "GET";
+
+  let parsedHeaders = {};
+  try {
+    parsedHeaders = JSON.parse(source.headersJson || "{}");
+  } catch {
+    parsedHeaders = {};
+  }
+
+  const fetchOptions = {
+    method,
+    headers: { "Content-Type": "application/json", ...parsedHeaders },
+    signal: AbortSignal.timeout(8000)
+  };
+
+  if (method === "POST" && source.bodyTemplate) {
+    fetchOptions.body = interpolateSummaryTemplate(source.bodyTemplate, identifiers);
+  }
+
+  const response = await fetch(resolvedUrl, fetchOptions);
+  if (!response.ok) {
+    throw new Error(`Data source returned HTTP ${response.status}`);
+  }
+
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { raw: text };
+  }
+}
+
+function interpolateSummaryTemplate(template, identifiers) {
+  return template
+    .replace(/\{\{phone\}\}/g, encodeURIComponent(identifiers.phone || ""))
+    .replace(/\{\{customerId\}\}/g, encodeURIComponent(identifiers.customerId || ""))
+    .replace(/\{\{customer_id\}\}/g, encodeURIComponent(identifiers.customerId || ""));
+}
+
+function buildSummaryContext(identifiers, sourceData) {
+  const lines = [
+    `Customer identifier: phone=${identifiers.phone || "N/A"}, id=${identifiers.customerId || "N/A"}`,
+    ""
+  ];
+  for (const source of sourceData) {
+    lines.push(`=== ${source.name} ===`);
+    if (source.error) {
+      lines.push(`[Error fetching data: ${source.error}]`);
+    } else {
+      lines.push(JSON.stringify(source.data, null, 2));
+    }
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+function flattenObjectKeys(obj, prefix = "", depth = 0) {
+  if (depth > 4 || typeof obj !== "object" || obj === null) return [];
+  const keys = [];
+  for (const [k, v] of Object.entries(obj)) {
+    const fullKey = prefix ? `${prefix}.${k}` : k;
+    keys.push(fullKey);
+    if (typeof v === "object" && v !== null && !Array.isArray(v)) {
+      keys.push(...flattenObjectKeys(v, fullKey, depth + 1));
+    } else if (Array.isArray(v) && v.length > 0 && typeof v[0] === "object") {
+      keys.push(...flattenObjectKeys(v[0], `${fullKey}[0]`, depth + 1));
+    }
+  }
+  return keys;
+}
+
+function defaultAiModel(provider) {
+  if (provider === "claude") return "claude-sonnet-4-6";
+  if (provider === "openai") return "gpt-4o";
+  return "gemini-2.5-flash";
+}
+
+function defaultSummaryPrompt() {
+  return [
+    "You are an intelligent assistant for a BPO call center agent.",
+    "The agent is about to answer a call from a customer.",
+    "Based on the customer information below from various systems, generate a concise summary to help the agent prepare.",
+    "Include: 1) Customer profile and identification, 2) Recent call history (last 3-5 interactions with dates and reasons),",
+    "3) Open or pending cases, 4) Account status (billing, plan, contract), 5) Any flags (VIP, escalation risk, complaints),",
+    "6) A brief recommended approach for this call.",
+    "Be concise, professional, and actionable. Use clear section headers."
+  ].join(" ");
+}
+
+async function callAiForSummary(provider, apiKey, model, systemPrompt, contextText) {
+  if (provider === "claude") {
+    return callClaudeForSummary(apiKey, model, systemPrompt, contextText);
+  }
+  if (provider === "openai") {
+    return callOpenAiForSummary(apiKey, model, systemPrompt, contextText);
+  }
+  // Default: Gemini
+  return callGeminiForSummary(apiKey, model, systemPrompt, contextText);
+}
+
+async function callClaudeForSummary(apiKey, model, systemPrompt, contextText) {
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01"
+    },
+    body: JSON.stringify({
+      model: model || "claude-sonnet-4-6",
+      max_tokens: 1024,
+      system: systemPrompt,
+      messages: [{ role: "user", content: contextText }]
+    }),
+    signal: AbortSignal.timeout(30000)
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => "");
+    throw new Error(`Claude API returned ${response.status}${errText ? `: ${errText}` : ""}`);
+  }
+
+  const payload = await response.json();
+  const text = payload?.content?.[0]?.text || "";
+  if (!text) throw new Error("Claude returned an empty response.");
+  return text;
+}
+
+async function callOpenAiForSummary(apiKey, model, systemPrompt, contextText) {
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model: model || "gpt-4o",
+      max_tokens: 1024,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: contextText }
+      ]
+    }),
+    signal: AbortSignal.timeout(30000)
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => "");
+    throw new Error(`OpenAI API returned ${response.status}${errText ? `: ${errText}` : ""}`);
+  }
+
+  const payload = await response.json();
+  const text = payload?.choices?.[0]?.message?.content || "";
+  if (!text) throw new Error("OpenAI returned an empty response.");
+  return text;
+}
+
+async function callGeminiForSummary(apiKey, model, systemPrompt, contextText) {
+  const endpoint = buildGeminiEndpoint("https://generativelanguage.googleapis.com", model || "gemini-2.5-flash");
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": apiKey
+    },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      contents: [{ parts: [{ text: contextText }] }],
+      generationConfig: { temperature: 0.2, maxOutputTokens: 1024 }
+    }),
+    signal: AbortSignal.timeout(30000)
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => "");
+    throw new Error(`Gemini API returned ${response.status}${errText ? `: ${errText}` : ""}`);
+  }
+
+  const payload = await response.json();
+  const text = payload?.candidates?.[0]?.content?.parts?.map((p) => p?.text || "").join("").trim();
+  if (!text) throw new Error("Gemini returned an empty response.");
+  return text;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 async function fetchPredictionUpstream(config, input) {
   const payload = JSON.stringify({
     message: input.message || "",
@@ -1930,6 +2251,8 @@ function normalizeCampaign(input) {
         || (["token", "key", "none"].includes(input.wielandNccAuthType) ? input.wielandNccAuthType : "token")
     },
     wielandNccCredential: String(input.wielandNccCredential || "").trim(),
+    summaryagenticAiApiKey: String(input.summaryagenticAiApiKey || "").trim(),
+    summaryagentic: normalizeSummaryAgenticConfig(input.summaryagentic || {}),
     ui: normalizeUiConfig(input.ui || input)
   };
 }
@@ -2424,6 +2747,37 @@ function normalizeSentimentStylePreset(value) {
 function normalizeSentimentProvider(value) {
   const normalized = String(value || "").trim().toLowerCase();
   return normalized === "gemini" ? "gemini" : "heuristic";
+}
+
+function normalizeSummaryAgenticConfig(input) {
+  const src = input || {};
+  const VALID_PROVIDERS = ["claude", "gemini", "openai"];
+  return {
+    enabled: src.enabled !== false,
+    aiProvider: VALID_PROVIDERS.includes(src.aiProvider) ? src.aiProvider : "claude",
+    aiModel: String(src.aiModel || "").trim(),
+    aiPrompt: String(src.aiPrompt || "").trim(),
+    cacheSeconds: Math.max(0, parseInt(src.cacheSeconds ?? 60) || 60),
+    dataSources: normalizeSummaryDataSources(src.dataSources || [])
+  };
+}
+
+function normalizeSummaryDataSources(sources) {
+  if (!Array.isArray(sources)) return [];
+  return sources
+    .map((src) => ({
+      id: String(src.id || crypto.randomUUID()).trim(),
+      name: String(src.name || "").trim(),
+      url: String(src.url || "").trim(),
+      method: ["GET", "POST"].includes(String(src.method || "GET").toUpperCase())
+        ? String(src.method || "GET").toUpperCase()
+        : "GET",
+      headersJson: String(src.headersJson || "{}").trim(),
+      bodyTemplate: String(src.bodyTemplate || "").trim(),
+      selectedFields: Array.isArray(src.selectedFields) ? src.selectedFields.map(String) : [],
+      enabled: src.enabled !== false
+    }))
+    .filter((src) => src.url);
 }
 
 function normalizeLanguage(value) {
