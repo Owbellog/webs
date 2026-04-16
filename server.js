@@ -1761,17 +1761,55 @@ function defaultSummaryPrompt() {
 
 function parseSummarySections(rawText) {
   if (!rawText) return null;
-  // Strip markdown code fences if any
-  const cleaned = rawText.trim().replace(/^```json?\s*/i, "").replace(/\s*```$/, "").trim();
-  try {
-    const parsed = JSON.parse(cleaned);
-    const sections = parsed?.sections;
-    if (Array.isArray(sections) && sections.length > 0) {
-      return sections;
-    }
-  } catch {
-    // Not JSON — return null so frontend falls back to markdown
+
+  // Strategy 1: strip markdown fences and parse directly
+  const cleaned = rawText.trim()
+    .replace(/^```json?\s*/i, "").replace(/\s*```\s*$/, "").trim();
+
+  const attempts = [cleaned, rawText.trim()];
+
+  // Strategy 2: extract the outermost JSON object via regex
+  const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+  if (jsonMatch) attempts.push(jsonMatch[0]);
+
+  for (const text of attempts) {
+    try {
+      const parsed = JSON.parse(text);
+      const sections = parsed?.sections;
+      if (Array.isArray(sections) && sections.length > 0) return sections;
+    } catch { /* try next */ }
   }
+
+  // Strategy 3: response was truncated — extract complete section objects
+  try {
+    const sectionsStart = cleaned.indexOf('"sections"');
+    if (sectionsStart !== -1) {
+      // Find the array start
+      const arrStart = cleaned.indexOf("[", sectionsStart);
+      if (arrStart !== -1) {
+        // Collect complete section objects by counting braces
+        const sections = [];
+        let i = arrStart + 1;
+        while (i < cleaned.length) {
+          // Skip whitespace/commas
+          while (i < cleaned.length && /[\s,]/.test(cleaned[i])) i++;
+          if (cleaned[i] !== "{") break;
+          let depth = 0, start = i;
+          while (i < cleaned.length) {
+            if (cleaned[i] === "{") depth++;
+            else if (cleaned[i] === "}") { depth--; if (depth === 0) { i++; break; } }
+            i++;
+          }
+          try {
+            const sec = JSON.parse(cleaned.slice(start, i));
+            if (sec.id && sec.type && Array.isArray(sec.items)) sections.push(sec);
+          } catch { /* skip malformed section */ }
+        }
+        if (sections.length > 0) return sections;
+      }
+    }
+  } catch { /* ignore */ }
+
   return null;
 }
 
@@ -1796,7 +1834,7 @@ async function callClaudeForSummary(apiKey, model, systemPrompt, contextText) {
     },
     body: JSON.stringify({
       model: model || "claude-sonnet-4-6",
-      max_tokens: 2048,
+      max_tokens: 4096,
       system: systemPrompt,
       messages: [{ role: "user", content: contextText }]
     }),
@@ -1823,7 +1861,7 @@ async function callOpenAiForSummary(apiKey, model, systemPrompt, contextText) {
     },
     body: JSON.stringify({
       model: model || "gpt-4o",
-      max_tokens: 2048,
+      max_tokens: 4096,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: systemPrompt },
@@ -1855,7 +1893,7 @@ async function callGeminiForSummary(apiKey, model, systemPrompt, contextText) {
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: systemPrompt }] },
       contents: [{ parts: [{ text: contextText }] }],
-      generationConfig: { temperature: 0.2, maxOutputTokens: 2048, responseMimeType: "application/json" }
+      generationConfig: { temperature: 0.2, maxOutputTokens: 4096, responseMimeType: "application/json" }
     }),
     signal: AbortSignal.timeout(30000)
   });
