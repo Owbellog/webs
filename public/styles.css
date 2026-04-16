@@ -5655,7 +5655,8 @@ body.embedded .copilot-shell {
   line-height: 1;
 }
 .sa-kv-remove:hover { background: rgba(229,57,53,.06); }
-.sa-add-header-btn {
+.sa-add-header-btn,
+.sa-add-param-btn {
   background: none;
   border: 1px dashed rgba(74,108,247,.35);
   border-radius: 6px;
@@ -5666,7 +5667,8 @@ body.embedded .copilot-shell {
   cursor: pointer;
   font-family: inherit;
 }
-.sa-add-header-btn:hover { background: rgba(74,108,247,.05); }
+.sa-add-header-btn:hover,
+.sa-add-param-btn:hover { background: rgba(74,108,247,.05); }
 
 /* ── Import from URL ─────────────────────────────────────────────────────── */
 .sa-import-box {

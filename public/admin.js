@@ -376,6 +376,33 @@ function addHeaderRow(container, key = "", value = "") {
   container.appendChild(row);
 }
 
+function addParamRow(container, key = "", value = "") {
+  const row = document.createElement("div");
+  row.className = "sa-kv-row";
+  row.innerHTML = `
+    <input type="text" class="sa-kv-key" placeholder="Param name" value="${escapeHtml(key)}" />
+    <input type="text" class="sa-kv-val" placeholder="Value" value="${escapeHtml(value)}" />
+    <button type="button" class="sa-kv-remove" title="Remove">✕</button>
+  `;
+  row.querySelector(".sa-kv-remove").addEventListener("click", () => {
+    row.remove();
+    markDirty();
+  });
+  row.querySelectorAll("input").forEach((el) => el.addEventListener("input", markDirty));
+  container.appendChild(row);
+}
+
+function readParamsKv(container) {
+  if (!container) return "";
+  const lines = [];
+  container.querySelectorAll(".sa-kv-row").forEach((row) => {
+    const k = row.querySelector(".sa-kv-key")?.value.trim();
+    const v = row.querySelector(".sa-kv-val")?.value.trim();
+    if (k) lines.push(`${k}=${v || ""}`);
+  });
+  return lines.join("\n");
+}
+
 function readHeadersKv(container) {
   if (!container) return "{}";
   const obj = {};
@@ -425,8 +452,9 @@ function addSummarySourceCard(src = {}) {
         <textarea class="sa-field-body" rows="2" placeholder='{"phone":"{{phone}}"}'>${escapeHtml(src.bodyTemplate || "")}</textarea>
       </div>
       <div class="sa-source-field sa-source-field--full">
-        <label>Fixed params <span style="font-weight:400;color:var(--muted)">(key=value per line — always applied, URL params override)</span></label>
-        <textarea class="sa-field-fixed-params" rows="3" placeholder="days=30&#10;limit=50&#10;status=active">${escapeHtml(src.fixedParams || "")}</textarea>
+        <label>Fixed params <span style="font-weight:400;color:var(--muted)">(siempre aplicados, URL params los sobreescriben)</span></label>
+        <div class="sa-params-kv"></div>
+        <button type="button" class="sa-add-param-btn">+ Add param</button>
       </div>
       <div class="sa-source-field sa-source-field--full">
         <label><input class="sa-field-enabled" type="checkbox"${src.enabled !== false ? " checked" : ""} /> Enabled</label>
@@ -451,8 +479,10 @@ function addSummarySourceCard(src = {}) {
   const testResult = card.querySelector(".sa-test-result");
   const headersKv = card.querySelector(".sa-headers-kv");
   const addHeaderBtn = card.querySelector(".sa-add-header-btn");
+  const paramsKv = card.querySelector(".sa-params-kv");
+  const addParamBtn = card.querySelector(".sa-add-param-btn");
 
-  // Populate headers key-value rows from existing headersJson
+  // Populate headers
   try {
     const existing = JSON.parse(src.headersJson || "{}");
     Object.entries(existing).forEach(([k, v]) => addHeaderRow(headersKv, k, v));
@@ -460,6 +490,18 @@ function addSummarySourceCard(src = {}) {
 
   addHeaderBtn.addEventListener("click", () => {
     addHeaderRow(headersKv, "", "");
+    markDirty();
+  });
+
+  // Populate fixed params from "key=value\n" string
+  (src.fixedParams || "").split(/\n/).forEach((line) => {
+    const eq = line.indexOf("=");
+    if (eq === -1) return;
+    addParamRow(paramsKv, line.slice(0, eq).trim(), line.slice(eq + 1).trim());
+  });
+
+  addParamBtn.addEventListener("click", () => {
+    addParamRow(paramsKv, "", "");
     markDirty();
   });
 
@@ -563,7 +605,7 @@ function readSummaryDataSources() {
     selectedFields: [],
     enabled: card.querySelector(".sa-field-enabled")?.checked !== false,
     testPhone: card.querySelector(".sa-test-phone")?.value.trim() || "",
-    fixedParams: card.querySelector(".sa-field-fixed-params")?.value.trim() || ""
+    fixedParams: readParamsKv(card.querySelector(".sa-params-kv"))
   })).filter((s) => s.url);
 }
 // ─────────────────────────────────────────────────────────────────────────────
