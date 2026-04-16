@@ -1396,13 +1396,15 @@ async function handleSummaryAgenticSummary(req, res, url) {
     }
 
     const contextText = buildSummaryContext(identifiers, sourceData);
-    const summaryText = await callAiForSummary(aiProvider, aiApiKey, aiModel, aiPrompt, contextText);
+    const rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, aiPrompt, contextText);
+    const sections = parseSummarySections(rawText);
 
     const responseData = {
       ok: true,
       campaign: { id: config.id, name: config.name },
       identifiers,
-      summary: summaryText,
+      sections,                    // structured dynamic sections
+      summary: rawText,            // raw text fallback
       sources: sourceData.map((s) => ({ id: s.id, name: s.name, ok: !s.error, error: s.error })),
       generatedAt: Date.now()
     };
@@ -1548,12 +1550,46 @@ function defaultSummaryPrompt() {
   return [
     "You are an intelligent assistant for a BPO call center agent.",
     "The agent is about to answer a call from a customer.",
-    "Based on the customer information below from various systems, generate a concise summary to help the agent prepare.",
-    "Include: 1) Customer profile and identification, 2) Recent call history (last 3-5 interactions with dates and reasons),",
-    "3) Open or pending cases, 4) Account status (billing, plan, contract), 5) Any flags (VIP, escalation risk, complaints),",
-    "6) A brief recommended approach for this call.",
-    "Be concise, professional, and actionable. Use clear section headers."
+    "Based ONLY on the data actually available below, generate a structured JSON summary.",
+    "IMPORTANT: Only include sections for which there is real data. Do NOT invent or hallucinate information.",
+    "If a data source returned an error or is empty, skip that section entirely.",
+    "",
+    "Return a JSON object with a single key 'sections', which is an array of section objects.",
+    "Each section object has:",
+    "  - id: string (snake_case unique identifier)",
+    "  - title: string (display title for the section)",
+    "  - icon: string (single emoji that represents the section)",
+    "  - placement: 'left' or 'right' (left = compact profile-like info, right = lists and main content)",
+    "  - type: one of: 'kv' | 'calllog' | 'caselist' | 'flags' | 'text' | 'recommendation'",
+    "  - items: array of objects depending on type:",
+    "    - kv:             [{ label, value, highlight? }] (highlight: 'green'|'yellow'|'red')",
+    "    - calllog:        [{ date, reason, agent?, duration?, status }] (status: 'resolved'|'escalated'|'pending'|'missed')",
+    "    - caselist:       [{ id, status, description }] (status: 'Open'|'Closed'|'Escalated'|'Pending')",
+    "    - flags:          [{ type: 'warning'|'info'|'vip'|'escalation', message }]",
+    "    - text:           [{ content }]",
+    "    - recommendation: [{ content }]",
+    "",
+    "Example section types to consider (only if data exists): customer profile, account status, recent calls,",
+    "open cases, active subscriptions, pending orders, loyalty/points, last purchases, escalation history,",
+    "recommended approach.",
+    "Return ONLY the JSON object. No markdown, no explanation."
   ].join(" ");
+}
+
+function parseSummarySections(rawText) {
+  if (!rawText) return null;
+  // Strip markdown code fences if any
+  const cleaned = rawText.trim().replace(/^```json?\s*/i, "").replace(/\s*```$/, "").trim();
+  try {
+    const parsed = JSON.parse(cleaned);
+    const sections = parsed?.sections;
+    if (Array.isArray(sections) && sections.length > 0) {
+      return sections;
+    }
+  } catch {
+    // Not JSON — return null so frontend falls back to markdown
+  }
+  return null;
 }
 
 async function callAiForSummary(provider, apiKey, model, systemPrompt, contextText) {
@@ -1577,7 +1613,7 @@ async function callClaudeForSummary(apiKey, model, systemPrompt, contextText) {
     },
     body: JSON.stringify({
       model: model || "claude-sonnet-4-6",
-      max_tokens: 1024,
+      max_tokens: 2048,
       system: systemPrompt,
       messages: [{ role: "user", content: contextText }]
     }),
@@ -1604,7 +1640,8 @@ async function callOpenAiForSummary(apiKey, model, systemPrompt, contextText) {
     },
     body: JSON.stringify({
       model: model || "gpt-4o",
-      max_tokens: 1024,
+      max_tokens: 2048,
+      response_format: { type: "json_object" },
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: contextText }
@@ -1635,7 +1672,7 @@ async function callGeminiForSummary(apiKey, model, systemPrompt, contextText) {
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: systemPrompt }] },
       contents: [{ parts: [{ text: contextText }] }],
-      generationConfig: { temperature: 0.2, maxOutputTokens: 1024 }
+      generationConfig: { temperature: 0.2, maxOutputTokens: 2048, responseMimeType: "application/json" }
     }),
     signal: AbortSignal.timeout(30000)
   });
