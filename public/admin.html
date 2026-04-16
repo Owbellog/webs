@@ -707,7 +707,7 @@
                     <div class="admin-field">
                       <label for="summaryagenticAiModel">Model</label>
                       <input id="summaryagenticAiModel" type="text" placeholder="claude-sonnet-4-6" />
-                      <span class="admin-field-note">Claude: claude-sonnet-4-6 · Gemini: gemini-2.5-flash · OpenAI: gpt-4o</span>
+                      <span class="admin-field-note">Claude: <code>claude-sonnet-4-6</code> · Gemini: <code>gemini-2.5-flash</code> · OpenAI: <code>gpt-4o</code>. Leave blank to use the default for the selected provider.</span>
                     </div>
                     <div class="admin-field">
                       <label for="summaryagenticAiApiKey">API key</label>
@@ -715,9 +715,16 @@
                       <span class="admin-field-note">Stored encrypted. Required to generate summaries.</span>
                     </div>
                     <div class="admin-field admin-field--full">
-                      <label for="summaryagenticAiPrompt">System prompt</label>
-                      <textarea id="summaryagenticAiPrompt" rows="5" placeholder="Leave blank to use the default BPO prompt."></textarea>
-                      <span class="admin-field-note">Customize how the AI generates the summary. Leave blank for the default prompt.</span>
+                      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;">
+                        <label for="summaryagenticAiPrompt" style="margin:0;">System prompt</label>
+                        <button type="button" id="summaryagenticLoadDefaultPrompt" class="secondary" style="font-size:.78rem;padding:3px 10px;">Load default prompt</button>
+                      </div>
+                      <textarea id="summaryagenticAiPrompt" rows="6" placeholder="Leave blank to use the built-in BPO prompt (recommended to start). Click 'Load default prompt' to inspect or customize it."></textarea>
+                      <span class="admin-field-note">
+                        The AI returns a <strong>JSON array of sections</strong> — only sections with real data are included.
+                        Each section has: <code>id</code>, <code>title</code>, <code>icon</code>, <code>placement</code> (left/right), <code>type</code>, <code>items</code>.<br>
+                        Types: <code>kv</code> (key-value pairs) · <code>calllog</code> (call history) · <code>caselist</code> (open cases) · <code>flags</code> (alerts) · <code>recommendation</code> · <code>text</code> (free text).
+                      </span>
                     </div>
                   </div>
                 </details>
@@ -733,14 +740,26 @@
                   </div>
                 </details>
 
-                <details class="admin-subsection">
+                <details class="admin-subsection" open>
                   <summary>Widget URL <span class="chevron">▼</span></summary>
                   <div class="admin-section-grid admin-subsection-grid">
                     <div class="admin-field admin-field--full">
                       <a id="summaryagenticOpenLink" href="./summaryagentic.html" target="_blank" class="admin-wieland-link" hidden>Open Summary Agentic →</a>
-                      <span class="admin-field-note">
-                        Embed with: <code>?campaign=YOUR_ID&amp;phone={{phone}}</code> or <code>&amp;customer_id={{id}}</code>
-                      </span>
+                      <a href="./summaryagentic.html?demo=1" target="_blank" class="admin-wieland-link" style="margin-left:10px;">Preview demo →</a>
+                    </div>
+                    <div class="admin-field admin-field--full">
+                      <label>URL by phone number</label>
+                      <input id="summaryagenticUrlPhone" type="text" readonly style="font-family:monospace;font-size:.82rem;" placeholder="Save campaign first…" />
+                      <span class="admin-field-note">Replace <code>+15551234567</code> with the actual phone number passed by your dialer.</span>
+                    </div>
+                    <div class="admin-field admin-field--full">
+                      <label>URL by customer ID</label>
+                      <input id="summaryagenticUrlCustomerId" type="text" readonly style="font-family:monospace;font-size:.82rem;" placeholder="Save campaign first…" />
+                      <span class="admin-field-note">Replace <code>C-001</code> with the actual customer ID passed by your dialer.</span>
+                    </div>
+                    <div class="admin-field admin-field--full">
+                      <label>Embed code (iframe)</label>
+                      <textarea id="summaryagenticEmbedCode" rows="3" readonly style="font-family:monospace;font-size:.78rem;" placeholder="Save campaign first…"></textarea>
                     </div>
                   </div>
                 </details>

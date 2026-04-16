@@ -42,6 +42,7 @@ const wielandWidgetMappingRows = document.getElementById("wielandWidgetMappingRo
 const wielandContactToListRows = document.getElementById("wielandContactToListRows");
 const summaryagenticSourcesList = document.getElementById("summaryagenticSourcesList");
 const summaryagenticAddSourceButton = document.getElementById("summaryagenticAddSource");
+const summaryagenticLoadDefaultPromptButton = document.getElementById("summaryagenticLoadDefaultPrompt");
 
 const DEFAULT_WIELAND_WIDGET_TO_CONTACT_MAP = {
   firstName: "firstName",
@@ -468,6 +469,26 @@ function addSummarySourceCard(src = {}) {
   summaryagenticSourcesList.appendChild(card);
 }
 
+function updateSummaryAgenticUrls(campaignId) {
+  const saLink = document.getElementById("summaryagenticOpenLink");
+  const urlPhone = document.getElementById("summaryagenticUrlPhone");
+  const urlCustomerId = document.getElementById("summaryagenticUrlCustomerId");
+  const embedCode = document.getElementById("summaryagenticEmbedCode");
+  const base = `${window.location.origin}${window.location.pathname.replace(/\/[^/]*$/, "/summaryagentic.html")}`;
+
+  if (campaignId) {
+    if (saLink) { saLink.href = `./summaryagentic.html?campaign=${encodeURIComponent(campaignId)}`; saLink.hidden = false; }
+    if (urlPhone) urlPhone.value = `${base}?campaign=${encodeURIComponent(campaignId)}&phone=+15551234567`;
+    if (urlCustomerId) urlCustomerId.value = `${base}?campaign=${encodeURIComponent(campaignId)}&customer_id=C-001`;
+    if (embedCode) embedCode.value = `<iframe src="${base}?campaign=${encodeURIComponent(campaignId)}&phone={{PHONE}}" style="width:100%;height:900px;border:none;" allow="clipboard-write"></iframe>`;
+  } else {
+    if (saLink) saLink.hidden = true;
+    if (urlPhone) urlPhone.value = "";
+    if (urlCustomerId) urlCustomerId.value = "";
+    if (embedCode) embedCode.value = "";
+  }
+}
+
 function readSummaryDataSources() {
   const cards = summaryagenticSourcesList.querySelectorAll(".sa-source-card");
   return Array.from(cards).map((card) => ({
@@ -543,6 +564,38 @@ wielandRefreshFieldmappingsButton?.addEventListener("click", () => {
 
 summaryagenticAddSourceButton?.addEventListener("click", () => {
   addSummarySourceCard({});
+  markDirty();
+});
+
+const SUMMARY_AGENTIC_DEFAULT_PROMPT = `You are an intelligent assistant for a BPO call center agent.
+The agent is about to answer a call from a customer.
+Based ONLY on the data actually available below, generate a structured JSON summary.
+IMPORTANT: Only include sections for which there is real data. Do NOT invent or hallucinate information.
+If a data source returned an error or is empty, skip that section entirely.
+
+Return a JSON object with a single key "sections", which is an array of section objects.
+Each section object has:
+  - id: string (snake_case unique identifier)
+  - title: string (display title for the section)
+  - icon: string (single emoji that represents the section)
+  - placement: "left" or "right" (left = compact profile-like info, right = lists and main content)
+  - type: one of: "kv" | "calllog" | "caselist" | "flags" | "text" | "recommendation"
+  - items: array of objects depending on type:
+    - kv:             [{ label, value, highlight? }]  (highlight: "green"|"yellow"|"red")
+    - calllog:        [{ date, reason, agent?, duration?, status }]  (status: "resolved"|"escalated"|"pending"|"missed")
+    - caselist:       [{ id, status, description }]  (status: "Open"|"Closed"|"Escalated"|"Pending")
+    - flags:          [{ type: "warning"|"info"|"vip"|"escalation", message }]
+    - text:           [{ content }]
+    - recommendation: [{ content }]
+
+Example section types to consider (only if data exists): customer profile, account status, recent calls,
+open cases, active subscriptions, pending orders, loyalty/points, last purchases, escalation history,
+recommended approach.
+Return ONLY the JSON object. No markdown, no explanation.`;
+
+summaryagenticLoadDefaultPromptButton?.addEventListener("click", () => {
+  if (fields.summaryagenticAiPrompt.value.trim() && !confirm("This will replace your current prompt. Continue?")) return;
+  fields.summaryagenticAiPrompt.value = SUMMARY_AGENTIC_DEFAULT_PROMPT;
   markDirty();
 });
 
@@ -876,13 +929,7 @@ function fillForm(campaign) {
   fields.summaryagenticAiApiKey.value = campaign.summaryagenticAiApiKey || "";
   fields.summaryagenticAiPrompt.value = sa.aiPrompt || "";
   renderSummaryDataSources(sa.dataSources || []);
-  const saLink = document.getElementById("summaryagenticOpenLink");
-  if (campaign.id && saLink) {
-    saLink.href = `./summaryagentic.html?campaign=${encodeURIComponent(campaign.id)}`;
-    saLink.hidden = false;
-  } else if (saLink) {
-    saLink.hidden = true;
-  }
+  updateSummaryAgenticUrls(campaign.id || "");
   updateBreadcrumb(campaign.name || campaign.id || "");
   updateAdminPermissionUi();
   schedulePreviewRender();
@@ -1269,8 +1316,7 @@ function applyDefaultUiValues() {
       testPhone: "+15551234567"
     }
   ]);
-  const saLink = document.getElementById("summaryagenticOpenLink");
-  if (saLink) saLink.hidden = true;
+  updateSummaryAgenticUrls("");
   schedulePreviewRender();
 }
 
