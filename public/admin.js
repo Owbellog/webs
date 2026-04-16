@@ -43,6 +43,11 @@ const wielandContactToListRows = document.getElementById("wielandContactToListRo
 const summaryagenticSourcesList = document.getElementById("summaryagenticSourcesList");
 const summaryagenticAddSourceButton = document.getElementById("summaryagenticAddSource");
 const summaryagenticLoadDefaultPromptButton = document.getElementById("summaryagenticLoadDefaultPrompt");
+const summaryagenticImportToggle = document.getElementById("summaryagenticImportToggle");
+const summaryagenticImportForm = document.getElementById("summaryagenticImportForm");
+const summaryagenticAnalyzeBtn = document.getElementById("summaryagenticAnalyzeBtn");
+const summaryagenticAnalyzeResult = document.getElementById("summaryagenticAnalyzeResult");
+const summaryagenticAddFromAnalysis = document.getElementById("summaryagenticAddFromAnalysis");
 
 const DEFAULT_WIELAND_WIDGET_TO_CONTACT_MAP = {
   firstName: "firstName",
@@ -582,6 +587,63 @@ wielandRefreshFieldmappingsButton?.addEventListener("click", () => {
 summaryagenticAddSourceButton?.addEventListener("click", () => {
   addSummarySourceCard({});
   markDirty();
+});
+
+// ── Import from URL ──────────────────────────────────────────────────────────
+summaryagenticImportToggle?.addEventListener("click", () => {
+  const open = summaryagenticImportForm.style.display === "none";
+  summaryagenticImportForm.style.display = open ? "block" : "none";
+  summaryagenticImportToggle.textContent = open ? "✕ Cerrar" : "🔍 Import from URL";
+});
+
+summaryagenticAnalyzeBtn?.addEventListener("click", async () => {
+  const rawUrl = document.getElementById("summaryagenticImportUrl")?.value.trim();
+  const method = document.getElementById("summaryagenticImportMethod")?.value || "GET";
+
+  if (!rawUrl) { alert("Pega una URL primero."); return; }
+
+  const campaignId = (document.getElementById("campaignId")?.value || "").trim();
+
+  summaryagenticAnalyzeBtn.disabled = true;
+  summaryagenticAnalyzeBtn.textContent = "Analizando…";
+  summaryagenticAnalyzeResult.style.display = "none";
+
+  try {
+    const data = await apiRequest("/api/summaryagentic/analyze-url", {
+      method: "POST",
+      body: JSON.stringify({ url: rawUrl, method, campaignId })
+    });
+
+    document.getElementById("summaryagenticSugName").value    = data.name || "";
+    document.getElementById("summaryagenticSugUrl").value     = data.url  || rawUrl;
+    document.getElementById("summaryagenticSugFixed").value   = data.fixedParams || "";
+    document.getElementById("summaryagenticSugHeaders").value = data.headersJson || "{}";
+    document.getElementById("summaryagenticExplanation").textContent = data.explanation || "";
+
+    summaryagenticAnalyzeResult.style.display = "block";
+  } catch (err) {
+    alert("Error al analizar: " + err.message);
+  } finally {
+    summaryagenticAnalyzeBtn.disabled = false;
+    summaryagenticAnalyzeBtn.textContent = "Analizar con IA";
+  }
+});
+
+summaryagenticAddFromAnalysis?.addEventListener("click", () => {
+  const name        = document.getElementById("summaryagenticSugName")?.value.trim();
+  const url         = document.getElementById("summaryagenticSugUrl")?.value.trim();
+  const fixedParams = document.getElementById("summaryagenticSugFixed")?.value.trim();
+  const headersJson = document.getElementById("summaryagenticSugHeaders")?.value.trim();
+  const method      = document.getElementById("summaryagenticImportMethod")?.value || "GET";
+
+  addSummarySourceCard({ name, url, method, fixedParams, headersJson });
+  markDirty();
+
+  // Reset and close the import panel
+  summaryagenticAnalyzeResult.style.display = "none";
+  summaryagenticImportForm.style.display = "none";
+  summaryagenticImportToggle.textContent = "🔍 Import from URL";
+  document.getElementById("summaryagenticImportUrl").value = "";
 });
 
 const SUMMARY_AGENTIC_DEFAULT_PROMPT = `You are an intelligent assistant for a BPO call center agent.

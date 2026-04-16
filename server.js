@@ -677,6 +677,11 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/summaryagentic/analyze-url") {
+    await handleSummaryAgenticAnalyzeUrl(req, res);
+    return;
+  }
+
   // Public admin auth routes (no session required)
   if (req.method === "POST" && url.pathname === "/api/admin/login") {
     await handleAdminLogin(req, res);
@@ -1472,6 +1477,100 @@ async function handleSummaryAgenticTestSource(req, res) {
     sendJson(res, 200, { ok: true, data, fields });
   } catch (error) {
     sendJson(res, 502, { error: "Source test failed", details: error.message });
+  }
+}
+
+async function handleSummaryAgenticAnalyzeUrl(req, res) {
+  try {
+    let body;
+    try { body = await readJson(req); } catch { sendJson(res, 400, { error: "Invalid JSON body" }); return; }
+
+    const session = getAdminSession(req);
+    if (!session) { sendJson(res, 401, { error: "Unauthorized" }); return; }
+
+    const { url: rawUrl, method = "GET", campaignId } = body;
+    if (!rawUrl) { sendJson(res, 400, { error: "url is required" }); return; }
+
+    // Load campaign AI config if campaignId provided
+    let aiProvider = "claude", aiApiKey = "", aiModel = "";
+    if (campaignId) {
+      try {
+        const campaigns = await getEffectiveCampaigns();
+        const config = campaigns.find((c) => c.id === campaignId);
+        if (config) {
+          aiProvider = config.summaryagentic?.aiProvider || "claude";
+          aiApiKey   = config.summaryagenticAiApiKey || "";
+          aiModel    = config.summaryagentic?.aiModel || "";
+        }
+      } catch { /* ignore, fall through to no-key error */ }
+    }
+
+    if (!aiApiKey) { sendJson(res, 400, { error: "No AI API key configured for this campaign. Set it in Summary Agentic → AI Provider." }); return; }
+
+    const systemPrompt = `You are an API configuration assistant for a call center platform. Analyze the provided URL and suggest how to configure it as a reusable data source template.
+
+Available template placeholders:
+- {{phone}} — customer phone number (main identifier)
+- {{customer_id}} — alternative customer ID
+- {{range_from_ms}} — start of date range as Unix ms (today - days + 1)
+- {{range_to_ms}} — end of today as Unix ms
+- {{today}} — today as YYYY-MM-DD
+- {{date_from}} — start of date range as YYYY-MM-DD
+- {{date_to}} — end of today as YYYY-MM-DD
+- {{now_ms}} — current Unix timestamp in ms
+- Any {{custom_variable}} that matches a fixed param key
+
+Rules:
+1. Replace hardcoded phone/customer numbers in the URL with {{phone}} or {{customer_id}}
+2. Replace Unix ms timestamps in range-start positions (rangeFrom, start, from, since) with {{range_from_ms}}
+3. Replace Unix ms timestamps in range-end positions (rangeTo, end, to, until) with {{range_to_ms}}
+4. Move purely static query params (rows, limit, pageSize, format, etc.) to fixedParams instead of hardcoding them in the URL
+5. Keep semantic/structural params (rangeType, type, format when meaningful) in the URL
+6. Suggest a short, clear name for this data source
+7. If the URL needs an Authorization header, suggest the pattern in headersJson
+
+Return ONLY a valid JSON object (no markdown, no explanation outside the json) with exactly these fields:
+{
+  "name": "short descriptive name",
+  "url": "URL template with {{placeholders}}",
+  "fixedParams": "key=value lines (one per line) for static defaults",
+  "headersJson": "{}",
+  "bodyTemplate": "",
+  "explanation": "2-3 sentences explaining what you detected and why"
+}`;
+
+    const userMsg = `URL: ${rawUrl}\nMethod: ${method}`;
+
+    let rawText;
+    try {
+      rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, systemPrompt, userMsg);
+    } catch (err) {
+      sendJson(res, 502, { error: "AI call failed", details: err.message });
+      return;
+    }
+
+    // Parse JSON from response
+    let suggestion;
+    try {
+      const cleaned = rawText.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
+      suggestion = JSON.parse(cleaned);
+    } catch {
+      sendJson(res, 502, { error: "AI returned non-JSON response", raw: rawText.slice(0, 500) });
+      return;
+    }
+
+    sendJson(res, 200, {
+      ok: true,
+      name: String(suggestion.name || ""),
+      url: String(suggestion.url || rawUrl),
+      method,
+      fixedParams: String(suggestion.fixedParams || ""),
+      headersJson: String(suggestion.headersJson || "{}"),
+      bodyTemplate: String(suggestion.bodyTemplate || ""),
+      explanation: String(suggestion.explanation || "")
+    });
+  } catch (error) {
+    sendJson(res, 500, { error: "Analyze failed", details: error.message });
   }
 }
 

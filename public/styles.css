@@ -5622,3 +5622,28 @@ body.embedded .copilot-shell {
   color: var(--muted);
   padding: 4px 10px;
 }
+
+/* ── Import from URL ─────────────────────────────────────────────────────── */
+.sa-import-box {
+  background: rgba(74,108,247,.04);
+  border: 1px dashed rgba(74,108,247,.25);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.sa-import-trigger {
+  display: flex;
+  align-items: center;
+}
+.sa-import-form {
+  margin-top: 6px;
+}
+.sa-analyze-explanation {
+  font-size: .82rem;
+  line-height: 1.55;
+  background: rgba(24,178,107,.07);
+  border-left: 3px solid #18b26b;
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: #1c2040;
+}

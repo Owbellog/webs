@@ -746,6 +746,48 @@
                       <strong>Custom placeholders:</strong> cualquier parámetro extra en la URL del widget queda disponible automáticamente.<br>
                       Ejemplo: <code>?campaign=x&amp;phone={{phone}}&amp;agent_id=A123</code> → usa <code>{{agent_id}}</code> en tu URL o body.
                     </p>
+                    <!-- ── Import from URL ── -->
+                    <div class="sa-import-box" id="summaryagenticImportBox">
+                      <div class="sa-import-trigger">
+                        <button type="button" class="secondary" id="summaryagenticImportToggle">🔍 Import from URL</button>
+                        <span class="admin-field-note" style="margin:0 0 0 8px;">Pega una URL real y la IA sugiere cómo configurarla</span>
+                      </div>
+                      <div class="sa-import-form" id="summaryagenticImportForm" style="display:none;">
+                        <div class="sa-source-field sa-source-field--full" style="margin-top:8px;">
+                          <label>URL a analizar</label>
+                          <textarea id="summaryagenticImportUrl" rows="3" placeholder="https://api.example.com/calls?phone=672420697&rangeFrom=1774994400000&rangeTo=1776290399000"></textarea>
+                        </div>
+                        <div class="sa-source-field" style="margin-top:4px;">
+                          <label>Método</label>
+                          <select id="summaryagenticImportMethod">
+                            <option value="GET">GET</option>
+                            <option value="POST">POST</option>
+                          </select>
+                        </div>
+                        <button type="button" class="primary" id="summaryagenticAnalyzeBtn" style="margin-top:8px;">Analizar con IA</button>
+                        <div id="summaryagenticAnalyzeResult" style="display:none;margin-top:10px;">
+                          <div class="sa-analyze-explanation" id="summaryagenticExplanation"></div>
+                          <div class="sa-source-field sa-source-field--full" style="margin-top:8px;">
+                            <label>Nombre sugerido</label>
+                            <input id="summaryagenticSugName" type="text" />
+                          </div>
+                          <div class="sa-source-field sa-source-field--full">
+                            <label>URL template</label>
+                            <input id="summaryagenticSugUrl" type="text" />
+                          </div>
+                          <div class="sa-source-field sa-source-field--full">
+                            <label>Fixed params</label>
+                            <textarea id="summaryagenticSugFixed" rows="3"></textarea>
+                          </div>
+                          <div class="sa-source-field sa-source-field--full">
+                            <label>Headers (JSON)</label>
+                            <textarea id="summaryagenticSugHeaders" rows="2"></textarea>
+                          </div>
+                          <button type="button" class="primary" id="summaryagenticAddFromAnalysis" style="margin-top:8px;">+ Agregar como data source</button>
+                        </div>
+                      </div>
+                    </div>
+                    <!-- ── Sources list ── -->
                     <div class="sa-datasources-list" id="summaryagenticSourcesList"></div>
                     <button type="button" class="secondary" id="summaryagenticAddSource">+ Add data source</button>
                   </div>
