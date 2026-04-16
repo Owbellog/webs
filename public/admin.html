@@ -735,8 +735,16 @@
                     <p class="admin-field-note" style="margin:0 0 8px;">
                       Configure the external APIs to query when a call comes in.<br>
                       <strong>Built-in placeholders:</strong> <code>{{phone}}</code>, <code>{{customer_id}}</code><br>
-                      <strong>Custom placeholders:</strong> any extra parameter you add to the widget URL becomes available automatically.<br>
-                      Example: <code>?campaign=x&amp;phone={{phone}}&amp;date_from=2024-01-01&amp;agent_id=A123</code> → use <code>{{date_from}}</code> and <code>{{agent_id}}</code> in your URL or body.
+                      <strong>Automatic date variables</strong> (computed fresh on every call):<br>
+                      &nbsp;· <code>{{now_ms}}</code> — timestamp actual en ms<br>
+                      &nbsp;· <code>{{range_from_ms}}</code> — inicio del rango en ms (hoy − <em>days</em> + 1)<br>
+                      &nbsp;· <code>{{range_to_ms}}</code> — fin del día de hoy en ms<br>
+                      &nbsp;· <code>{{today}}</code> — hoy como <em>YYYY-MM-DD</em><br>
+                      &nbsp;· <code>{{date_from}}</code> — inicio del rango como <em>YYYY-MM-DD</em><br>
+                      &nbsp;· <code>{{date_to}}</code> — igual que <code>{{today}}</code><br>
+                      En <strong>Fixed params</strong> agrega <code>days=30</code> para controlar la ventana de días (default 30).<br>
+                      <strong>Custom placeholders:</strong> cualquier parámetro extra en la URL del widget queda disponible automáticamente.<br>
+                      Ejemplo: <code>?campaign=x&amp;phone={{phone}}&amp;agent_id=A123</code> → usa <code>{{agent_id}}</code> en tu URL o body.
                     </p>
                     <div class="sa-datasources-list" id="summaryagenticSourcesList"></div>
                     <button type="button" class="secondary" id="summaryagenticAddSource">+ Add data source</button>

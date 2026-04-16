@@ -1524,11 +1524,44 @@ async function fetchSummaryDataSource(source, identifiers) {
   }
 }
 
+function buildDateVars(identifiers) {
+  const now = Date.now();
+  const days = Math.max(1, parseInt(identifiers.days ?? 30) || 30);
+
+  // Start of today (midnight local) in ms
+  const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+  // End of today (23:59:59.999) in ms
+  const todayEnd = new Date(); todayEnd.setHours(23,59,59,999);
+
+  const rangeFrom = todayStart.getTime() - (days - 1) * 86400000; // N days back from start of today
+  const rangeTo   = todayEnd.getTime();
+
+  const pad = (n) => String(n).padStart(2, "0");
+  const d = new Date();
+  const todayStr = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  const fromDate = new Date(rangeFrom);
+  const fromStr  = `${fromDate.getFullYear()}-${pad(fromDate.getMonth()+1)}-${pad(fromDate.getDate())}`;
+
+  return {
+    now_ms:         String(now),
+    range_from_ms:  String(rangeFrom),
+    range_to_ms:    String(rangeTo),
+    today:          todayStr,
+    date_from:      fromStr,
+    date_to:        todayStr
+  };
+}
+
 function interpolateSummaryTemplate(template, identifiers) {
-  // Replace {{key}} with the corresponding value from identifiers (URL-encoded)
-  // Supports: {{phone}}, {{customer_id}}, {{customerId}}, and ANY extra URL param
+  // Built-in date variables computed fresh on each call
+  const dateVars = buildDateVars(identifiers);
+
   return template.replace(/\{\{([^}]+)\}\}/g, (match, key) => {
     const k = key.trim();
+    // Date variables (priority over user params)
+    if (Object.prototype.hasOwnProperty.call(dateVars, k)) {
+      return dateVars[k];
+    }
     // Normalize customer_id / customerId
     if (k === "customer_id" || k === "customerId") {
       return encodeURIComponent(identifiers.customerId || identifiers.customer_id || "");
