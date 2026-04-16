@@ -6,244 +6,324 @@
     <title>Summary Agentic</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap"
-      rel="stylesheet"
-    />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="./styles.css" />
     <style>
-      /* ── Widget shell ─────────────────────────────────────────────────── */
+      /* ── Variables ─────────────────────────────────────────────────────── */
       :root {
-        --sa-accent: #4a6cf7;
-        --sa-green: #18b26b;
-        --sa-yellow: #e8a020;
-        --sa-red: #e53935;
-        --sa-card-bg: #ffffff;
-        --sa-card-radius: 18px;
-        --sa-card-shadow: 0 8px 32px rgba(28, 40, 83, 0.10);
+        --sa-accent:      #4a6cf7;
+        --sa-accent-soft: rgba(74,108,247,.08);
+        --sa-green:       #18b26b;
+        --sa-yellow:      #e8a020;
+        --sa-red:         #e53935;
+        --sa-bg:          #f2f4fb;
+        --sa-panel:       #ffffff;
+        --sa-border:      rgba(74,108,247,.10);
+        --sa-radius:      14px;
+        --sa-shadow:      0 2px 14px rgba(28,40,83,.07);
+        --sa-header-h:    54px;
+        --sa-font:        "Manrope", sans-serif;
       }
+
+      /* ── Reset / shell ─────────────────────────────────────────────────── */
+      *, *::before, *::after { box-sizing: border-box; }
 
       html, body {
-        margin: 0;
-        padding: 0;
-        font-family: var(--campaign-font-family, "Manrope", sans-serif);
-        font-size: var(--campaign-base-font-size, 16px);
-        background: linear-gradient(160deg, #f8f7ff 0%, #f0f4ff 100%);
-        color: var(--text, #1c2040);
-        min-height: 100vh;
+        margin: 0; padding: 0;
+        height: 100%; max-height: 900px;
+        overflow: hidden;
+        font-family: var(--sa-font);
+        font-size: 13px;
+        background: var(--sa-bg);
+        color: #1c2040;
       }
 
-      .sa-shell {
-        padding: 16px;
-        max-width: 720px;
-        margin: 0 auto;
-        box-sizing: border-box;
-      }
-
-      html.embedded .sa-shell {
-        padding: 10px 12px;
-      }
-
-      /* ── Header ──────────────────────────────────────────────────────── */
+      /* ── Top header ────────────────────────────────────────────────────── */
       .sa-header {
+        height: var(--sa-header-h);
         display: flex;
         align-items: center;
         gap: 10px;
-        margin-bottom: 14px;
-      }
-
-      .sa-header-icon {
-        width: 36px;
-        height: 36px;
-        border-radius: 10px;
-        background: var(--sa-accent);
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        padding: 0 16px;
+        background: var(--sa-panel);
+        border-bottom: 1px solid var(--sa-border);
         flex-shrink: 0;
       }
 
+      .sa-header-icon {
+        width: 32px; height: 32px;
+        background: var(--sa-accent);
+        border-radius: 9px;
+        display: flex; align-items: center; justify-content: center;
+        flex-shrink: 0;
+      }
       .sa-header-icon svg {
-        width: 20px;
-        height: 20px;
-        fill: none;
-        stroke: #fff;
-        stroke-width: 2;
-        stroke-linecap: round;
-        stroke-linejoin: round;
+        width: 18px; height: 18px;
+        fill: none; stroke: #fff;
+        stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
       }
 
       .sa-header-title {
-        font-size: 1.1rem;
-        font-weight: 700;
-        color: var(--text, #1c2040);
-        flex: 1;
+        font-size: 1rem; font-weight: 800;
+        color: #1c2040; flex: 1;
+        letter-spacing: -.01em;
       }
 
       .sa-header-phone {
-        font-size: .82rem;
-        color: var(--muted, #666d7d);
-        background: rgba(74,108,247,.08);
-        border: 1px solid rgba(74,108,247,.18);
+        font-size: .78rem; font-weight: 700;
+        color: var(--sa-accent);
+        background: var(--sa-accent-soft);
+        border: 1px solid rgba(74,108,247,.2);
         border-radius: 20px;
-        padding: 3px 10px;
-        font-weight: 600;
+        padding: 3px 11px;
       }
+
+      .sa-sources-row {
+        display: flex; align-items: center; gap: 5px;
+      }
+      .sa-src-dot {
+        width: 8px; height: 8px;
+        border-radius: 50%;
+        cursor: default;
+      }
+      .sa-src-dot--ok    { background: var(--sa-green); }
+      .sa-src-dot--error { background: var(--sa-red); }
+      .sa-src-dot--idle  { background: #c8cdd8; }
 
       .sa-refresh-btn {
         background: none;
-        border: 1px solid var(--line, #e8eaf0);
+        border: 1px solid var(--sa-border);
         border-radius: 8px;
-        padding: 5px 10px;
-        font-size: .8rem;
-        cursor: pointer;
-        color: var(--muted, #666d7d);
+        padding: 5px 12px;
+        font-size: .76rem; font-weight: 700;
+        cursor: pointer; color: #666d7d;
         font-family: inherit;
-        font-weight: 600;
+        transition: background .15s;
       }
-
       .sa-refresh-btn:hover { background: rgba(0,0,0,.04); }
 
-      /* ── Loading ─────────────────────────────────────────────────────── */
-      .sa-loading {
+      /* ── Body layout ───────────────────────────────────────────────────── */
+      .sa-body {
         display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 16px;
-        padding: 40px 20px;
-        color: var(--muted, #666d7d);
-        font-size: .9rem;
+        height: calc(100% - var(--sa-header-h));
+        overflow: hidden;
       }
 
+      /* ── LEFT panel ────────────────────────────────────────────────────── */
+      .sa-left {
+        width: 260px;
+        flex-shrink: 0;
+        overflow-y: auto;
+        padding: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        border-right: 1px solid var(--sa-border);
+        background: #f8f9ff;
+      }
+
+      /* ── RIGHT panel ───────────────────────────────────────────────────── */
+      .sa-right {
+        flex: 1;
+        overflow-y: auto;
+        padding: 12px 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      /* ── Cards ─────────────────────────────────────────────────────────── */
+      .sa-card {
+        background: var(--sa-panel);
+        border-radius: var(--sa-radius);
+        box-shadow: var(--sa-shadow);
+        border: 1px solid var(--sa-border);
+        overflow: hidden;
+      }
+
+      .sa-card-head {
+        display: flex; align-items: center; gap: 7px;
+        padding: 9px 13px 8px;
+        border-bottom: 1px solid rgba(0,0,0,.04);
+        background: rgba(74,108,247,.03);
+      }
+      .sa-card-head-icon {
+        font-size: .9rem;
+      }
+      .sa-card-head h3 {
+        margin: 0;
+        font-size: .8rem; font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: .04em;
+        color: var(--sa-accent);
+      }
+      .sa-card-body { padding: 10px 13px; }
+
+      /* ── Profile card ──────────────────────────────────────────────────── */
+      .sa-profile-name {
+        font-size: 1.05rem; font-weight: 800;
+        color: #1c2040; margin: 0 0 2px;
+        line-height: 1.2;
+      }
+      .sa-profile-phone {
+        font-size: .78rem; color: #666d7d; margin: 0 0 10px;
+      }
+      .sa-kv-list {
+        display: flex; flex-direction: column; gap: 5px;
+      }
+      .sa-kv {
+        display: flex; justify-content: space-between;
+        align-items: baseline; gap: 6px;
+        font-size: .77rem;
+        border-bottom: 1px solid rgba(0,0,0,.04);
+        padding-bottom: 5px;
+      }
+      .sa-kv:last-child { border-bottom: none; padding-bottom: 0; }
+      .sa-kv-label { color: #888d9b; font-weight: 600; flex-shrink: 0; }
+      .sa-kv-value { color: #1c2040; font-weight: 700; text-align: right; }
+
+      /* ── Status pill ───────────────────────────────────────────────────── */
+      .sa-pill {
+        display: inline-flex; align-items: center; gap: 4px;
+        font-size: .72rem; font-weight: 700;
+        padding: 2px 8px; border-radius: 20px; border: 1px solid;
+      }
+      .sa-pill--green  { color: var(--sa-green);  border-color: rgba(24,178,107,.25); background: rgba(24,178,107,.08); }
+      .sa-pill--yellow { color: var(--sa-yellow); border-color: rgba(232,160,32,.25);  background: rgba(232,160,32,.08); }
+      .sa-pill--red    { color: var(--sa-red);    border-color: rgba(229,57,53,.25);   background: rgba(229,57,53,.08);  }
+      .sa-pill--blue   { color: var(--sa-accent); border-color: rgba(74,108,247,.25);  background: var(--sa-accent-soft); }
+
+      /* ── Call list ─────────────────────────────────────────────────────── */
+      .sa-call-list { display: flex; flex-direction: column; gap: 7px; }
+      .sa-call-item {
+        display: flex; gap: 10px; align-items: flex-start;
+        padding-bottom: 7px;
+        border-bottom: 1px solid rgba(0,0,0,.05);
+      }
+      .sa-call-item:last-child { border-bottom: none; padding-bottom: 0; }
+      .sa-call-dot {
+        width: 8px; height: 8px;
+        border-radius: 50%;
+        background: var(--sa-accent);
+        flex-shrink: 0;
+        margin-top: 4px;
+      }
+      .sa-call-info { flex: 1; }
+      .sa-call-reason { font-size: .82rem; font-weight: 700; color: #1c2040; }
+      .sa-call-meta   { font-size: .73rem; color: #888d9b; margin-top: 1px; }
+
+      /* ── Case list ─────────────────────────────────────────────────────── */
+      .sa-case-list { display: flex; flex-direction: column; gap: 7px; }
+      .sa-case-item {
+        display: flex; flex-direction: column; gap: 3px;
+        padding-bottom: 7px;
+        border-bottom: 1px solid rgba(0,0,0,.05);
+      }
+      .sa-case-item:last-child { border-bottom: none; padding-bottom: 0; }
+      .sa-case-head { display: flex; align-items: center; gap: 6px; }
+      .sa-case-id   { font-size: .78rem; font-weight: 800; color: var(--sa-accent); }
+      .sa-case-desc { font-size: .79rem; color: #1c2040; line-height: 1.4; }
+
+      /* ── Flags ─────────────────────────────────────────────────────────── */
+      .sa-flag-list { display: flex; flex-direction: column; gap: 6px; }
+      .sa-flag-item {
+        display: flex; align-items: flex-start; gap: 8px;
+        font-size: .8rem; line-height: 1.4;
+      }
+      .sa-flag-icon { flex-shrink: 0; font-size: .88rem; }
+
+      /* ── Recommendation ────────────────────────────────────────────────── */
+      .sa-recommendation {
+        font-size: .83rem; line-height: 1.6;
+        color: #1c2040;
+        border-left: 3px solid var(--sa-accent);
+        padding-left: 10px;
+      }
+
+      /* ── Two-col grid for right panel ──────────────────────────────────── */
+      .sa-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      /* ── Loading ───────────────────────────────────────────────────────── */
+      .sa-loading {
+        flex: 1; display: flex;
+        flex-direction: column; align-items: center; justify-content: center;
+        gap: 14px; color: #888d9b; font-size: .85rem;
+      }
       .sa-spinner {
-        width: 36px;
-        height: 36px;
+        width: 34px; height: 34px;
         border: 3px solid rgba(74,108,247,.15);
         border-top-color: var(--sa-accent);
         border-radius: 50%;
-        animation: sa-spin .8s linear infinite;
+        animation: sa-spin .75s linear infinite;
       }
-
       @keyframes sa-spin { to { transform: rotate(360deg); } }
+      .sa-step-list { display: flex; flex-direction: column; gap: 5px; font-size: .78rem; }
+      .sa-step { display: flex; align-items: center; gap: 6px; color: #888d9b; }
+      .sa-step--done   { color: var(--sa-green); }
+      .sa-step--active { color: var(--sa-accent); font-weight: 700; }
+      .sa-step--error  { color: var(--sa-red); }
 
-      .sa-step-list {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        font-size: .82rem;
-        text-align: left;
-        min-width: 200px;
-      }
-
-      .sa-step { display: flex; align-items: center; gap: 8px; color: var(--muted, #666d7d); }
-      .sa-step.sa-step--done { color: var(--sa-green); }
-      .sa-step.sa-step--active { color: var(--sa-accent); font-weight: 600; }
-      .sa-step.sa-step--error { color: var(--sa-red); }
-
-      /* ── Error ───────────────────────────────────────────────────────── */
+      /* ── Error ─────────────────────────────────────────────────────────── */
       .sa-error {
         background: #fff8f8;
-        border: 1px solid #fdd;
-        border-radius: var(--sa-card-radius);
-        padding: 20px 22px;
-        color: var(--sa-red);
-        font-size: .9rem;
-        line-height: 1.5;
-      }
-
-      .sa-error strong { display: block; margin-bottom: 4px; }
-
-      /* ── Summary card ─────────────────────────────────────────────────── */
-      .sa-card {
-        background: var(--sa-card-bg);
-        border-radius: var(--sa-card-radius);
-        box-shadow: var(--sa-card-shadow);
-        overflow: hidden;
-        margin-bottom: 12px;
-      }
-
-      .sa-card-body {
+        border: 1px solid rgba(229,57,53,.2);
+        border-radius: var(--sa-radius);
         padding: 18px 20px;
-        white-space: pre-wrap;
-        font-size: .92rem;
-        line-height: 1.65;
-        color: var(--text, #1c2040);
-      }
-
-      /* Markdown-like rendering */
-      .sa-card-body h1,
-      .sa-card-body h2,
-      .sa-card-body h3 {
-        margin: .8em 0 .3em;
-        font-weight: 700;
-        color: var(--sa-accent);
-      }
-
-      .sa-card-body h1 { font-size: 1.1rem; }
-      .sa-card-body h2 { font-size: 1rem; }
-      .sa-card-body h3 { font-size: .95rem; }
-
-      .sa-card-body p { margin: .4em 0; }
-      .sa-card-body ul, .sa-card-body ol { margin: .4em 0 .4em 1.2em; }
-      .sa-card-body strong { font-weight: 700; }
-
-      /* ── Sources footer ───────────────────────────────────────────────── */
-      .sa-sources {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-        padding: 10px 20px 14px;
-        border-top: 1px solid rgba(0,0,0,.05);
-      }
-
-      .sa-source-badge {
-        font-size: .74rem;
-        font-weight: 600;
-        padding: 3px 9px;
-        border-radius: 20px;
-        border: 1px solid;
-      }
-
-      .sa-source-badge--ok {
-        color: var(--sa-green);
-        border-color: rgba(24,178,107,.25);
-        background: rgba(24,178,107,.07);
-      }
-
-      .sa-source-badge--error {
         color: var(--sa-red);
-        border-color: rgba(229,57,53,.25);
-        background: rgba(229,57,53,.07);
+        font-size: .86rem; line-height: 1.5;
+        margin: 12px;
+      }
+      .sa-error strong { display: block; margin-bottom: 4px; font-size: .9rem; }
+
+      /* ── Timestamp ─────────────────────────────────────────────────────── */
+      .sa-timestamp {
+        font-size: .7rem; color: #aab0bf;
+        text-align: right; padding: 0 2px 4px;
       }
 
-      /* ── Footer meta ──────────────────────────────────────────────────── */
-      .sa-meta {
-        font-size: .76rem;
-        color: var(--muted, #666d7d);
-        text-align: right;
-        padding: 0 4px 4px;
+      /* ── Freeform markdown (fallback) ──────────────────────────────────── */
+      .sa-markdown { font-size: .82rem; line-height: 1.65; }
+      .sa-markdown h1, .sa-markdown h2, .sa-markdown h3 {
+        margin: .7em 0 .25em; font-weight: 800; color: var(--sa-accent);
       }
+      .sa-markdown h1 { font-size: .95rem; }
+      .sa-markdown h2 { font-size: .88rem; }
+      .sa-markdown h3 { font-size: .82rem; }
+      .sa-markdown p  { margin: .3em 0; }
+      .sa-markdown ul, .sa-markdown ol { margin: .3em 0 .3em 1.1em; }
+      .sa-markdown strong { font-weight: 700; }
+
+      /* ── Scrollbar ─────────────────────────────────────────────────────── */
+      .sa-left::-webkit-scrollbar,
+      .sa-right::-webkit-scrollbar { width: 4px; }
+      .sa-left::-webkit-scrollbar-thumb,
+      .sa-right::-webkit-scrollbar-thumb { background: rgba(74,108,247,.18); border-radius: 4px; }
     </style>
   </head>
   <body>
-    <main class="sa-shell" id="saShell">
-      <header class="sa-header" id="saHeader">
-        <div class="sa-header-icon">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2Z"/>
-            <path d="M12 8v4l3 3"/>
-          </svg>
-        </div>
-        <span class="sa-header-title">Customer Summary</span>
-        <span class="sa-header-phone" id="saPhoneLabel"></span>
-        <button type="button" class="sa-refresh-btn" id="saRefreshBtn" hidden>↻ Refresh</button>
-      </header>
 
-      <div id="saContent">
-        <!-- filled by JS -->
+    <!-- HEADER -->
+    <header class="sa-header" id="saHeader">
+      <div class="sa-header-icon">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="8" r="4"/>
+          <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
+        </svg>
       </div>
-    </main>
+      <span class="sa-header-title">Customer Summary</span>
+      <span class="sa-header-phone" id="saPhoneLabel"></span>
+      <div class="sa-sources-row" id="saSourcesRow"></div>
+      <button type="button" class="sa-refresh-btn" id="saRefreshBtn" hidden>↻ Refresh</button>
+    </header>
+
+    <!-- BODY -->
+    <div class="sa-body" id="saBody">
+      <!-- filled by JS -->
+    </div>
 
     <script src="./i18n.js"></script>
     <script src="./summaryagentic.js"></script>
