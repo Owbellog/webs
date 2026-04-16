@@ -1691,8 +1691,22 @@ function interpolateSummaryTemplate(template, identifiers) {
   });
 }
 
+function truncateSourceData(data, maxItems = 20) {
+  if (!data || typeof data !== "object") return data;
+  if (Array.isArray(data)) {
+    const sliced = data.slice(0, maxItems);
+    return sliced.length < data.length
+      ? [...sliced, { _truncated: `${data.length - sliced.length} more items omitted` }]
+      : sliced;
+  }
+  const result = {};
+  for (const [k, v] of Object.entries(data)) {
+    result[k] = Array.isArray(v) ? truncateSourceData(v, maxItems) : v;
+  }
+  return result;
+}
+
 function buildSummaryContext(identifiers, sourceData, enabledSources = []) {
-  // Build a description map from source config
   const descMap = {};
   for (const src of enabledSources) {
     if (src.description) descMap[src.id] = src.description;
@@ -1710,7 +1724,9 @@ function buildSummaryContext(identifiers, sourceData, enabledSources = []) {
     if (source.error) {
       lines.push(`[Error fetching data: ${source.error}]`);
     } else {
-      lines.push(JSON.stringify(source.data, null, 2));
+      // Truncate large arrays to avoid exceeding AI token limits
+      const safe = truncateSourceData(source.data, 20);
+      lines.push(JSON.stringify(safe, null, 2));
     }
     lines.push("");
   }
@@ -1764,7 +1780,9 @@ function defaultSummaryPrompt() {
     "Example section types to consider (only if data exists): customer profile, account status, recent calls,",
     "open cases, active subscriptions, pending orders, loyalty/points, last purchases, escalation history,",
     "recommended approach.",
-    "Return ONLY the JSON object. No markdown, no explanation."
+    "Return ONLY the JSON object. No markdown, no explanation.",
+    "IMPORTANT: Be concise. Limit each section to a maximum of 8 items. For call logs show only the most recent 8 calls.",
+    "Keep text values short (under 120 characters). The response must be a complete, valid JSON object — never truncate it."
   ].join(" ");
 }
 

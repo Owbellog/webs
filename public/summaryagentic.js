@@ -189,8 +189,25 @@ function renderSummary(data) {
       <div class="sa-right">${rightSections.map(renderSection).join("")}${ts}</div>
     `;
   } else {
-    // Fallback to markdown for plain text responses
-    renderMarkdown(data.summary || "(No summary generated.)", data);
+    // If summary looks like raw JSON (truncated AI response), show a retry prompt instead
+    const raw = data.summary || "";
+    const looksLikeJson = raw.trimStart().startsWith("{") || raw.trimStart().startsWith("[");
+    if (looksLikeJson) {
+      const ts = data.generatedAt
+        ? `<div class="sa-timestamp">Generated ${new Date(data.generatedAt).toLocaleTimeString()}</div>`
+        : "";
+      saBody.innerHTML = `
+        <div class="sa-left"></div>
+        <div class="sa-right">
+          <div class="sa-error" style="margin:0;">
+            <strong>No se pudo generar el resumen</strong>
+            La respuesta del AI fue incompleta. Intenta hacer clic en ↻ Refresh.
+          </div>
+          ${ts}
+        </div>`;
+    } else {
+      renderMarkdown(raw || "(No summary generated.)", data);
+    }
   }
 
   saRefreshBtn.hidden = false;
