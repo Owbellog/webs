@@ -2775,7 +2775,8 @@ function normalizeSummaryDataSources(sources) {
       headersJson: String(src.headersJson || "{}").trim(),
       bodyTemplate: String(src.bodyTemplate || "").trim(),
       selectedFields: Array.isArray(src.selectedFields) ? src.selectedFields.map(String) : [],
-      enabled: src.enabled !== false
+      enabled: src.enabled !== false,
+      testPhone: String(src.testPhone || "").trim()
     }))
     .filter((src) => src.url);
 }

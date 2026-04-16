@@ -478,7 +478,8 @@ function readSummaryDataSources() {
     headersJson: card.querySelector(".sa-field-headers")?.value.trim() || "{}",
     bodyTemplate: card.querySelector(".sa-field-body")?.value.trim() || "",
     selectedFields: [],
-    enabled: card.querySelector(".sa-field-enabled")?.checked !== false
+    enabled: card.querySelector(".sa-field-enabled")?.checked !== false,
+    testPhone: card.querySelector(".sa-test-phone")?.value.trim() || ""
   })).filter((s) => s.url);
 }
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1255,7 +1256,19 @@ function applyDefaultUiValues() {
   fields.summaryagenticAiModel.value = "";
   fields.summaryagenticAiApiKey.value = "";
   fields.summaryagenticAiPrompt.value = "";
-  renderSummaryDataSources([]);
+  renderSummaryDataSources([
+    {
+      id: crypto.randomUUID(),
+      name: "Example CRM — Call History",
+      url: "https://api.example.com/calls?phone={{phone}}",
+      method: "GET",
+      headersJson: '{"Authorization": "Bearer YOUR_TOKEN_HERE"}',
+      bodyTemplate: "",
+      selectedFields: [],
+      enabled: true,
+      testPhone: "+15551234567"
+    }
+  ]);
   const saLink = document.getElementById("summaryagenticOpenLink");
   if (saLink) saLink.hidden = true;
   schedulePreviewRender();
