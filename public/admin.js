@@ -360,6 +360,33 @@ function renderSummaryDataSources(sources) {
   (sources || []).forEach((src) => addSummarySourceCard(src));
 }
 
+function addHeaderRow(container, key = "", value = "") {
+  const row = document.createElement("div");
+  row.className = "sa-kv-row";
+  row.innerHTML = `
+    <input type="text" class="sa-kv-key" placeholder="Header name" value="${escapeHtml(key)}" />
+    <input type="text" class="sa-kv-val" placeholder="Value" value="${escapeHtml(value)}" />
+    <button type="button" class="sa-kv-remove" title="Remove">✕</button>
+  `;
+  row.querySelector(".sa-kv-remove").addEventListener("click", () => {
+    row.remove();
+    markDirty();
+  });
+  row.querySelectorAll("input").forEach((el) => el.addEventListener("input", markDirty));
+  container.appendChild(row);
+}
+
+function readHeadersKv(container) {
+  if (!container) return "{}";
+  const obj = {};
+  container.querySelectorAll(".sa-kv-row").forEach((row) => {
+    const k = row.querySelector(".sa-kv-key")?.value.trim();
+    const v = row.querySelector(".sa-kv-val")?.value.trim();
+    if (k) obj[k] = v || "";
+  });
+  return JSON.stringify(obj);
+}
+
 function addSummarySourceCard(src = {}) {
   const id = src.id || crypto.randomUUID();
   const card = document.createElement("div");
@@ -389,8 +416,9 @@ function addSummarySourceCard(src = {}) {
         <input class="sa-field-url" type="text" value="${escapeHtml(src.url || "")}" placeholder="https://api.example.com/calls?phone={{phone}}" />
       </div>
       <div class="sa-source-field sa-source-field--full">
-        <label>Headers (JSON)</label>
-        <textarea class="sa-field-headers" rows="3" placeholder='{"Authorization":"Bearer TOKEN"}'>${escapeHtml(src.headersJson || "{}")}</textarea>
+        <label>Headers</label>
+        <div class="sa-headers-kv"></div>
+        <button type="button" class="sa-add-header-btn">+ Add header</button>
       </div>
       <div class="sa-source-field sa-source-field--full">
         <label>Body template (POST only, JSON)</label>
@@ -421,6 +449,19 @@ function addSummarySourceCard(src = {}) {
   const removeBtn = card.querySelector(".sa-source-remove");
   const testBtn = card.querySelector(".sa-test-btn");
   const testResult = card.querySelector(".sa-test-result");
+  const headersKv = card.querySelector(".sa-headers-kv");
+  const addHeaderBtn = card.querySelector(".sa-add-header-btn");
+
+  // Populate headers key-value rows from existing headersJson
+  try {
+    const existing = JSON.parse(src.headersJson || "{}");
+    Object.entries(existing).forEach(([k, v]) => addHeaderRow(headersKv, k, v));
+  } catch { /* ignore */ }
+
+  addHeaderBtn.addEventListener("click", () => {
+    addHeaderRow(headersKv, "", "");
+    markDirty();
+  });
 
   nameInput.addEventListener("input", () => {
     nameLabel.textContent = nameInput.value || "New source";
@@ -446,7 +487,7 @@ function addSummarySourceCard(src = {}) {
   testBtn.addEventListener("click", async () => {
     const sourceUrl = card.querySelector(".sa-field-url").value.trim();
     const method = card.querySelector(".sa-field-method").value;
-    const headersJson = card.querySelector(".sa-field-headers").value.trim();
+    const headersJson = readHeadersKv(card.querySelector(".sa-headers-kv"));
     const bodyTemplate = card.querySelector(".sa-field-body").value.trim();
     const testPhone = card.querySelector(".sa-test-phone").value.trim() || "1234567890";
     const extraRaw = card.querySelector(".sa-test-extra").value.trim();
@@ -517,7 +558,7 @@ function readSummaryDataSources() {
     name: card.querySelector(".sa-field-name")?.value.trim() || "",
     url: card.querySelector(".sa-field-url")?.value.trim() || "",
     method: card.querySelector(".sa-field-method")?.value || "GET",
-    headersJson: card.querySelector(".sa-field-headers")?.value.trim() || "{}",
+    headersJson: readHeadersKv(card.querySelector(".sa-headers-kv")),
     bodyTemplate: card.querySelector(".sa-field-body")?.value.trim() || "",
     selectedFields: [],
     enabled: card.querySelector(".sa-field-enabled")?.checked !== false,

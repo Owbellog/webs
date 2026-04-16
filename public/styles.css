@@ -5623,6 +5623,51 @@ body.embedded .copilot-shell {
   padding: 4px 10px;
 }
 
+/* ── Headers key-value rows ──────────────────────────────────────────────── */
+.sa-headers-kv {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 6px;
+}
+.sa-kv-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.sa-kv-key {
+  flex: 0 0 38%;
+  min-width: 0;
+}
+.sa-kv-val {
+  flex: 1;
+  min-width: 0;
+}
+.sa-kv-remove {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid rgba(229,57,53,.3);
+  border-radius: 6px;
+  color: #e53935;
+  font-size: .78rem;
+  padding: 3px 8px;
+  cursor: pointer;
+  line-height: 1;
+}
+.sa-kv-remove:hover { background: rgba(229,57,53,.06); }
+.sa-add-header-btn {
+  background: none;
+  border: 1px dashed rgba(74,108,247,.35);
+  border-radius: 6px;
+  color: var(--accent, #4a6cf7);
+  font-size: .78rem;
+  font-weight: 600;
+  padding: 4px 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.sa-add-header-btn:hover { background: rgba(74,108,247,.05); }
+
 /* ── Import from URL ─────────────────────────────────────────────────────── */
 .sa-import-box {
   background: rgba(74,108,247,.04);
