@@ -1449,7 +1449,7 @@ async function handleSummaryAgenticTestSource(req, res) {
     }
 
     // Validate session — test-source requires admin auth
-    const session = getAdminSession(req);
+    const session = getSessionFromRequest(req);
     if (!session) {
       sendJson(res, 401, { error: "Unauthorized" });
       return;
@@ -1485,7 +1485,7 @@ async function handleSummaryAgenticAnalyzeUrl(req, res) {
     let body;
     try { body = await readJson(req); } catch { sendJson(res, 400, { error: "Invalid JSON body" }); return; }
 
-    const session = getAdminSession(req);
+    const session = getSessionFromRequest(req);
     if (!session) { sendJson(res, 401, { error: "Unauthorized" }); return; }
 
     const { url: rawUrl, method = "GET", campaignId } = body;
@@ -1545,7 +1545,7 @@ Return ONLY a valid JSON object (no markdown, no explanation outside the json) w
     try {
       rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, systemPrompt, userMsg);
     } catch (err) {
-      sendJson(res, 502, { error: "AI call failed", details: err.message });
+      sendJson(res, 502, { error: `AI call failed: ${err.message}` });
       return;
     }
 
@@ -1570,7 +1570,7 @@ Return ONLY a valid JSON object (no markdown, no explanation outside the json) w
       explanation: String(suggestion.explanation || "")
     });
   } catch (error) {
-    sendJson(res, 500, { error: "Analyze failed", details: error.message });
+    sendJson(res, 500, { error: `Analyze failed: ${error.message}` });
   }
 }
 
@@ -1590,7 +1590,26 @@ async function fetchSummaryDataSource(source, identifiers) {
   // Merge: fixedParams first (defaults), then identifiers (URL params override)
   const fixed = parseFixedParams(source.fixedParams);
   const merged = { ...fixed, ...identifiers };
-  const resolvedUrl = interpolateSummaryTemplate(source.url, merged);
+
+  // 1. Interpolate the base URL (resolves {{phone}} etc in the path/existing query string)
+  let resolvedUrl = interpolateSummaryTemplate(source.url, merged);
+
+  // 2. Append fixed params as query string params (like Postman's Params tab).
+  //    Each value is also interpolated so {{phone}} in a param value is resolved.
+  //    Internal-only variables (days) that are not meant to reach the API are excluded.
+  const INTERNAL_VARS = new Set(["days"]);
+  if (Object.keys(fixed).length > 0) {
+    const urlObj = new URL(resolvedUrl);
+    for (const [k, v] of Object.entries(fixed)) {
+      if (INTERNAL_VARS.has(k)) continue;
+      // Only append if not already present in the URL
+      if (!urlObj.searchParams.has(k)) {
+        urlObj.searchParams.set(k, interpolateSummaryTemplate(String(v), merged));
+      }
+    }
+    resolvedUrl = urlObj.toString();
+  }
+
   const method = source.method || "GET";
 
   let parsedHeaders = {};
