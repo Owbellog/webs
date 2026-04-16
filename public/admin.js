@@ -472,6 +472,16 @@ function addSummarySourceCard(src = {}) {
       <button type="button" class="sa-test-btn">Test endpoint</button>
       <button type="button" class="sa-curl-btn">cURL</button>
       <div class="sa-test-result" style="display:none;"></div>
+      <div class="sa-fields-selector" style="display:none;">
+        <div class="sa-fields-selector-head">
+          <span>Campos detectados — selecciona los que quieres enviar al AI:</span>
+          <div>
+            <button type="button" class="sa-fields-all">Todos</button>
+            <button type="button" class="sa-fields-none">Ninguno</button>
+          </div>
+        </div>
+        <div class="sa-fields-checks"></div>
+      </div>
       <div class="sa-curl-box" style="display:none;">
         <textarea class="sa-curl-output" rows="5" readonly></textarea>
         <button type="button" class="sa-curl-copy">📋 Copy</button>
@@ -486,6 +496,10 @@ function addSummarySourceCard(src = {}) {
   const removeBtn = card.querySelector(".sa-source-remove");
   const testBtn = card.querySelector(".sa-test-btn");
   const testResult = card.querySelector(".sa-test-result");
+  const fieldsSelector = card.querySelector(".sa-fields-selector");
+  const fieldsChecks = card.querySelector(".sa-fields-checks");
+  const fieldsAllBtn = card.querySelector(".sa-fields-all");
+  const fieldsNoneBtn = card.querySelector(".sa-fields-none");
   const curlBtn = card.querySelector(".sa-curl-btn");
   const curlBox = card.querySelector(".sa-curl-box");
   const curlOutput = card.querySelector(".sa-curl-output");
@@ -515,6 +529,38 @@ function addSummarySourceCard(src = {}) {
 
   addParamBtn.addEventListener("click", () => {
     addParamRow(paramsKv, "", "");
+    markDirty();
+  });
+
+  // Restore previously saved field selection
+  function renderFieldCheckboxes(fields, selected = []) {
+    const selSet = new Set(selected);
+    fieldsChecks.innerHTML = "";
+    fields.forEach((f) => {
+      const label = document.createElement("label");
+      label.className = "sa-field-check-label";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.value = f;
+      cb.checked = selected.length === 0 || selSet.has(f); // default: all checked
+      cb.addEventListener("change", markDirty);
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(" " + f));
+      fieldsChecks.appendChild(label);
+    });
+    fieldsSelector.style.display = fields.length ? "block" : "none";
+  }
+
+  if (Array.isArray(src.selectedFields) && src.selectedFields.length > 0) {
+    renderFieldCheckboxes(src.selectedFields, src.selectedFields);
+  }
+
+  fieldsAllBtn?.addEventListener("click", () => {
+    fieldsChecks.querySelectorAll("input[type=checkbox]").forEach((cb) => { cb.checked = true; });
+    markDirty();
+  });
+  fieldsNoneBtn?.addEventListener("click", () => {
+    fieldsChecks.querySelectorAll("input[type=checkbox]").forEach((cb) => { cb.checked = false; });
     markDirty();
   });
 
@@ -643,10 +689,19 @@ function addSummarySourceCard(src = {}) {
         method: "POST",
         body: JSON.stringify({ url: sourceUrl, method, headersJson, bodyTemplate, testPhone, extraParams })
       });
-      const preview = JSON.stringify(data.data, null, 2);
-      const fieldsLine = data.fields?.length ? `\n\nDetected fields:\n${data.fields.join("\n")}` : "";
-      testResult.textContent = preview + fieldsLine;
+
+      // Show compact preview
+      testResult.style.display = "block";
+      testResult.textContent = JSON.stringify(data.data, null, 2).slice(0, 600) + (JSON.stringify(data.data).length > 600 ? "\n…" : "");
+
+      // Render field checkboxes — keep existing selection if fields match
+      if (data.fields?.length) {
+        const existing = Array.from(fieldsChecks.querySelectorAll("input[type=checkbox]:checked")).map((cb) => cb.value);
+        renderFieldCheckboxes(data.fields, existing.length ? existing : []);
+        markDirty();
+      }
     } catch (err) {
+      testResult.style.display = "block";
       testResult.textContent = "Error: " + err.message;
     } finally {
       testBtn.disabled = false;
@@ -686,7 +741,7 @@ function readSummaryDataSources() {
     method: card.querySelector(".sa-field-method")?.value || "GET",
     headersJson: readHeadersKv(card.querySelector(".sa-headers-kv")),
     bodyTemplate: card.querySelector(".sa-field-body")?.value.trim() || "",
-    selectedFields: [],
+    selectedFields: Array.from(card.querySelectorAll(".sa-fields-checks input[type=checkbox]:checked")).map((cb) => cb.value),
     enabled: card.querySelector(".sa-field-enabled")?.checked !== false,
     testPhone: card.querySelector(".sa-test-phone")?.value.trim() || "",
     fixedParams: readParamsKv(card.querySelector(".sa-params-kv")),

@@ -1394,7 +1394,11 @@ async function handleSummaryAgenticSummary(req, res, url) {
     const sourceData = enabledSources.map((source, i) => {
       const result = sourceResults[i];
       if (result.status === "fulfilled") {
-        return { id: source.id, name: source.name, data: result.value, error: null };
+        const rawData = result.value;
+        const filtered = source.selectedFields?.length
+          ? filterBySelectedFields(rawData, source.selectedFields)
+          : rawData;
+        return { id: source.id, name: source.name, data: filtered, error: null };
       }
       return { id: source.id, name: source.name, data: null, error: result.reason?.message || "Failed" };
     });
@@ -1731,6 +1735,53 @@ function buildSummaryContext(identifiers, sourceData, enabledSources = []) {
     lines.push("");
   }
   return lines.join("\n");
+}
+
+function filterBySelectedFields(data, selectedFields) {
+  if (!selectedFields || selectedFields.length === 0) return data;
+  const fieldSet = new Set(selectedFields);
+
+  // Build a set of top-level keys and array-item keys needed
+  // e.g. "workitems[0].queue" → top key "workitems", item key "queue"
+  const topKeys = new Set();
+  const arrayItemKeys = {}; // topKey → Set of sub-keys
+
+  for (const path of fieldSet) {
+    const arrMatch = path.match(/^([^[.]+)\[0\]\.(.+)$/);
+    if (arrMatch) {
+      const [, topKey, subKey] = arrMatch;
+      topKeys.add(topKey);
+      if (!arrayItemKeys[topKey]) arrayItemKeys[topKey] = new Set();
+      arrayItemKeys[topKey].add(subKey);
+    } else {
+      const topKey = path.split(".")[0];
+      topKeys.add(topKey);
+    }
+  }
+
+  function filterItem(item, subKeys) {
+    if (!subKeys || !subKeys.size) return item;
+    const out = {};
+    for (const k of subKeys) out[k] = item?.[k];
+    return out;
+  }
+
+  if (Array.isArray(data)) {
+    // Root is an array — filter each item using all array-item sub-keys
+    const allSubKeys = new Set(selectedFields.map((f) => f.replace(/^[^.]*\./, "")));
+    return data.map((item) => filterItem(item, allSubKeys));
+  }
+
+  const out = {};
+  for (const [k, v] of Object.entries(data)) {
+    if (!topKeys.has(k)) continue;
+    if (Array.isArray(v) && arrayItemKeys[k]) {
+      out[k] = v.map((item) => filterItem(item, arrayItemKeys[k]));
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
 }
 
 function flattenObjectKeys(obj, prefix = "", depth = 0) {
