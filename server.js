@@ -682,6 +682,11 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/summaryagentic/suggest-fields") {
+    await handleSummaryAgenticSuggestFields(req, res);
+    return;
+  }
+
   // Public admin auth routes (no session required)
   if (req.method === "POST" && url.pathname === "/api/admin/login") {
     await handleAdminLogin(req, res);
@@ -1484,6 +1489,96 @@ async function handleSummaryAgenticTestSource(req, res) {
   }
 }
 
+async function handleSummaryAgenticSuggestFields(req, res) {
+  try {
+    let body;
+    try { body = await readJson(req); } catch { sendJson(res, 400, { error: "Invalid JSON body" }); return; }
+
+    const session = getSessionFromRequest(req);
+    if (!session) { sendJson(res, 401, { error: "Unauthorized" }); return; }
+
+    const { data, sourceName = "Data source", description = "", campaignId } = body;
+    if (!data) { sendJson(res, 400, { error: "data is required" }); return; }
+
+    // Load campaign AI config
+    let aiProvider = "claude", aiApiKey = "", aiModel = "";
+    if (campaignId) {
+      try {
+        const campaigns = await getEffectiveCampaigns();
+        const config = campaigns.find((c) => c.id === campaignId);
+        if (config) {
+          aiProvider = config.summaryagentic?.aiProvider || "claude";
+          aiApiKey   = config.summaryagenticAiApiKey || "";
+          aiModel    = config.summaryagentic?.aiModel || "";
+        }
+      } catch { /* ignore */ }
+    }
+
+    if (!aiApiKey) {
+      sendJson(res, 400, { error: "No AI API key configured for this campaign." });
+      return;
+    }
+
+    const systemPrompt = `You are a UX analyst for a call center agent dashboard. Analyze the provided JSON data from an API and suggest which fields would be most useful to display to an agent before answering a customer call.
+
+Return ONLY a valid JSON object with this structure:
+{
+  "suggestions": [
+    {
+      "id": "unique_snake_case_id",
+      "title": "Section display title",
+      "icon": "single emoji",
+      "type": "kv|calllog|caselist|flags|recommendation",
+      "placement": "left|right",
+      "rationale": "1 sentence explaining why this section is useful for an agent",
+      "fields": ["field.path", "field.path2"],
+      "preview": [
+        { "label": "Field label", "value": "example value from the data" }
+      ]
+    }
+  ]
+}
+
+Rules:
+- type "kv" → for profile/account data (key-value pairs), placement "left"
+- type "calllog" → for call/interaction history lists, placement "right"
+- type "caselist" → for open tickets/cases, placement "right"
+- type "flags" → for risk indicators, anomalies, or important alerts, placement "left"
+- type "recommendation" → one actionable suggestion for the agent, placement "right"
+- Only suggest sections for which real data exists
+- For preview, use actual values from the data (max 4 items)
+- Focus on actionable information the agent needs right now
+- Return 2-5 suggestions maximum`;
+
+    const userMsg = `Source name: ${sourceName}${description ? `\nDescription: ${description}` : ""}
+
+Data sample:
+${JSON.stringify(truncateSourceData(data, 5), null, 2)}`;
+
+    let rawText;
+    try {
+      rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, systemPrompt, userMsg);
+    } catch (err) {
+      sendJson(res, 502, { error: `AI call failed: ${err.message}` });
+      return;
+    }
+
+    let suggestions;
+    try {
+      const cleaned = rawText.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
+      const parsed = JSON.parse(cleaned);
+      suggestions = parsed.suggestions || [];
+    } catch {
+      sendJson(res, 502, { error: "AI returned invalid JSON", raw: rawText.slice(0, 300) });
+      return;
+    }
+
+    sendJson(res, 200, { ok: true, suggestions });
+  } catch (error) {
+    sendJson(res, 500, { error: `Suggest fields failed: ${error.message}` });
+  }
+}
+
 async function handleSummaryAgenticAnalyzeUrl(req, res) {
   try {
     let body;
@@ -1721,14 +1816,34 @@ function buildSummaryContext(identifiers, sourceData, enabledSources = []) {
     ""
   ];
 
+  // Build suggestion map: sourceId → accepted suggestion objects
+  const sugMap = {};
+  for (const src of enabledSources) {
+    if (Array.isArray(src.suggestions) && src.suggestions.length > 0) {
+      const accepted = new Set(src.selectedFields || []);
+      sugMap[src.id] = accepted.size > 0
+        ? src.suggestions.filter((s) => accepted.has(s.id))
+        : src.suggestions;
+    }
+  }
+
   for (const source of sourceData) {
     lines.push(`=== ${source.name} ===`);
     const desc = descMap[source.id];
     if (desc) lines.push(`[Description: ${desc}]`);
+
+    // Include accepted AI suggestions as rendering hints
+    const sugs = sugMap[source.id];
+    if (sugs?.length) {
+      lines.push(`[Suggested sections to generate from this source:]`);
+      sugs.forEach((s) => {
+        lines.push(`  - Section "${s.title}" (type: ${s.type}, placement: ${s.placement}): use fields ${(s.fields || []).join(", ")}`);
+      });
+    }
+
     if (source.error) {
       lines.push(`[Error fetching data: ${source.error}]`);
     } else {
-      // Truncate large arrays and compact JSON to save input tokens
       const safe = truncateSourceData(source.data, 10);
       lines.push(JSON.stringify(safe));
     }
@@ -3114,7 +3229,8 @@ function normalizeSummaryDataSources(sources) {
       enabled: src.enabled !== false,
       testPhone: String(src.testPhone || "").trim(),
       fixedParams: String(src.fixedParams || "").trim(),
-      description: String(src.description || "").trim()
+      description: String(src.description || "").trim(),
+      suggestions: Array.isArray(src.suggestions) ? src.suggestions : []
     }))
     .filter((src) => src.url);
 }

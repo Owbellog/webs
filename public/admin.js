@@ -470,18 +470,10 @@ function addSummarySourceCard(src = {}) {
       <span style="font-size:.82rem;font-weight:600;color:var(--muted);">Extra params:</span>
       <input class="sa-test-extra" type="text" placeholder="date_from=2024-01-01&agent_id=A1" style="flex:2;" />
       <button type="button" class="sa-test-btn">Test endpoint</button>
+      <button type="button" class="sa-suggest-btn" title="Pide a la IA que sugiera qué mostrar">✨ Sugerir secciones</button>
       <button type="button" class="sa-curl-btn">cURL</button>
       <div class="sa-test-result" style="display:none;"></div>
-      <div class="sa-fields-selector" style="display:none;">
-        <div class="sa-fields-selector-head">
-          <span>Campos detectados — selecciona los que quieres enviar al AI:</span>
-          <div>
-            <button type="button" class="sa-fields-all">Todos</button>
-            <button type="button" class="sa-fields-none">Ninguno</button>
-          </div>
-        </div>
-        <div class="sa-fields-checks"></div>
-      </div>
+      <div class="sa-suggestions-panel" style="display:none;"></div>
       <div class="sa-curl-box" style="display:none;">
         <textarea class="sa-curl-output" rows="5" readonly></textarea>
         <button type="button" class="sa-curl-copy">📋 Copy</button>
@@ -495,11 +487,9 @@ function addSummarySourceCard(src = {}) {
   const toggleBtn = card.querySelector(".sa-source-toggle");
   const removeBtn = card.querySelector(".sa-source-remove");
   const testBtn = card.querySelector(".sa-test-btn");
+  const suggestBtn = card.querySelector(".sa-suggest-btn");
   const testResult = card.querySelector(".sa-test-result");
-  const fieldsSelector = card.querySelector(".sa-fields-selector");
-  const fieldsChecks = card.querySelector(".sa-fields-checks");
-  const fieldsAllBtn = card.querySelector(".sa-fields-all");
-  const fieldsNoneBtn = card.querySelector(".sa-fields-none");
+  const suggestionsPanel = card.querySelector(".sa-suggestions-panel");
   const curlBtn = card.querySelector(".sa-curl-btn");
   const curlBox = card.querySelector(".sa-curl-box");
   const curlOutput = card.querySelector(".sa-curl-output");
@@ -532,36 +522,92 @@ function addSummarySourceCard(src = {}) {
     markDirty();
   });
 
-  // Restore previously saved field selection
-  function renderFieldCheckboxes(fields, selected = []) {
-    const selSet = new Set(selected);
-    fieldsChecks.innerHTML = "";
-    fields.forEach((f) => {
-      const label = document.createElement("label");
-      label.className = "sa-field-check-label";
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.value = f;
-      cb.checked = selected.length === 0 || selSet.has(f); // default: all checked
-      cb.addEventListener("change", markDirty);
-      label.appendChild(cb);
-      label.appendChild(document.createTextNode(" " + f));
-      fieldsChecks.appendChild(label);
+  // ── Saved suggestions restore ────────────────────────────────────────────
+  let _lastTestData = null;
+
+  function renderSuggestions(suggestions, accepted = new Set()) {
+    suggestionsPanel.innerHTML = "";
+    if (!suggestions?.length) { suggestionsPanel.style.display = "none"; return; }
+
+    const SECTION_TYPE_LABELS = { kv: "Key-Value", calllog: "Historial de llamadas", caselist: "Casos/Tickets", flags: "Indicadores", recommendation: "Recomendación", text: "Texto" };
+    const wrap = document.createElement("div");
+    wrap.className = "sa-sug-wrap";
+
+    const head = document.createElement("div");
+    head.className = "sa-sug-head";
+    head.innerHTML = `<span>✨ Secciones sugeridas por la IA — selecciona las que quieres incluir:</span>`;
+    wrap.appendChild(head);
+
+    suggestions.forEach((s, idx) => {
+      const isAccepted = accepted.size === 0 || accepted.has(s.id);
+      const card2 = document.createElement("div");
+      card2.className = "sa-sug-card" + (isAccepted ? " sa-sug-card--accepted" : "");
+      card2.dataset.sugId = s.id;
+
+      const previewRows = (s.preview || []).slice(0, 4).map((p) =>
+        `<div class="sa-sug-preview-row"><span class="sa-sug-preview-label">${escapeHtml(p.label)}</span><span class="sa-sug-preview-value">${escapeHtml(String(p.value ?? ""))}</span></div>`
+      ).join("");
+
+      card2.innerHTML = `
+        <div class="sa-sug-card-top">
+          <label class="sa-sug-check-label">
+            <input type="checkbox" class="sa-sug-check" data-sug-idx="${idx}" ${isAccepted ? "checked" : ""} />
+            <span class="sa-sug-icon">${escapeHtml(s.icon || "📄")}</span>
+            <span class="sa-sug-title">${escapeHtml(s.title)}</span>
+            <span class="sa-sug-type-badge">${escapeHtml(SECTION_TYPE_LABELS[s.type] || s.type)}</span>
+          </label>
+          <span class="sa-sug-placement">${s.placement === "left" ? "← Izquierda" : "→ Derecha"}</span>
+        </div>
+        <div class="sa-sug-rationale">${escapeHtml(s.rationale || "")}</div>
+        ${previewRows ? `<div class="sa-sug-preview">${previewRows}</div>` : ""}
+      `;
+
+      card2.querySelector(".sa-sug-check").addEventListener("change", () => {
+        card2.classList.toggle("sa-sug-card--accepted", card2.querySelector(".sa-sug-check").checked);
+        markDirty();
+      });
+
+      wrap.appendChild(card2);
     });
-    fieldsSelector.style.display = fields.length ? "block" : "none";
+
+    suggestionsPanel.appendChild(wrap);
+    suggestionsPanel.style.display = "block";
   }
 
-  if (Array.isArray(src.selectedFields) && src.selectedFields.length > 0) {
-    renderFieldCheckboxes(src.selectedFields, src.selectedFields);
+  // Restore from saved state
+  if (Array.isArray(src.suggestions) && src.suggestions.length > 0) {
+    const accepted = new Set((src.selectedFields || []).map((f) => String(f)));
+    renderSuggestions(src.suggestions, accepted);
   }
 
-  fieldsAllBtn?.addEventListener("click", () => {
-    fieldsChecks.querySelectorAll("input[type=checkbox]").forEach((cb) => { cb.checked = true; });
-    markDirty();
-  });
-  fieldsNoneBtn?.addEventListener("click", () => {
-    fieldsChecks.querySelectorAll("input[type=checkbox]").forEach((cb) => { cb.checked = false; });
-    markDirty();
+  // ── Suggest button ───────────────────────────────────────────────────────
+  suggestBtn.addEventListener("click", async () => {
+    if (!_lastTestData) {
+      alert("Primero haz clic en 'Test endpoint' para obtener datos del API.");
+      return;
+    }
+    const campaignId = (document.getElementById("campaignId")?.value || "").trim();
+    const sourceName = card.querySelector(".sa-field-name")?.value.trim() || "Data source";
+    const description = card.querySelector(".sa-field-description")?.value.trim() || "";
+
+    suggestBtn.disabled = true;
+    suggestBtn.textContent = "✨ Analizando…";
+    suggestionsPanel.style.display = "none";
+
+    try {
+      const result = await apiRequest("/api/summaryagentic/suggest-fields", {
+        method: "POST",
+        body: JSON.stringify({ data: _lastTestData, sourceName, description, campaignId })
+      });
+      card.dataset.suggestions = JSON.stringify(result.suggestions || []);
+      renderSuggestions(result.suggestions || [], new Set());
+      markDirty();
+    } catch (err) {
+      alert("Error al sugerir secciones: " + err.message);
+    } finally {
+      suggestBtn.disabled = false;
+      suggestBtn.textContent = "✨ Sugerir secciones";
+    }
   });
 
   nameInput.addEventListener("input", () => {
@@ -690,16 +736,14 @@ function addSummarySourceCard(src = {}) {
         body: JSON.stringify({ url: sourceUrl, method, headersJson, bodyTemplate, testPhone, extraParams })
       });
 
+      // Save data for suggest button
+      _lastTestData = data.data;
+
       // Show compact preview
       testResult.style.display = "block";
-      testResult.textContent = JSON.stringify(data.data, null, 2).slice(0, 600) + (JSON.stringify(data.data).length > 600 ? "\n…" : "");
-
-      // Render field checkboxes — keep existing selection if fields match
-      if (data.fields?.length) {
-        const existing = Array.from(fieldsChecks.querySelectorAll("input[type=checkbox]:checked")).map((cb) => cb.value);
-        renderFieldCheckboxes(data.fields, existing.length ? existing : []);
-        markDirty();
-      }
+      const raw = JSON.stringify(data.data, null, 2);
+      testResult.textContent = raw.slice(0, 600) + (raw.length > 600 ? "\n…" : "");
+      suggestBtn.style.display = "inline-block";
     } catch (err) {
       testResult.style.display = "block";
       testResult.textContent = "Error: " + err.message;
@@ -741,7 +785,11 @@ function readSummaryDataSources() {
     method: card.querySelector(".sa-field-method")?.value || "GET",
     headersJson: readHeadersKv(card.querySelector(".sa-headers-kv")),
     bodyTemplate: card.querySelector(".sa-field-body")?.value.trim() || "",
-    selectedFields: Array.from(card.querySelectorAll(".sa-fields-checks input[type=checkbox]:checked")).map((cb) => cb.value),
+    selectedFields: Array.from(card.querySelectorAll(".sa-sug-check:checked")).map((cb) => {
+      const idx = parseInt(cb.dataset.sugIdx);
+      try { const sugs = JSON.parse(card.dataset.suggestions || "[]"); return sugs[idx]?.id; } catch { return null; }
+    }).filter(Boolean),
+    suggestions: (() => { try { return JSON.parse(card.dataset.suggestions || "[]"); } catch { return []; } })(),
     enabled: card.querySelector(".sa-field-enabled")?.checked !== false,
     testPhone: card.querySelector(".sa-test-phone")?.value.trim() || "",
     fixedParams: readParamsKv(card.querySelector(".sa-params-kv")),
