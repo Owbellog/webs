@@ -466,7 +466,12 @@ function addSummarySourceCard(src = {}) {
       <span style="font-size:.82rem;font-weight:600;color:var(--muted);">Extra params:</span>
       <input class="sa-test-extra" type="text" placeholder="date_from=2024-01-01&agent_id=A1" style="flex:2;" />
       <button type="button" class="sa-test-btn">Test endpoint</button>
+      <button type="button" class="sa-curl-btn">cURL</button>
       <div class="sa-test-result" style="display:none;"></div>
+      <div class="sa-curl-box" style="display:none;">
+        <textarea class="sa-curl-output" rows="5" readonly></textarea>
+        <button type="button" class="sa-curl-copy">📋 Copy</button>
+      </div>
     </div>
   `;
 
@@ -477,6 +482,10 @@ function addSummarySourceCard(src = {}) {
   const removeBtn = card.querySelector(".sa-source-remove");
   const testBtn = card.querySelector(".sa-test-btn");
   const testResult = card.querySelector(".sa-test-result");
+  const curlBtn = card.querySelector(".sa-curl-btn");
+  const curlBox = card.querySelector(".sa-curl-box");
+  const curlOutput = card.querySelector(".sa-curl-output");
+  const curlCopy = card.querySelector(".sa-curl-copy");
   const headersKv = card.querySelector(".sa-headers-kv");
   const addHeaderBtn = card.querySelector(".sa-add-header-btn");
   const paramsKv = card.querySelector(".sa-params-kv");
@@ -524,6 +533,77 @@ function addSummarySourceCard(src = {}) {
     if (!confirm(`Remove data source "${nameInput.value || "this source"}"?`)) return;
     card.remove();
     markDirty();
+  });
+
+  curlBtn.addEventListener("click", () => {
+    const sourceUrl  = card.querySelector(".sa-field-url").value.trim();
+    const method     = card.querySelector(".sa-field-method").value || "GET";
+    const bodyTpl    = card.querySelector(".sa-field-body").value.trim();
+    const testPhone  = card.querySelector(".sa-test-phone").value.trim() || "PHONE";
+    const extraRaw   = card.querySelector(".sa-test-extra").value.trim();
+
+    // Build merged vars (same logic as backend)
+    const fixedStr   = readParamsKv(card.querySelector(".sa-params-kv"));
+    const fixedLines = fixedStr.split("\n").filter(Boolean);
+    const vars = { phone: testPhone, customer_id: testPhone };
+    fixedLines.forEach((line) => {
+      const eq = line.indexOf("=");
+      if (eq !== -1) vars[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
+    });
+    if (extraRaw) {
+      extraRaw.split("&").forEach((pair) => {
+        const [k, v] = pair.split("=");
+        if (k) vars[k.trim()] = (v || "").trim();
+      });
+    }
+
+    // Interpolate template
+    function interpolate(tpl) {
+      return tpl.replace(/\{\{([^}]+)\}\}/g, (_, k) => vars[k.trim()] ?? `{{${k.trim()}}}`);
+    }
+
+    // Build URL with fixed params appended
+    let finalUrl = interpolate(sourceUrl);
+    try {
+      const INTERNAL = new Set(["days"]);
+      const urlObj = new URL(finalUrl);
+      fixedLines.forEach((line) => {
+        const eq = line.indexOf("=");
+        if (eq === -1) return;
+        const k = line.slice(0, eq).trim();
+        const v = interpolate(line.slice(eq + 1).trim());
+        if (!INTERNAL.has(k) && !urlObj.searchParams.has(k)) urlObj.searchParams.set(k, v);
+      });
+      finalUrl = urlObj.toString();
+    } catch { /* leave as-is */ }
+
+    // Build headers
+    const headersObj = JSON.parse(readHeadersKv(card.querySelector(".sa-headers-kv")) || "{}");
+    const headerLines = Object.entries(headersObj)
+      .map(([k, v]) => `--header '${k}: ${v}'`)
+      .join(" \\\n");
+
+    // Build body
+    const bodyLine = (method === "POST" && bodyTpl)
+      ? `\\\n--data '${interpolate(bodyTpl)}'`
+      : "";
+
+    const curl = [
+      `curl --location '${finalUrl}'`,
+      headerLines,
+      bodyLine
+    ].filter(Boolean).join(" \\\n");
+
+    curlOutput.value = curl;
+    curlBox.style.display = "block";
+    testResult.style.display = "none";
+  });
+
+  curlCopy.addEventListener("click", () => {
+    navigator.clipboard.writeText(curlOutput.value).then(() => {
+      curlCopy.textContent = "✓ Copied!";
+      setTimeout(() => { curlCopy.textContent = "📋 Copy"; }, 1500);
+    });
   });
 
   testBtn.addEventListener("click", async () => {

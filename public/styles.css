@@ -5670,6 +5670,50 @@ body.embedded .copilot-shell {
 .sa-add-header-btn:hover,
 .sa-add-param-btn:hover { background: rgba(74,108,247,.05); }
 
+/* ── cURL box ────────────────────────────────────────────────────────────── */
+.sa-curl-btn {
+  background: none;
+  border: 1px solid rgba(74,108,247,.3);
+  border-radius: 8px;
+  padding: 5px 12px;
+  font-size: .78rem; font-weight: 700;
+  cursor: pointer; color: var(--accent, #4a6cf7);
+  font-family: inherit;
+  flex-shrink: 0;
+}
+.sa-curl-btn:hover { background: rgba(74,108,247,.06); }
+
+.sa-curl-box {
+  width: 100%;
+  margin-top: 8px;
+  position: relative;
+}
+.sa-curl-output {
+  width: 100%;
+  font-family: monospace;
+  font-size: .76rem;
+  background: #1c2040;
+  color: #a8d8a8;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 12px;
+  resize: vertical;
+  line-height: 1.5;
+}
+.sa-curl-copy {
+  position: absolute;
+  top: 8px; right: 8px;
+  background: rgba(255,255,255,.12);
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  font-size: .74rem; font-weight: 700;
+  padding: 3px 9px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.sa-curl-copy:hover { background: rgba(255,255,255,.2); }
+
 /* ── Import from URL ─────────────────────────────────────────────────────── */
 .sa-import-box {
   background: rgba(74,108,247,.04);
