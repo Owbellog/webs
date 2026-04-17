@@ -5758,6 +5758,50 @@ body.embedded .copilot-shell {
 .sa-sug-preview-label { color: #888d9b; font-weight: 600; }
 .sa-sug-preview-value { color: #1c2040; font-weight: 700; text-align: right; }
 
+/* ── Widget library panel ────────────────────────────────────────────────── */
+.sa-wlib-toggle {
+  margin: 6px 0 0 0;
+  background: rgba(106,61,232,.1);
+  border: 1px dashed rgba(106,61,232,.35);
+  border-radius: 8px;
+  padding: 5px 14px;
+  font-size: .78rem;
+  font-weight: 700;
+  color: #6a3de8;
+  cursor: pointer;
+  font-family: inherit;
+  display: inline-block;
+}
+.sa-wlib-toggle:hover { background: rgba(106,61,232,.18); }
+.sa-wlib-panel { margin: 8px 0; border: 1px solid rgba(74,108,247,.2); border-radius: 10px; overflow: hidden; }
+.sa-wlib-tabs { display: flex; background: rgba(74,108,247,.05); border-bottom: 1px solid rgba(74,108,247,.15); }
+.sa-wlib-tab { flex: 1; padding: 7px; font-size: .77rem; font-weight: 700; cursor: pointer; background: none; border: none; color: #888; font-family: inherit; }
+.sa-wlib-tab--active { color: #4a6cf7; border-bottom: 2px solid #4a6cf7; }
+.sa-wlib-body { padding: 10px 12px; }
+.sa-wlib-pane--hidden { display: none; }
+/* template grid */
+.sa-wlib-templates { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.sa-wlib-tpl-card { border: 1px solid rgba(0,0,0,.1); border-radius: 8px; padding: 9px 11px; display: flex; flex-direction: column; gap: 3px; background: #fff; }
+.sa-wlib-tpl-icon { font-size: 1.2rem; }
+.sa-wlib-tpl-title { font-size: .8rem; font-weight: 800; color: #1c2040; }
+.sa-wlib-tpl-desc { font-size: .72rem; color: #888; }
+.sa-wlib-tpl-btn { margin-top: 6px; background: rgba(74,108,247,.1); border: none; border-radius: 6px; padding: 4px 10px; font-size: .75rem; font-weight: 700; color: #4a6cf7; cursor: pointer; font-family: inherit; align-self: flex-start; }
+.sa-wlib-tpl-btn:hover { background: rgba(74,108,247,.2); }
+.sa-wlib-tpl-btn:disabled { opacity: .5; cursor: default; }
+/* chat */
+.sa-wlib-chat-input { width: 100%; border: 1px solid rgba(0,0,0,.12); border-radius: 8px; padding: 8px 10px; font-size: .82rem; font-family: inherit; resize: vertical; box-sizing: border-box; }
+.sa-wlib-chat-send { margin-top: 6px; background: linear-gradient(135deg,#6a3de8,#4a6cf7); border: none; border-radius: 8px; padding: 6px 16px; font-size: .78rem; font-weight: 700; color: #fff; cursor: pointer; font-family: inherit; }
+.sa-wlib-chat-send:disabled { opacity: .5; cursor: default; }
+/* saved */
+.sa-wlib-saved { display: flex; flex-direction: column; gap: 6px; }
+.sa-wlib-saved-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid rgba(0,0,0,.08); border-radius: 8px; background: #fff; }
+.sa-wlib-saved-icon { font-size: 1rem; flex-shrink: 0; }
+.sa-wlib-saved-info { flex: 1; }
+.sa-wlib-saved-title { font-size: .8rem; font-weight: 800; color: #1c2040; }
+.sa-wlib-saved-type { font-size: .7rem; color: #888; }
+.sa-wlib-saved-add { background: rgba(24,178,107,.1); border: none; border-radius: 6px; padding: 3px 9px; font-size: .74rem; font-weight: 700; color: #18b26b; cursor: pointer; font-family: inherit; }
+.sa-wlib-saved-del { background: none; border: 1px solid rgba(229,57,53,.25); border-radius: 6px; padding: 3px 9px; font-size: .74rem; color: #e53935; cursor: pointer; font-family: inherit; }
+
 /* ── Field selector ──────────────────────────────────────────────────────── */
 .sa-fields-selector {
   width: 100%;

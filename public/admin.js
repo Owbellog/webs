@@ -464,6 +464,23 @@ function addSummarySourceCard(src = {}) {
         <label><input class="sa-field-enabled" type="checkbox"${src.enabled !== false ? " checked" : ""} /> Enabled</label>
       </div>
     </div>
+    <div class="sa-wlib-panel" style="display:none;">
+      <div class="sa-wlib-tabs">
+        <button type="button" class="sa-wlib-tab sa-wlib-tab--active" data-tab="templates">📐 Plantillas</button>
+        <button type="button" class="sa-wlib-tab" data-tab="chat">💬 Chat</button>
+        <button type="button" class="sa-wlib-tab" data-tab="saved">⭐ Mis widgets</button>
+      </div>
+      <div class="sa-wlib-body">
+        <div class="sa-wlib-pane" data-pane="templates"></div>
+        <div class="sa-wlib-pane sa-wlib-pane--hidden" data-pane="chat">
+          <textarea class="sa-wlib-chat-input" rows="2" placeholder="Ej: Quiero ver el total de llamadas perdidas esta semana como un indicador de riesgo"></textarea>
+          <button type="button" class="sa-wlib-chat-send">Generar widget</button>
+          <div class="sa-wlib-chat-result" style="display:none;"></div>
+        </div>
+        <div class="sa-wlib-pane sa-wlib-pane--hidden" data-pane="saved"></div>
+      </div>
+    </div>
+    <button type="button" class="sa-wlib-toggle">📐 Widget library</button>
     <div class="sa-test-bar">
       <span style="font-size:.82rem;font-weight:600;color:var(--muted);">Test phone:</span>
       <input class="sa-test-phone" type="text" placeholder="+15551234567" value="${escapeHtml(src.testPhone || "")}" style="max-width:160px;" />
@@ -498,6 +515,16 @@ function addSummarySourceCard(src = {}) {
   const addHeaderBtn = card.querySelector(".sa-add-header-btn");
   const paramsKv = card.querySelector(".sa-params-kv");
   const addParamBtn = card.querySelector(".sa-add-param-btn");
+  const wlibToggleBtn = card.querySelector(".sa-wlib-toggle");
+  const wlibPanel = card.querySelector(".sa-wlib-panel");
+  const wlibTabs = card.querySelectorAll(".sa-wlib-tab");
+  const wlibPanes = card.querySelectorAll(".sa-wlib-pane");
+  const wlibTemplatesPane = card.querySelector('.sa-wlib-pane[data-pane="templates"]');
+  const wlibChatPane = card.querySelector('.sa-wlib-pane[data-pane="chat"]');
+  const wlibSavedPane = card.querySelector('.sa-wlib-pane[data-pane="saved"]');
+  const wlibChatInput = card.querySelector(".sa-wlib-chat-input");
+  const wlibChatSend = card.querySelector(".sa-wlib-chat-send");
+  const wlibChatResult = card.querySelector(".sa-wlib-chat-result");
 
   // Populate headers
   try {
@@ -607,6 +634,248 @@ function addSummarySourceCard(src = {}) {
     } finally {
       suggestBtn.disabled = false;
       suggestBtn.textContent = "✨ Sugerir secciones";
+    }
+  });
+
+  // ── Widget Library ───────────────────────────────────────────────────────
+  const WIDGET_TEMPLATES_CLIENT = [
+    { id: "profile_kv",     icon: "👤", title: "Perfil del cliente",      desc: "Nombre, teléfono, email, dirección" },
+    { id: "recent_calls",   icon: "📞", title: "Historial de llamadas",   desc: "Fecha, motivo, agente, duración, estado" },
+    { id: "metrics",        icon: "📊", title: "Métricas rápidas",        desc: "Totales de llamadas, chats, SMS" },
+    { id: "open_cases",     icon: "📋", title: "Casos abiertos",          desc: "Tickets activos con estado y descripción" },
+    { id: "risk_flags",     icon: "🚩", title: "Indicadores de riesgo",   desc: "Quejas, escalaciones, patrones de riesgo" },
+    { id: "notes",          icon: "📝", title: "Notas del cliente",       desc: "Observaciones y comentarios internos" },
+    { id: "recommendation", icon: "💡", title: "Recomendación al agente", desc: "Sugerencia de acción basada en el historial" },
+    { id: "subscriptions",  icon: "💳", title: "Suscripciones activas",   desc: "Productos, planes y servicios contratados" },
+  ];
+
+  const SECTION_TYPE_LABELS_WLIB = { kv: "Key-Value", calllog: "Historial de llamadas", caselist: "Casos/Tickets", flags: "Indicadores", recommendation: "Recomendación", text: "Texto" };
+
+  // Switch tabs
+  wlibTabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      wlibTabs.forEach((t) => t.classList.remove("sa-wlib-tab--active"));
+      wlibPanes.forEach((p) => p.classList.add("sa-wlib-pane--hidden"));
+      tab.classList.add("sa-wlib-tab--active");
+      const pane = card.querySelector(`.sa-wlib-pane[data-pane="${tab.dataset.tab}"]`);
+      if (pane) pane.classList.remove("sa-wlib-pane--hidden");
+    });
+  });
+
+  // Toggle panel
+  wlibToggleBtn.addEventListener("click", () => {
+    const isHidden = wlibPanel.style.display === "none";
+    wlibPanel.style.display = isHidden ? "block" : "none";
+  });
+
+  // Render a suggestion card (reusable for template/chat results)
+  function renderWlibSuggestionCard(suggestion, container, onAccept) {
+    container.innerHTML = "";
+    const previewRows = (suggestion.preview || []).slice(0, 4).map((p) =>
+      `<div class="sa-sug-preview-row"><span class="sa-sug-preview-label">${escapeHtml(p.label)}</span><span class="sa-sug-preview-value">${escapeHtml(String(p.value ?? ""))}</span></div>`
+    ).join("");
+    const wrap = document.createElement("div");
+    wrap.className = "sa-sug-card sa-sug-card--accepted";
+    wrap.innerHTML = `
+      <div class="sa-sug-card-top">
+        <span class="sa-sug-icon">${escapeHtml(suggestion.icon || "📄")}</span>
+        <span class="sa-sug-title">${escapeHtml(suggestion.title)}</span>
+        <span class="sa-sug-type-badge">${escapeHtml(SECTION_TYPE_LABELS_WLIB[suggestion.type] || suggestion.type)}</span>
+        <span class="sa-sug-placement">${suggestion.placement === "left" ? "← Izquierda" : "→ Derecha"}</span>
+      </div>
+      <div class="sa-sug-rationale">${escapeHtml(suggestion.rationale || "")}</div>
+      ${previewRows ? `<div class="sa-sug-preview">${previewRows}</div>` : ""}
+      <div style="display:flex;gap:6px;margin-top:8px;">
+        <button type="button" class="sa-wlib-accept-btn" style="background:rgba(24,178,107,.1);border:none;border-radius:6px;padding:4px 12px;font-size:.75rem;font-weight:700;color:#18b26b;cursor:pointer;font-family:inherit;">✓ Agregar</button>
+        <button type="button" class="sa-wlib-discard-btn" style="background:none;border:1px solid rgba(229,57,53,.25);border-radius:6px;padding:4px 10px;font-size:.75rem;color:#e53935;cursor:pointer;font-family:inherit;">✕ Descartar</button>
+      </div>
+    `;
+    wrap.querySelector(".sa-wlib-accept-btn").addEventListener("click", () => {
+      onAccept(suggestion);
+      container.innerHTML = "";
+      container.style.display = "none";
+    });
+    wrap.querySelector(".sa-wlib-discard-btn").addEventListener("click", () => {
+      container.innerHTML = "";
+      container.style.display = "none";
+    });
+    container.appendChild(wrap);
+    container.style.display = "block";
+  }
+
+  // Accept a widget: add to suggestions panel + save to library
+  async function acceptWidget(suggestion) {
+    const campaignId = (document.getElementById("campaignId")?.value || "").trim();
+
+    // Add to suggestions panel
+    let existing = [];
+    try { existing = JSON.parse(card.dataset.suggestions || "[]"); } catch { existing = []; }
+    // Dedup by id
+    existing = existing.filter((s) => s.id !== suggestion.id);
+    existing.push(suggestion);
+    card.dataset.suggestions = JSON.stringify(existing);
+    const acceptedSet = new Set(Array.from(card.querySelectorAll(".sa-sug-check:checked")).map((cb) => {
+      const idx = parseInt(cb.dataset.sugIdx);
+      try { const sugs = JSON.parse(card.dataset.suggestions || "[]"); return sugs[idx]?.id; } catch { return null; }
+    }).filter(Boolean));
+    acceptedSet.add(suggestion.id);
+    renderSuggestions(existing, acceptedSet);
+    markDirty();
+
+    // Save to campaign widget library
+    if (campaignId) {
+      try {
+        const result = await apiRequest("/api/summaryagentic/save-widget", {
+          method: "POST",
+          body: JSON.stringify({ campaignId, widget: suggestion })
+        });
+        // Refresh saved pane in all cards
+        if (result.library) {
+          summaryagenticSourcesList.dataset.widgetLibrary = JSON.stringify(result.library);
+          summaryagenticSourcesList.querySelectorAll(".sa-source-card").forEach((c) => {
+            const savedPane = c.querySelector('.sa-wlib-pane[data-pane="saved"]');
+            if (savedPane) renderWlibSavedPane(savedPane, result.library);
+          });
+        }
+      } catch (err) {
+        console.error("Failed to save widget to library:", err);
+      }
+    }
+  }
+
+  // Render saved pane
+  function renderWlibSavedPane(pane, library) {
+    pane.innerHTML = "";
+    const campaignId = (document.getElementById("campaignId")?.value || "").trim();
+    if (!library || library.length === 0) {
+      pane.innerHTML = `<div style="font-size:.78rem;color:#888;padding:8px 0;">No hay widgets guardados aún.</div>`;
+      return;
+    }
+    const wrap = document.createElement("div");
+    wrap.className = "sa-wlib-saved";
+    library.forEach((w) => {
+      const item = document.createElement("div");
+      item.className = "sa-wlib-saved-item";
+      item.innerHTML = `
+        <span class="sa-wlib-saved-icon">${escapeHtml(w.icon || "📄")}</span>
+        <div class="sa-wlib-saved-info">
+          <div class="sa-wlib-saved-title">${escapeHtml(w.title)}</div>
+          <div class="sa-wlib-saved-type">${escapeHtml(SECTION_TYPE_LABELS_WLIB[w.type] || w.type)} · ${w.placement === "left" ? "← Izquierda" : "→ Derecha"}</div>
+        </div>
+        <button type="button" class="sa-wlib-saved-add">Agregar</button>
+        <button type="button" class="sa-wlib-saved-del">🗑 Eliminar</button>
+      `;
+      item.querySelector(".sa-wlib-saved-add").addEventListener("click", () => {
+        let existing = [];
+        try { existing = JSON.parse(card.dataset.suggestions || "[]"); } catch { existing = []; }
+        existing = existing.filter((s) => s.id !== w.id);
+        existing.push(w);
+        card.dataset.suggestions = JSON.stringify(existing);
+        const acceptedSet = new Set(Array.from(card.querySelectorAll(".sa-sug-check:checked")).map((cb) => {
+          const idx2 = parseInt(cb.dataset.sugIdx);
+          try { const sugs = JSON.parse(card.dataset.suggestions || "[]"); return sugs[idx2]?.id; } catch { return null; }
+        }).filter(Boolean));
+        acceptedSet.add(w.id);
+        renderSuggestions(existing, acceptedSet);
+        markDirty();
+      });
+      item.querySelector(".sa-wlib-saved-del").addEventListener("click", async () => {
+        if (!confirm(`¿Eliminar "${w.title}" de la biblioteca?`)) return;
+        if (!campaignId) return;
+        try {
+          await apiRequest("/api/summaryagentic/save-widget", {
+            method: "DELETE",
+            body: JSON.stringify({ campaignId, widgetId: w.id })
+          });
+          const newLibrary = library.filter((x) => x.id !== w.id);
+          summaryagenticSourcesList.dataset.widgetLibrary = JSON.stringify(newLibrary);
+          summaryagenticSourcesList.querySelectorAll(".sa-source-card").forEach((c) => {
+            const savedPane2 = c.querySelector('.sa-wlib-pane[data-pane="saved"]');
+            if (savedPane2) renderWlibSavedPane(savedPane2, newLibrary);
+          });
+        } catch (err) {
+          alert("Error al eliminar widget: " + err.message);
+        }
+      });
+      wrap.appendChild(item);
+    });
+    pane.appendChild(wrap);
+  }
+
+  // Render templates pane
+  function renderWlibTemplatesPane() {
+    wlibTemplatesPane.innerHTML = "";
+    const grid = document.createElement("div");
+    grid.className = "sa-wlib-templates";
+    WIDGET_TEMPLATES_CLIENT.forEach((tpl) => {
+      const tplCard = document.createElement("div");
+      tplCard.className = "sa-wlib-tpl-card";
+      tplCard.innerHTML = `
+        <span class="sa-wlib-tpl-icon">${escapeHtml(tpl.icon)}</span>
+        <span class="sa-wlib-tpl-title">${escapeHtml(tpl.title)}</span>
+        <span class="sa-wlib-tpl-desc">${escapeHtml(tpl.desc)}</span>
+        <button type="button" class="sa-wlib-tpl-btn" data-tpl-id="${escapeHtml(tpl.id)}">Generar</button>
+      `;
+      const genBtn = tplCard.querySelector(".sa-wlib-tpl-btn");
+      genBtn.addEventListener("click", async () => {
+        if (!_lastTestData) { alert("Primero haz clic en 'Test endpoint' para obtener datos del API."); return; }
+        const campaignId = (document.getElementById("campaignId")?.value || "").trim();
+        const sourceName = card.querySelector(".sa-field-name")?.value.trim() || "Data source";
+        const description = card.querySelector(".sa-field-description")?.value.trim() || "";
+        genBtn.disabled = true;
+        genBtn.textContent = "Generando…";
+        // Show result area near this template card
+        const resultArea = document.createElement("div");
+        tplCard.appendChild(resultArea);
+        try {
+          const result = await apiRequest("/api/summaryagentic/widget-from-template", {
+            method: "POST",
+            body: JSON.stringify({ templateId: tpl.id, data: _lastTestData, sourceName, description, campaignId })
+          });
+          renderWlibSuggestionCard(result.suggestion, resultArea, acceptWidget);
+        } catch (err) {
+          alert("Error al generar widget: " + err.message);
+          tplCard.removeChild(resultArea);
+        } finally {
+          genBtn.disabled = false;
+          genBtn.textContent = "Generar";
+        }
+      });
+      grid.appendChild(tplCard);
+    });
+    wlibTemplatesPane.appendChild(grid);
+  }
+
+  renderWlibTemplatesPane();
+
+  // Populate saved pane from dataset
+  const initialLibrary = (() => {
+    try { return JSON.parse(summaryagenticSourcesList.dataset.widgetLibrary || "[]"); } catch { return []; }
+  })();
+  renderWlibSavedPane(wlibSavedPane, initialLibrary);
+
+  // Chat send
+  wlibChatSend.addEventListener("click", async () => {
+    const message = wlibChatInput.value.trim();
+    if (!message) { alert("Escribe qué widget quieres crear."); return; }
+    if (!_lastTestData) { alert("Primero haz clic en 'Test endpoint' para obtener datos del API."); return; }
+    const campaignId = (document.getElementById("campaignId")?.value || "").trim();
+    const sourceName = card.querySelector(".sa-field-name")?.value.trim() || "Data source";
+    const description = card.querySelector(".sa-field-description")?.value.trim() || "";
+    wlibChatSend.disabled = true;
+    wlibChatSend.textContent = "Generando…";
+    wlibChatResult.style.display = "none";
+    try {
+      const result = await apiRequest("/api/summaryagentic/widget-from-chat", {
+        method: "POST",
+        body: JSON.stringify({ message, data: _lastTestData, sourceName, description, campaignId })
+      });
+      renderWlibSuggestionCard(result.suggestion, wlibChatResult, acceptWidget);
+    } catch (err) {
+      alert("Error al generar widget: " + err.message);
+    } finally {
+      wlibChatSend.disabled = false;
+      wlibChatSend.textContent = "Generar widget";
     }
   });
 
@@ -1278,6 +1547,7 @@ function fillForm(campaign) {
   fields.summaryagenticAiModel.value = sa.aiModel || "";
   fields.summaryagenticAiApiKey.value = campaign.summaryagenticAiApiKey || "";
   fields.summaryagenticAiPrompt.value = sa.aiPrompt || "";
+  summaryagenticSourcesList.dataset.widgetLibrary = JSON.stringify(sa.widgetLibrary || []);
   renderSummaryDataSources(sa.dataSources || []);
   updateSummaryAgenticUrls(campaign.id || "");
   updateBreadcrumb(campaign.name || campaign.id || "");

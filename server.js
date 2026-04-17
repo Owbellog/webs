@@ -687,6 +687,26 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/summaryagentic/widget-from-template") {
+    await handleSummaryAgenticWidgetFromTemplate(req, res);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/summaryagentic/widget-from-chat") {
+    await handleSummaryAgenticWidgetFromChat(req, res);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/summaryagentic/save-widget") {
+    await handleSummaryAgenticSaveWidget(req, res);
+    return;
+  }
+
+  if (req.method === "DELETE" && url.pathname === "/api/summaryagentic/save-widget") {
+    await handleSummaryAgenticDeleteWidget(req, res);
+    return;
+  }
+
   // Public admin auth routes (no session required)
   if (req.method === "POST" && url.pathname === "/api/admin/login") {
     await handleAdminLogin(req, res);
@@ -1576,6 +1596,204 @@ ${JSON.stringify(truncateSourceData(data, 5), null, 2)}`;
     sendJson(res, 200, { ok: true, suggestions });
   } catch (error) {
     sendJson(res, 500, { error: `Suggest fields failed: ${error.message}` });
+  }
+}
+
+async function handleSummaryAgenticWidgetFromTemplate(req, res) {
+  try {
+    let body;
+    try { body = await readJson(req); } catch { sendJson(res, 400, { error: "Invalid JSON body" }); return; }
+
+    const session = getSessionFromRequest(req);
+    if (!session) { sendJson(res, 401, { error: "Unauthorized" }); return; }
+
+    const { templateId, data, sourceName = "Data source", description = "", campaignId } = body;
+    if (!templateId) { sendJson(res, 400, { error: "templateId is required" }); return; }
+    if (!data) { sendJson(res, 400, { error: "data is required" }); return; }
+
+    const WIDGET_TEMPLATES = {
+      profile_kv:     { title: "Customer Profile",       icon: "👤", type: "kv",             placement: "left",  hint: "Extract name, phone, email, address and any account identifiers" },
+      recent_calls:   { title: "Recent Calls",            icon: "📞", type: "calllog",        placement: "right", hint: "Extract call history: date, reason/queue, agent, duration, status" },
+      metrics:        { title: "Quick Metrics",           icon: "📊", type: "kv",             placement: "left",  hint: "Extract numeric counters: total calls, inbound, outbound, SMS, chats, today/week/month counts" },
+      open_cases:     { title: "Open Cases",              icon: "📋", type: "caselist",       placement: "right", hint: "Extract open tickets or cases: id, status, description" },
+      risk_flags:     { title: "Risk Indicators",         icon: "🚩", type: "flags",          placement: "left",  hint: "Identify patterns suggesting risk: complaints, escalations, SLA breach, frequent contacts" },
+      notes:          { title: "Customer Notes",          icon: "📝", type: "text",           placement: "right", hint: "Extract any free-text notes, comments or observations about the customer" },
+      recommendation: { title: "Agent Recommendation",   icon: "💡", type: "recommendation", placement: "right", hint: "Write one actionable recommendation for the agent based on all data" },
+      subscriptions:  { title: "Subscriptions",          icon: "💳", type: "kv",             placement: "left",  hint: "Extract active products, plans, subscriptions or services" },
+    };
+
+    const template = WIDGET_TEMPLATES[templateId];
+    if (!template) { sendJson(res, 400, { error: `Unknown templateId: ${templateId}` }); return; }
+
+    // Load campaign AI config
+    let aiProvider = "claude", aiApiKey = "", aiModel = "";
+    if (campaignId) {
+      try {
+        const campaigns = await getEffectiveCampaigns();
+        const config = campaigns.find((c) => c.id === campaignId);
+        if (config) {
+          aiProvider = config.summaryagentic?.aiProvider || "claude";
+          aiApiKey   = config.summaryagenticAiApiKey || "";
+          aiModel    = config.summaryagentic?.aiModel || "";
+        }
+      } catch { /* ignore */ }
+    }
+
+    if (!aiApiKey) {
+      sendJson(res, 400, { error: "No AI API key configured for this campaign." });
+      return;
+    }
+
+    const prompt = `Given this data sample from source '${sourceName}'${description ? ": " + description : ""}, generate a '${template.title}' section (${template.type} type). ${template.hint}. Return ONLY a JSON object with fields: id (snake_case), title, icon, type, placement, rationale (1 sentence), fields (array of field paths used), preview (array of {label, value} from real data, max 4 items)
+
+Data sample:
+${JSON.stringify(truncateSourceData(data, 5), null, 2)}`;
+
+    let rawText;
+    try {
+      rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, "You are a widget designer for a call center agent dashboard. Return ONLY valid JSON, no markdown.", prompt);
+    } catch (err) {
+      sendJson(res, 502, { error: `AI call failed: ${err.message}` });
+      return;
+    }
+
+    let suggestion;
+    try {
+      const cleaned = rawText.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
+      suggestion = JSON.parse(cleaned);
+    } catch {
+      sendJson(res, 502, { error: "AI returned invalid JSON", raw: rawText.slice(0, 300) });
+      return;
+    }
+
+    sendJson(res, 200, { ok: true, suggestion });
+  } catch (error) {
+    sendJson(res, 500, { error: `Widget from template failed: ${error.message}` });
+  }
+}
+
+async function handleSummaryAgenticWidgetFromChat(req, res) {
+  try {
+    let body;
+    try { body = await readJson(req); } catch { sendJson(res, 400, { error: "Invalid JSON body" }); return; }
+
+    const session = getSessionFromRequest(req);
+    if (!session) { sendJson(res, 401, { error: "Unauthorized" }); return; }
+
+    const { message, data, sourceName = "Data source", description = "", campaignId } = body;
+    if (!message) { sendJson(res, 400, { error: "message is required" }); return; }
+    if (!data) { sendJson(res, 400, { error: "data is required" }); return; }
+
+    // Load campaign AI config
+    let aiProvider = "claude", aiApiKey = "", aiModel = "";
+    if (campaignId) {
+      try {
+        const campaigns = await getEffectiveCampaigns();
+        const config = campaigns.find((c) => c.id === campaignId);
+        if (config) {
+          aiProvider = config.summaryagentic?.aiProvider || "claude";
+          aiApiKey   = config.summaryagenticAiApiKey || "";
+          aiModel    = config.summaryagentic?.aiModel || "";
+        }
+      } catch { /* ignore */ }
+    }
+
+    if (!aiApiKey) {
+      sendJson(res, 400, { error: "No AI API key configured for this campaign." });
+      return;
+    }
+
+    const systemPrompt = `You are a widget designer for a call center dashboard. The user wants to add a custom visual section to their agent summary widget. Given a data sample, create the section they describe. Return ONLY JSON: { id, title, icon, type (kv|calllog|caselist|flags|recommendation|text), placement (left|right), rationale, fields, preview [{label, value}] }`;
+
+    const userMsg = `Data source: '${sourceName}'${description ? " — " + description : ""}
+
+Data sample:
+${JSON.stringify(truncateSourceData(data, 5), null, 2)}
+
+User request: ${message}`;
+
+    let rawText;
+    try {
+      rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, systemPrompt, userMsg);
+    } catch (err) {
+      sendJson(res, 502, { error: `AI call failed: ${err.message}` });
+      return;
+    }
+
+    let suggestion;
+    try {
+      const cleaned = rawText.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
+      suggestion = JSON.parse(cleaned);
+    } catch {
+      sendJson(res, 502, { error: "AI returned invalid JSON", raw: rawText.slice(0, 300) });
+      return;
+    }
+
+    sendJson(res, 200, { ok: true, suggestion });
+  } catch (error) {
+    sendJson(res, 500, { error: `Widget from chat failed: ${error.message}` });
+  }
+}
+
+async function handleSummaryAgenticSaveWidget(req, res) {
+  try {
+    let body;
+    try { body = await readJson(req); } catch { sendJson(res, 400, { error: "Invalid JSON body" }); return; }
+
+    const session = getSessionFromRequest(req);
+    if (!session) { sendJson(res, 401, { error: "Unauthorized" }); return; }
+
+    const { campaignId, widget } = body;
+    if (!campaignId) { sendJson(res, 400, { error: "campaignId is required" }); return; }
+    if (!widget || !widget.id) { sendJson(res, 400, { error: "widget with id is required" }); return; }
+
+    const campaigns = await readCampaigns();
+    const idx = campaigns.findIndex((c) => c.id === campaignId);
+    if (idx === -1) { sendJson(res, 404, { error: "Campaign not found" }); return; }
+
+    const campaign = campaigns[idx];
+    if (!campaign.summaryagentic) campaign.summaryagentic = {};
+    if (!Array.isArray(campaign.summaryagentic.widgetLibrary)) campaign.summaryagentic.widgetLibrary = [];
+
+    // Dedup by id
+    campaign.summaryagentic.widgetLibrary = campaign.summaryagentic.widgetLibrary.filter((w) => w.id !== widget.id);
+    campaign.summaryagentic.widgetLibrary.push(widget);
+
+    await writeCampaigns(campaigns);
+
+    sendJson(res, 200, { ok: true, library: campaign.summaryagentic.widgetLibrary });
+  } catch (error) {
+    sendJson(res, 500, { error: `Save widget failed: ${error.message}` });
+  }
+}
+
+async function handleSummaryAgenticDeleteWidget(req, res) {
+  try {
+    let body;
+    try { body = await readJson(req); } catch { sendJson(res, 400, { error: "Invalid JSON body" }); return; }
+
+    const session = getSessionFromRequest(req);
+    if (!session) { sendJson(res, 401, { error: "Unauthorized" }); return; }
+
+    const { campaignId, widgetId } = body;
+    if (!campaignId) { sendJson(res, 400, { error: "campaignId is required" }); return; }
+    if (!widgetId) { sendJson(res, 400, { error: "widgetId is required" }); return; }
+
+    const campaigns = await readCampaigns();
+    const idx = campaigns.findIndex((c) => c.id === campaignId);
+    if (idx === -1) { sendJson(res, 404, { error: "Campaign not found" }); return; }
+
+    const campaign = campaigns[idx];
+    if (!campaign.summaryagentic) campaign.summaryagentic = {};
+    if (!Array.isArray(campaign.summaryagentic.widgetLibrary)) campaign.summaryagentic.widgetLibrary = [];
+
+    campaign.summaryagentic.widgetLibrary = campaign.summaryagentic.widgetLibrary.filter((w) => w.id !== widgetId);
+
+    await writeCampaigns(campaigns);
+
+    sendJson(res, 200, { ok: true });
+  } catch (error) {
+    sendJson(res, 500, { error: `Delete widget failed: ${error.message}` });
   }
 }
 
@@ -3209,7 +3427,8 @@ function normalizeSummaryAgenticConfig(input) {
     aiModel: String(src.aiModel || "").trim(),
     aiPrompt: String(src.aiPrompt || "").trim(),
     cacheSeconds: Math.max(0, parseInt(src.cacheSeconds ?? 60) || 60),
-    dataSources: normalizeSummaryDataSources(src.dataSources || [])
+    dataSources: normalizeSummaryDataSources(src.dataSources || []),
+    widgetLibrary: Array.isArray(src.widgetLibrary) ? src.widgetLibrary : []
   };
 }
 
