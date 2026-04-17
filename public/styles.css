@@ -5974,3 +5974,13 @@ body.embedded .copilot-shell {
   font-size: .74rem;
   font-weight: 600;
 }
+
+/* ── Layout preview inside card ──────────────────────────────────────────── */
+.sa-layout-card { border: 1.5px solid rgba(0,0,0,.1); border-radius: 10px; padding: 14px 16px; background: #fff; transition: border-color .15s; margin-bottom: 12px; }
+.sa-layout-card:hover { border-color: #6c47ff; }
+.sa-layout-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.sa-layout-card-head strong { font-size: .88rem; color: #1c2040; }
+.sa-layout-card-desc { font-size: .78rem; color: #666; margin-top: 2px; }
+.sa-layout-preview-wrap { border: 1px solid rgba(0,0,0,.07); border-radius: 8px; overflow: hidden; background: var(--sa-bg, #f4f6fb); padding: 10px; }
+.sa-layout-preview { display: grid; grid-template-columns: 220px 1fr; gap: 10px; }
+@media (max-width: 640px) { .sa-layout-preview { grid-template-columns: 1fr; } }

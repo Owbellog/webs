@@ -1461,20 +1461,29 @@ async function handleSummaryAgenticSummary(req, res, url) {
       throwConfig(`Campaign "${config.id}" is missing the AI API key for Summary Agentic.`);
     }
 
-    const contextText = buildSummaryContext(identifiers, sourceData, enabledSources);
+    console.log("[summaryagentic] building context, sourceData count:", sourceData.length);
+    let contextText;
+    try {
+      contextText = buildSummaryContext(identifiers, sourceData, enabledSources);
+    } catch (ctxErr) {
+      console.error("[summaryagentic] buildSummaryContext error:", ctxErr.message, ctxErr.stack);
+      throw ctxErr;
+    }
+    console.log("[summaryagentic] context chars:", contextText.length);
 
     let sections;
+    let rawText;
     const activeLayout = saConfig.activeLayout;
+    console.log("[summaryagentic] calling AI, provider:", aiProvider, "model:", aiModel, "activeLayout:", !!activeLayout?.sections?.length);
     if (activeLayout?.sections?.length) {
-      // Use fixed layout — AI fills values + generates agent recommendation
       const layoutPrompt = buildLayoutFillPrompt(activeLayout.sections);
-      const rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, layoutPrompt, contextText);
-      sections = parseSummarySections(rawText);
+      rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, layoutPrompt, contextText);
     } else {
-      // No layout set — free-form generation
-      const rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, aiPrompt, contextText);
-      sections = parseSummarySections(rawText);
+      rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, aiPrompt, contextText);
     }
+    console.log("[summaryagentic] AI response chars:", rawText.length, "tail:", rawText.slice(-100));
+    sections = parseSummarySections(rawText);
+    console.log("[summaryagentic] parsed sections:", sections ? sections.length : null);
 
     const responseData = {
       ok: true,
@@ -1995,34 +2004,25 @@ async function fetchHubspotData(token, selectedObjects, identifiers) {
 // ── Layout generation ─────────────────────────────────────────────────────────
 
 function buildLayoutFillPrompt(sections) {
-  const schema = sections.map((s) => ({
-    id: s.id, title: s.title, icon: s.icon, type: s.type, placement: s.placement,
-    fields: s.fields || []
-  }));
-  return `You are a call center agent assistant. You will receive customer data from multiple sources.
+  const schema = sections.map((s) =>
+    `${s.id}|${s.title}|${s.icon||"📄"}|${s.type}|${s.placement}|fields:${(s.fields||[]).join(",")}`
+  ).join("\n");
+  return `You are a call center agent assistant. Fill the following widget sections with real data from the sources. Return ONLY compact JSON, no markdown.
 
-Your task:
-1. Fill in EXACTLY the following sections with real data from the sources. Do NOT add or remove sections. Do NOT change section ids, titles, types, or placements.
-2. Add one final section: Agent Recommendation — a clear, specific, empathetic action plan for the agent based on ALL the data.
+Sections to fill (id|title|icon|type|placement|fields):
+${schema}
 
-REQUIRED OUTPUT FORMAT — return ONLY this JSON, no markdown, no explanation:
-{"sections": [
-  {"id":"...","title":"...","icon":"...","type":"...","placement":"...","items":[...]},
-  ...
-  {"id":"agent_recommendation","title":"Recommended Action","icon":"💡","type":"recommendation","placement":"right","items":[{"content":"..."}]}
-]}
+Output format:
+{"sections":[{"id":"...","title":"...","icon":"...","type":"...","placement":"...","items":[...]},{"id":"agent_recommendation","title":"Recommended Action","icon":"💡","type":"recommendation","placement":"right","items":[{"content":"..."}]}]}
 
-Section schema to fill:
-${JSON.stringify(schema, null, 2)}
+Item formats by type:
+kv: {"label":"...","value":"...","highlight":"green|red|yellow|blue"}
+calllog: {"reason":"...","date":"...","agent":"...","duration":"...","status":"..."}
+caselist: {"id":"...","status":"...","description":"..."}
+flags: {"type":"escalation|vip|warning|info","message":"..."}
+recommendation: {"content":"..."}
 
-Rules:
-- For type "kv": items = [{"label":"...","value":"...","highlight":"green|red|yellow|blue (optional)"}]
-- For type "calllog": items = [{"reason":"...","date":"...","agent":"...","duration":"...","status":"..."}]
-- For type "caselist": items = [{"id":"...","status":"...","description":"..."}]
-- For type "flags": items = [{"type":"escalation|vip|warning|info","message":"..."}]
-- For type "recommendation": items = [{"content":"..."}]
-- If a section has no data from sources, include it with items: []
-- The Agent Recommendation must synthesize ALL sources and give the agent a specific, actionable briefing`;
+Rules: keep ALL sections from schema (add items:[] if no data). Last section MUST be agent_recommendation synthesizing ALL sources into a specific actionable briefing for the agent.`;
 }
 
 async function handleSummaryAgenticGenerateLayouts(req, res) {
@@ -2073,43 +2073,75 @@ async function handleSummaryAgenticGenerateLayouts(req, res) {
       }
     }
 
-    const contextText = buildSummaryContext(identifiers, sourceData, enabledSources);
+    // Use only a small sample for layout generation — we only need structure, not full data
+    const sampleData = sourceData.map((s) => ({
+      id: s.id, name: s.name, error: s.error,
+      data: s.data ? truncateSourceData(s.data, 2) : null
+    }));
+    const contextText = buildSummaryContext(identifiers, sampleData, enabledSources);
 
-    const systemPrompt = `You are a UX designer for a call center agent dashboard. Given customer data from multiple sources, propose 3 different widget layout options.
+    const sourceNames = sourceData.filter((s) => !s.error).map((s) => s.name).join(", ");
 
-Each layout must:
-- Use ALL available data sources
-- Include a Customer Profile section (kv, left)
-- Include an "Agent Recommendation" section as the last section (recommendation, right) — leave items:[{"content":"(to be generated at runtime)"}]
-- Vary in how sections are organized, named, and what data is emphasized
-- Use section types: kv, calllog, caselist, flags, recommendation
-- placements: "left" for profile/status info, "right" for activity/cases/recommendation
+    const systemPrompt = `You are a UX designer for a call center agent dashboard.
+Available data sources: ${sourceNames}.
 
-Return ONLY this JSON, no markdown:
-{"layouts": [
-  {
-    "id": "layout_1",
-    "name": "Layout name (e.g. 'Focus on Cases')",
-    "description": "One line describing what this layout emphasizes",
-    "sections": [
-      {"id":"...","title":"...","icon":"...","type":"kv|calllog|caselist|flags|recommendation","placement":"left|right","fields":["field1","field2"],"items":[...]},
-      ...
-    ]
-  },
-  { "id": "layout_2", ... },
-  { "id": "layout_3", ... }
-]}
+Propose 3 different widget layout STRUCTURES (no need to fill all data — just define the sections).
 
-Fill items with real data from the sources provided. fields = list of source field names used.`;
+Rules:
+- Each layout must have 4-7 sections total
+- Always include: Customer Profile (kv, left) + Agent Recommendation (recommendation, right, last)
+- Use types: kv, calllog, caselist, flags, recommendation
+- placement "left" = profile/status columns, "right" = activity/cases/recommendation
+- Vary emphasis: one focused on calls history, one on open cases/tickets, one balanced
+- items: include 2-3 example items max per section (real field names from data)
+- fields: list of source field names this section uses
+
+Return ONLY compact JSON, no markdown, no explanation:
+{"layouts":[{"id":"layout_1","name":"...","description":"...","sections":[{"id":"...","title":"...","icon":"...","type":"...","placement":"...","fields":["..."],"items":[...]}]},{"id":"layout_2",...},{"id":"layout_3",...}]}`;
 
     const rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, systemPrompt, contextText);
 
     let layouts;
     try {
-      const match = rawText.match(/\{[\s\S]*"layouts"\s*:\s*\[[\s\S]*\]/);
-      if (!match) throw new Error("No layouts found in response");
-      const parsed = JSON.parse(match[0].replace(/,\s*([}\]])/g, "$1"));
-      layouts = parsed.layouts;
+      // Strategy 1: strip markdown fences and parse directly
+      const cleaned = rawText.trim()
+        .replace(/^```json?\s*/i, "").replace(/\s*```\s*$/, "").trim();
+
+      // Strategy 2: try fixing trailing commas and parse
+      for (const attempt of [cleaned, rawText.trim()]) {
+        try {
+          const fixed = attempt.replace(/,\s*([}\]])/g, "$1");
+          const parsed = JSON.parse(fixed);
+          if (Array.isArray(parsed?.layouts) && parsed.layouts.length) { layouts = parsed.layouts; break; }
+        } catch { /* try next */ }
+      }
+
+      // Strategy 3: extract complete layout objects via brace-counting (handles truncation)
+      if (!layouts) {
+        const arrStart = cleaned.indexOf('"layouts"');
+        const bracketStart = arrStart !== -1 ? cleaned.indexOf("[", arrStart) : -1;
+        if (bracketStart !== -1) {
+          const extracted = [];
+          let i = bracketStart + 1;
+          while (i < cleaned.length) {
+            while (i < cleaned.length && /[\s,]/.test(cleaned[i])) i++;
+            if (cleaned[i] !== "{") break;
+            let depth = 0, start = i;
+            while (i < cleaned.length) {
+              if (cleaned[i] === "{") depth++;
+              else if (cleaned[i] === "}") { depth--; if (depth === 0) { i++; break; } }
+              i++;
+            }
+            try {
+              const layout = JSON.parse(cleaned.slice(start, i).replace(/,\s*([}\]])/g, "$1"));
+              if (layout.id && Array.isArray(layout.sections)) extracted.push(layout);
+            } catch { /* skip malformed */ }
+          }
+          if (extracted.length) layouts = extracted;
+        }
+      }
+
+      if (!layouts?.length) throw new Error("No valid layouts found in AI response");
     } catch (err) {
       sendJson(res, 500, { error: "AI returned invalid layout JSON: " + err.message, raw: rawText.slice(0, 500) });
       return;
@@ -2387,7 +2419,9 @@ function buildSummaryContext(identifiers, sourceData, enabledSources = []) {
       lines.push(`[Error fetching data: ${source.error}]`);
     } else {
       const safe = truncateSourceData(source.data, 10);
-      lines.push(JSON.stringify(safe));
+      // Hard cap per source: 20000 chars to avoid token overflow
+      const serialized = JSON.stringify(safe);
+      lines.push(serialized.length > 20000 ? serialized.slice(0, 20000) + "…[truncated]" : serialized);
     }
     lines.push("");
   }
@@ -2632,7 +2666,7 @@ async function callGeminiForSummary(apiKey, model, systemPrompt, contextText) {
       contents: [{ parts: [{ text: contextText }] }],
       generationConfig: { temperature: 0.2, maxOutputTokens: 8192, responseMimeType: "application/json" }
     }),
-    signal: AbortSignal.timeout(30000)
+    signal: AbortSignal.timeout(120000)
   });
 
   if (!response.ok) {
@@ -3756,8 +3790,15 @@ function normalizeSummaryAgenticConfig(input) {
     cacheSeconds: Math.max(0, parseInt(src.cacheSeconds ?? 60) || 60),
     dataSources: normalizeSummaryDataSources(src.dataSources || []),
     widgetLibrary: Array.isArray(src.widgetLibrary) ? src.widgetLibrary : [],
-    activeLayout: src.activeLayout && Array.isArray(src.activeLayout.sections)
-      ? { sections: src.activeLayout.sections, generatedAt: src.activeLayout.generatedAt || null }
+    activeLayout: Array.isArray(src.activeLayout?.sections) && src.activeLayout.sections.length
+      ? { sections: src.activeLayout.sections.map((s) => ({
+          id: String(s.id || ""),
+          title: String(s.title || ""),
+          icon: String(s.icon || "📄"),
+          type: String(s.type || "kv"),
+          placement: String(s.placement || "right"),
+          fields: Array.isArray(s.fields) ? s.fields : []
+        })), generatedAt: src.activeLayout.generatedAt || null }
       : null,
     hubspot: {
       enabled: src.hubspot?.enabled === true,

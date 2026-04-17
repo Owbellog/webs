@@ -1217,18 +1217,94 @@ Return ONLY the JSON object. No markdown, no explanation.`;
 // ── Layout generator ─────────────────────────────────────────────────────────
 
 function renderActiveLayout(layout) {
-  const badge = document.getElementById("saLayoutActiveBadge");
-  const info  = document.getElementById("saLayoutActiveInfo");
+  const badge   = document.getElementById("saLayoutActiveBadge");
+  const info    = document.getElementById("saLayoutActiveInfo");
+  const preview = document.getElementById("saLayoutActivePreview");
   if (!badge || !info) return;
   if (layout?.sections?.length) {
     badge.textContent = "✓ Layout activo";
     badge.style.color = "var(--color-success, #15803d)";
     info.textContent = `${layout.sections.length} secciones · guardado ${layout.generatedAt ? new Date(layout.generatedAt).toLocaleString() : ""}`;
+    if (preview) {
+      preview.style.display = "block";
+      preview.innerHTML = `<div class="sa-layout-preview-wrap">${renderLayoutPreview(layout)}</div>`;
+    }
   } else {
     badge.textContent = "Sin layout fijo (la IA decide cada vez)";
     badge.style.color = "#888";
     info.textContent = "";
+    if (preview) { preview.style.display = "none"; preview.innerHTML = ""; }
   }
+}
+
+// ── Mini widget preview ───────────────────────────────────────────────────────
+function safeHtml(s) { return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+function layoutPill(text, color = "blue") {
+  return `<span class="sa-pill sa-pill--${safeHtml(color)}">${safeHtml(text)}</span>`;
+}
+function layoutStatusColor(s) {
+  const v = String(s||"").toLowerCase();
+  if (["resolved","closed","active","paid","open"].some(k=>v.includes(k))) return "green";
+  if (["escalated","overdue","failed","missed"].some(k=>v.includes(k))) return "red";
+  if (["pending","waiting","in progress"].some(k=>v.includes(k))) return "yellow";
+  return "blue";
+}
+
+function renderLayoutSectionBody(section) {
+  const items = section.items || [];
+  if (!items.length) return `<div style="color:#aaa;font-size:.75rem;font-style:italic;">Sin datos de ejemplo</div>`;
+  switch (section.type) {
+    case "kv":
+      return `<div class="sa-kv-list">${items.slice(0,4).map(item=>`
+        <div class="sa-kv">
+          <span class="sa-kv-label">${safeHtml(item.label)}</span>
+          <span class="sa-kv-value">${item.highlight ? layoutPill(item.value, item.highlight) : safeHtml(item.value)}</span>
+        </div>`).join("")}</div>`;
+    case "calllog":
+      return `<div class="sa-call-list">${items.slice(0,3).map(item=>`
+        <div class="sa-call-item">
+          <div class="sa-call-dot"></div>
+          <div class="sa-call-info">
+            <div class="sa-call-reason">${safeHtml(item.reason)}</div>
+            <div class="sa-call-meta">${item.date?safeHtml(item.date):""}${item.status?" · "+layoutPill(item.status,layoutStatusColor(item.status)):""}</div>
+          </div>
+        </div>`).join("")}</div>`;
+    case "caselist":
+      return `<div class="sa-case-list">${items.slice(0,2).map(item=>`
+        <div class="sa-case-item">
+          <div class="sa-case-head"><span class="sa-case-id">${safeHtml(item.id||"")}</span>${item.status?layoutPill(item.status,layoutStatusColor(item.status)):""}</div>
+          <div class="sa-case-desc">${safeHtml(item.description||"")}</div>
+        </div>`).join("")}</div>`;
+    case "flags":
+      return `<div class="sa-flag-list">${items.slice(0,2).map(item=>`
+        <div class="sa-flag-item">
+          <span class="sa-flag-icon">${item.type==="escalation"?"⚠️":item.type==="vip"?"⭐":item.type==="warning"?"🔴":"ℹ️"}</span>
+          <span>${safeHtml(item.message||"")}</span>
+        </div>`).join("")}</div>`;
+    case "recommendation":
+      return `<div class="sa-recommendation" style="font-size:.78rem;">${safeHtml(items[0]?.content||"(se genera en tiempo real)")}</div>`;
+    default:
+      return `<div class="sa-text-section">${items.slice(0,2).map(i=>`<p style="font-size:.78rem;">${safeHtml(i.content||"")}</p>`).join("")}</div>`;
+  }
+}
+
+function renderLayoutPreview(layout) {
+  const left  = layout.sections.filter(s => s.placement === "left");
+  const right = layout.sections.filter(s => s.placement !== "left");
+  const renderCol = (sections) => sections.map(s => `
+    <div class="sa-card" style="margin-bottom:8px;">
+      <div class="sa-card-head">
+        <span class="sa-card-head-icon">${safeHtml(s.icon||"📄")}</span>
+        <h3 style="font-size:.78rem;">${safeHtml(s.title||"")}</h3>
+      </div>
+      <div class="sa-card-body">${renderLayoutSectionBody(s)}</div>
+    </div>`).join("");
+  return `
+    <div class="sa-layout-preview">
+      <div class="sa-left" style="min-width:0;">${renderCol(left)}</div>
+      <div class="sa-right" style="min-width:0;">${renderCol(right)}</div>
+    </div>`;
 }
 
 function renderLayoutCards(layouts) {
@@ -1238,25 +1314,27 @@ function renderLayoutCards(layouts) {
   layouts.forEach((layout) => {
     const card = document.createElement("div");
     card.className = "sa-layout-card";
-    const sectionList = layout.sections.map((s) =>
-      `<span class="sa-layout-section-pill">${s.icon || "📄"} ${s.title}</span>`
-    ).join("");
     card.innerHTML = `
       <div class="sa-layout-card-head">
-        <strong>${esc(layout.name)}</strong>
-        <button type="button" class="primary sa-layout-select-btn">Usar este layout</button>
+        <div>
+          <strong>${safeHtml(layout.name)}</strong>
+          <div class="sa-layout-card-desc">${safeHtml(layout.description||"")}</div>
+        </div>
+        <button type="button" class="primary sa-layout-select-btn" style="flex-shrink:0;">Usar este layout</button>
       </div>
-      <div class="sa-layout-card-desc">${esc(layout.description || "")}</div>
-      <div class="sa-layout-pills">${sectionList}</div>`;
+      <div class="sa-layout-preview-wrap">${renderLayoutPreview(layout)}</div>`;
     card.querySelector(".sa-layout-select-btn").addEventListener("click", () => {
-      const activeLayout = { sections: layout.sections, generatedAt: Date.now() };
+      // Store only structure (no sample items) to keep payload small
+      const cleanSections = layout.sections.map(({ id, title, icon, type, placement, fields }) =>
+        ({ id, title, icon, type, placement, fields: fields || [] })
+      );
+      const activeLayout = { sections: cleanSections, generatedAt: Date.now() };
       const el = document.getElementById("summaryagenticActiveLayout");
       if (el) el.value = JSON.stringify(activeLayout);
       renderActiveLayout(activeLayout);
-      document.getElementById("saLayoutCards").innerHTML = "";
+      container.innerHTML = "";
       document.getElementById("saLayoutGeneratePanel").style.display = "none";
       markDirty();
-      alert(`Layout "${layout.name}" seleccionado. Guarda el campaign para aplicarlo.`);
     });
     container.appendChild(card);
   });
