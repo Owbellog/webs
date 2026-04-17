@@ -5939,3 +5939,38 @@ body.embedded .copilot-shell {
   cursor: pointer;
   font-weight: 500;
 }
+
+/* ── Layout generator cards ──────────────────────────────────────────────── */
+.sa-layout-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+.sa-layout-card {
+  border: 1.5px solid rgba(0,0,0,.1);
+  border-radius: 10px;
+  padding: 14px 16px;
+  background: #fff;
+  transition: border-color .15s;
+}
+.sa-layout-card:hover { border-color: #6c47ff; }
+.sa-layout-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.sa-layout-card-head strong { font-size: .9rem; color: #1c2040; }
+.sa-layout-select-btn { font-size: .78rem; padding: 4px 14px; }
+.sa-layout-card-desc { font-size: .8rem; color: #666; margin-bottom: 8px; }
+.sa-layout-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.sa-layout-section-pill {
+  background: rgba(108,71,255,.08);
+  color: #6c47ff;
+  border-radius: 20px;
+  padding: 2px 10px;
+  font-size: .74rem;
+  font-weight: 600;
+}

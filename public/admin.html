@@ -823,6 +823,29 @@
                 </details>
 
                 <details class="admin-subsection" open>
+                  <summary>Layout del Widget <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
+                    <div class="admin-field admin-field--full">
+                      <span class="admin-field-note">La IA analiza todas las fuentes de datos configuradas (incluyendo HubSpot) y propone 3 opciones de layout. Selecciona una para que el widget siempre tenga la misma estructura — solo el contenido cambia en cada llamada.</span>
+                    </div>
+                    <div class="admin-field admin-field--full" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                      <button type="button" class="primary" id="saLayoutGenerateBtn">Generar opciones de layout</button>
+                      <button type="button" class="secondary" id="saLayoutClearBtn" style="font-size:.8rem;">✕ Quitar layout fijo</button>
+                      <span id="saLayoutActiveBadge" style="font-size:.82rem;font-weight:600;"></span>
+                    </div>
+                    <div class="admin-field admin-field--full">
+                      <span id="saLayoutGenerateStatus" style="font-size:.82rem;"></span>
+                      <span id="saLayoutActiveInfo" style="font-size:.78rem;color:#888;margin-left:8px;"></span>
+                    </div>
+                    <div class="admin-field admin-field--full" id="saLayoutGeneratePanel" style="display:none;">
+                      <div id="saLayoutCards" class="sa-layout-cards"></div>
+                    </div>
+                    <!-- Hidden field to persist active layout JSON -->
+                    <input type="hidden" id="summaryagenticActiveLayout" value="null" />
+                  </div>
+                </details>
+
+                <details class="admin-subsection" open>
                   <summary>Widget URL <span class="chevron">▼</span></summary>
                   <div class="admin-section-grid admin-subsection-grid">
                     <div class="admin-field admin-field--full">

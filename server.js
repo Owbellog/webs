@@ -712,6 +712,11 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/summaryagentic/generate-layouts") {
+    await handleSummaryAgenticGenerateLayouts(req, res);
+    return;
+  }
+
   // Public admin auth routes (no session required)
   if (req.method === "POST" && url.pathname === "/api/admin/login") {
     await handleAdminLogin(req, res);
@@ -1436,6 +1441,7 @@ async function handleSummaryAgenticSummary(req, res, url) {
     // HubSpot integration
     const hubspotCfg = saConfig.hubspot || {};
     const hubspotToken = config.summaryagenticHubspotToken || "";
+    console.log("[summaryagentic] hubspot enabled:", hubspotCfg.enabled, "token:", hubspotToken ? "set" : "empty", "objects:", hubspotCfg.objects);
     if (hubspotCfg.enabled && hubspotToken && hubspotCfg.objects?.length) {
       try {
         const hsSources = await fetchHubspotData(hubspotToken, hubspotCfg.objects, identifiers);
@@ -1455,18 +1461,20 @@ async function handleSummaryAgenticSummary(req, res, url) {
       throwConfig(`Campaign "${config.id}" is missing the AI API key for Summary Agentic.`);
     }
 
-    console.log("[summaryagentic] enabledSources count:", enabledSources.length);
-    sourceData.forEach((s, i) => {
-      const dataStr = JSON.stringify(s.data);
-      console.log(`[summaryagentic] source[${i}] id=${s.id} error=${s.error} dataLen=${dataStr.length} dataSample=${dataStr.slice(0, 300)}`);
-    });
     const contextText = buildSummaryContext(identifiers, sourceData, enabledSources);
-    console.log("[summaryagentic] context chars:", contextText.length);
-    const rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, aiPrompt, contextText);
-    console.log("[summaryagentic] response chars:", rawText.length, "| tail:", rawText.slice(-200));
-    console.log("[summaryagentic] full response:", rawText);
-    const sections = parseSummarySections(rawText);
-    console.log("[summaryagentic] parsed sections:", sections ? sections.length : null);
+
+    let sections;
+    const activeLayout = saConfig.activeLayout;
+    if (activeLayout?.sections?.length) {
+      // Use fixed layout — AI fills values + generates agent recommendation
+      const layoutPrompt = buildLayoutFillPrompt(activeLayout.sections);
+      const rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, layoutPrompt, contextText);
+      sections = parseSummarySections(rawText);
+    } else {
+      // No layout set — free-form generation
+      const rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, aiPrompt, contextText);
+      sections = parseSummarySections(rawText);
+    }
 
     const responseData = {
       ok: true,
@@ -1867,17 +1875,53 @@ async function fetchHubspotData(token, selectedObjects, identifiers) {
   const customerId = identifiers.customerId || "";
   if (!phone && !customerId) throw new Error("No phone or customer_id to search HubSpot.");
 
-  const filters = [];
-  if (phone) filters.push({ propertyName: "phone", operator: "CONTAINS_TOKEN", value: phone });
+  console.log("[hubspot] searching contact phone:", phone, "customerId:", customerId);
 
-  const searchResult = await hs("POST", "/crm/v3/objects/contacts/search", {
-    filterGroups: [{ filters }],
+  // Build phone format variants (max 5 filterGroups allowed by HubSpot)
+  const digits = phone.replace(/\D/g, "");
+  const phoneVariants = new Set([phone]);
+  if (digits.length >= 9) {
+    if (!digits.startsWith("+")) phoneVariants.add(`+${digits}`);
+    if (digits.length === 9)  phoneVariants.add(`+34${digits}`);  // Spain local → E.164
+    if (digits.startsWith("34") && digits.length === 11) phoneVariants.add(`+${digits.slice(2)}`); // strip country code
+    if (digits.length === 10) phoneVariants.add(`+1${digits}`);   // US local → E.164
+  }
+  // HubSpot API allows max 5 filterGroups; each variant gets one group checking phone OR mobilephone
+  const variantList = [...phoneVariants].slice(0, 5);
+  const filterGroups = variantList.map((v) => ({
+    filters: [
+      { propertyName: "phone",       operator: "EQ", value: v },
+    ]
+  }));
+  // Use a second search for mobilephone if needed
+  const filterGroupsMobile = variantList.slice(0, 5).map((v) => ({
+    filters: [{ propertyName: "mobilephone", operator: "EQ", value: v }]
+  }));
+
+  console.log("[hubspot] trying variants:", variantList.join(", "));
+
+  let searchResult = await hs("POST", "/crm/v3/objects/contacts/search", {
+    filterGroups,
     properties: ["firstname","lastname","email","phone","mobilephone","company","jobtitle","hs_lead_status","lifecyclestage","createdate","lastmodifieddate","city","country"],
     limit: 1
   });
+  // If not found on phone field, try mobilephone
+  if (!searchResult.results?.length) {
+    searchResult = await hs("POST", "/crm/v3/objects/contacts/search", {
+      filterGroups: filterGroupsMobile,
+      properties: ["firstname","lastname","email","phone","mobilephone","company","jobtitle","hs_lead_status","lifecyclestage","createdate","lastmodifieddate","city","country"],
+      limit: 1
+    });
+  }
+
+  console.log("[hubspot] search results total:", searchResult.total, "found:", searchResult.results?.length);
 
   const contact = searchResult.results?.[0];
-  if (!contact) return [];
+  if (!contact) {
+    console.log("[hubspot] no contact found — phone variants:", [...phoneVariants].join(", "));
+    return [];
+  }
+  console.log("[hubspot] found contact id:", contact.id, "phone:", contact.properties?.phone);
 
   const contactId = contact.id;
   const sources = [];
@@ -1888,13 +1932,20 @@ async function fetchHubspotData(token, selectedObjects, identifiers) {
 
   async function getAssocIds(type) {
     const r = await hs("GET", `/crm/v3/objects/contacts/${contactId}/associations/${type}`);
-    return (r.results || []).slice(0, 10).map((x) => ({ id: String(x.id || x.toObjectId) }));
+    const ids = (r.results || []).slice(0, 10).map((x) => ({ id: String(x.id) }));
+    console.log(`[hubspot] associations ${type}:`, ids.length, ids.map(x => x.id).join(","));
+    return ids;
   }
 
   async function batchRead(type, inputs, properties) {
     if (!inputs.length) return [];
-    const r = await hs("POST", `/crm/v3/objects/${type}/batch/read`, { inputs, properties });
-    return (r.results || []).map((x) => x.properties);
+    const propsParam = properties.join(",");
+    const results = await Promise.allSettled(
+      inputs.map(({ id }) => hs("GET", `/crm/v3/objects/${type}/${id}?properties=${propsParam}`))
+    );
+    const data = results.filter((r) => r.status === "fulfilled").map((r) => r.value.properties);
+    console.log(`[hubspot] GET ${type}: ${data.length} records`);
+    return data;
   }
 
   const tasks = [];
@@ -1934,11 +1985,140 @@ async function fetchHubspotData(token, selectedObjects, identifiers) {
   const results = await Promise.allSettled(tasks.map((t) => t()));
   results.forEach((r) => {
     if (r.status === "rejected") {
-      console.error("[summaryagentic] HubSpot task error:", r.reason?.message);
+      console.error("[hubspot] task error:", r.reason?.message);
     }
   });
 
   return sources;
+}
+
+// ── Layout generation ─────────────────────────────────────────────────────────
+
+function buildLayoutFillPrompt(sections) {
+  const schema = sections.map((s) => ({
+    id: s.id, title: s.title, icon: s.icon, type: s.type, placement: s.placement,
+    fields: s.fields || []
+  }));
+  return `You are a call center agent assistant. You will receive customer data from multiple sources.
+
+Your task:
+1. Fill in EXACTLY the following sections with real data from the sources. Do NOT add or remove sections. Do NOT change section ids, titles, types, or placements.
+2. Add one final section: Agent Recommendation — a clear, specific, empathetic action plan for the agent based on ALL the data.
+
+REQUIRED OUTPUT FORMAT — return ONLY this JSON, no markdown, no explanation:
+{"sections": [
+  {"id":"...","title":"...","icon":"...","type":"...","placement":"...","items":[...]},
+  ...
+  {"id":"agent_recommendation","title":"Recommended Action","icon":"💡","type":"recommendation","placement":"right","items":[{"content":"..."}]}
+]}
+
+Section schema to fill:
+${JSON.stringify(schema, null, 2)}
+
+Rules:
+- For type "kv": items = [{"label":"...","value":"...","highlight":"green|red|yellow|blue (optional)"}]
+- For type "calllog": items = [{"reason":"...","date":"...","agent":"...","duration":"...","status":"..."}]
+- For type "caselist": items = [{"id":"...","status":"...","description":"..."}]
+- For type "flags": items = [{"type":"escalation|vip|warning|info","message":"..."}]
+- For type "recommendation": items = [{"content":"..."}]
+- If a section has no data from sources, include it with items: []
+- The Agent Recommendation must synthesize ALL sources and give the agent a specific, actionable briefing`;
+}
+
+async function handleSummaryAgenticGenerateLayouts(req, res) {
+  try {
+    let body;
+    try { body = await readJson(req); } catch { sendJson(res, 400, { error: "Invalid JSON body" }); return; }
+
+    const session = getSessionFromRequest(req);
+    if (!session) { sendJson(res, 401, { error: "Unauthorized" }); return; }
+
+    const { campaignId, testPhone, testCustomerId } = body;
+    if (!campaignId) { sendJson(res, 400, { error: "campaignId is required" }); return; }
+
+    const campaigns = await getEffectiveCampaigns();
+    const config = campaigns.find((c) => c.id === campaignId);
+    if (!config) { sendJson(res, 404, { error: "Campaign not found" }); return; }
+
+    const saConfig = config.summaryagentic || {};
+    const aiProvider = saConfig.aiProvider || "claude";
+    const aiApiKey = config.summaryagenticAiApiKey || "";
+    const aiModel = saConfig.aiModel || defaultAiModel(aiProvider);
+    if (!aiApiKey) { sendJson(res, 400, { error: "No AI API key configured" }); return; }
+
+    // Fetch real data from all sources
+    const phone = testPhone || "";
+    const customerId = testCustomerId || "";
+    const identifiers = { phone, customerId };
+    const enabledSources = (saConfig.dataSources || []).filter((s) => s.enabled && s.url);
+
+    const sourceResults = await Promise.allSettled(
+      enabledSources.map((src) => fetchSummaryDataSource(src, identifiers))
+    );
+    const sourceData = enabledSources.map((src, i) => {
+      const r = sourceResults[i];
+      return r.status === "fulfilled"
+        ? { id: src.id, name: src.name, data: r.value, error: null }
+        : { id: src.id, name: src.name, data: null, error: r.reason?.message };
+    });
+
+    // HubSpot
+    const hubspotToken = config.summaryagenticHubspotToken || "";
+    if (saConfig.hubspot?.enabled && hubspotToken && phone) {
+      try {
+        const hsSources = await fetchHubspotData(hubspotToken, saConfig.hubspot.objects || [], identifiers);
+        sourceData.push(...hsSources);
+      } catch (err) {
+        sourceData.push({ id: "hubspot", name: "HubSpot", data: null, error: err.message });
+      }
+    }
+
+    const contextText = buildSummaryContext(identifiers, sourceData, enabledSources);
+
+    const systemPrompt = `You are a UX designer for a call center agent dashboard. Given customer data from multiple sources, propose 3 different widget layout options.
+
+Each layout must:
+- Use ALL available data sources
+- Include a Customer Profile section (kv, left)
+- Include an "Agent Recommendation" section as the last section (recommendation, right) — leave items:[{"content":"(to be generated at runtime)"}]
+- Vary in how sections are organized, named, and what data is emphasized
+- Use section types: kv, calllog, caselist, flags, recommendation
+- placements: "left" for profile/status info, "right" for activity/cases/recommendation
+
+Return ONLY this JSON, no markdown:
+{"layouts": [
+  {
+    "id": "layout_1",
+    "name": "Layout name (e.g. 'Focus on Cases')",
+    "description": "One line describing what this layout emphasizes",
+    "sections": [
+      {"id":"...","title":"...","icon":"...","type":"kv|calllog|caselist|flags|recommendation","placement":"left|right","fields":["field1","field2"],"items":[...]},
+      ...
+    ]
+  },
+  { "id": "layout_2", ... },
+  { "id": "layout_3", ... }
+]}
+
+Fill items with real data from the sources provided. fields = list of source field names used.`;
+
+    const rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, systemPrompt, contextText);
+
+    let layouts;
+    try {
+      const match = rawText.match(/\{[\s\S]*"layouts"\s*:\s*\[[\s\S]*\]/);
+      if (!match) throw new Error("No layouts found in response");
+      const parsed = JSON.parse(match[0].replace(/,\s*([}\]])/g, "$1"));
+      layouts = parsed.layouts;
+    } catch (err) {
+      sendJson(res, 500, { error: "AI returned invalid layout JSON: " + err.message, raw: rawText.slice(0, 500) });
+      return;
+    }
+
+    sendJson(res, 200, { ok: true, layouts });
+  } catch (err) {
+    sendJson(res, 500, { error: err.message });
+  }
 }
 
 async function handleSummaryAgenticAnalyzeUrl(req, res) {
@@ -3576,6 +3756,9 @@ function normalizeSummaryAgenticConfig(input) {
     cacheSeconds: Math.max(0, parseInt(src.cacheSeconds ?? 60) || 60),
     dataSources: normalizeSummaryDataSources(src.dataSources || []),
     widgetLibrary: Array.isArray(src.widgetLibrary) ? src.widgetLibrary : [],
+    activeLayout: src.activeLayout && Array.isArray(src.activeLayout.sections)
+      ? { sections: src.activeLayout.sections, generatedAt: src.activeLayout.generatedAt || null }
+      : null,
     hubspot: {
       enabled: src.hubspot?.enabled === true,
       objects: Array.isArray(src.hubspot?.objects)

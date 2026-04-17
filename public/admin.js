@@ -1214,6 +1214,95 @@ open cases, active subscriptions, pending orders, loyalty/points, last purchases
 recommended approach.
 Return ONLY the JSON object. No markdown, no explanation.`;
 
+// ── Layout generator ─────────────────────────────────────────────────────────
+
+function renderActiveLayout(layout) {
+  const badge = document.getElementById("saLayoutActiveBadge");
+  const info  = document.getElementById("saLayoutActiveInfo");
+  if (!badge || !info) return;
+  if (layout?.sections?.length) {
+    badge.textContent = "✓ Layout activo";
+    badge.style.color = "var(--color-success, #15803d)";
+    info.textContent = `${layout.sections.length} secciones · guardado ${layout.generatedAt ? new Date(layout.generatedAt).toLocaleString() : ""}`;
+  } else {
+    badge.textContent = "Sin layout fijo (la IA decide cada vez)";
+    badge.style.color = "#888";
+    info.textContent = "";
+  }
+}
+
+function renderLayoutCards(layouts) {
+  const container = document.getElementById("saLayoutCards");
+  if (!container) return;
+  container.innerHTML = "";
+  layouts.forEach((layout) => {
+    const card = document.createElement("div");
+    card.className = "sa-layout-card";
+    const sectionList = layout.sections.map((s) =>
+      `<span class="sa-layout-section-pill">${s.icon || "📄"} ${s.title}</span>`
+    ).join("");
+    card.innerHTML = `
+      <div class="sa-layout-card-head">
+        <strong>${esc(layout.name)}</strong>
+        <button type="button" class="primary sa-layout-select-btn">Usar este layout</button>
+      </div>
+      <div class="sa-layout-card-desc">${esc(layout.description || "")}</div>
+      <div class="sa-layout-pills">${sectionList}</div>`;
+    card.querySelector(".sa-layout-select-btn").addEventListener("click", () => {
+      const activeLayout = { sections: layout.sections, generatedAt: Date.now() };
+      const el = document.getElementById("summaryagenticActiveLayout");
+      if (el) el.value = JSON.stringify(activeLayout);
+      renderActiveLayout(activeLayout);
+      document.getElementById("saLayoutCards").innerHTML = "";
+      document.getElementById("saLayoutGeneratePanel").style.display = "none";
+      markDirty();
+      alert(`Layout "${layout.name}" seleccionado. Guarda el campaign para aplicarlo.`);
+    });
+    container.appendChild(card);
+  });
+}
+
+document.getElementById("saLayoutGenerateBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("saLayoutGenerateBtn");
+  const status = document.getElementById("saLayoutGenerateStatus");
+  const panel = document.getElementById("saLayoutGeneratePanel");
+  const campaignId = fields.id.value.trim();
+  if (!campaignId) { alert("Guarda el campaign primero."); return; }
+
+  // Get a test phone from first source card or hubspot token field
+  const testPhoneInput = document.querySelector(".sa-source-card input[placeholder*='phone'], .sa-source-card input[placeholder*='test']");
+  const testPhone = document.getElementById("summaryagenticHubspotToken") ? (testPhoneInput?.value.trim() || "") : "";
+
+  btn.disabled = true;
+  btn.textContent = "Generando layouts…";
+  if (status) { status.textContent = "Consultando fuentes de datos y generando opciones con IA…"; status.style.color = "#888"; }
+  if (panel) panel.style.display = "none";
+
+  try {
+    const data = await apiRequest("/api/summaryagentic/generate-layouts", {
+      method: "POST",
+      body: JSON.stringify({ campaignId, testPhone })
+    });
+    if (!data.ok || !data.layouts?.length) throw new Error(data.error || "No layouts returned");
+    if (panel) panel.style.display = "block";
+    renderLayoutCards(data.layouts);
+    if (status) { status.textContent = `${data.layouts.length} opciones generadas. Selecciona una:`; status.style.color = "#15803d"; }
+  } catch (err) {
+    if (status) { status.textContent = `Error: ${err.message}`; status.style.color = "#dc2626"; }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Generar opciones de layout";
+  }
+});
+
+document.getElementById("saLayoutClearBtn")?.addEventListener("click", () => {
+  if (!confirm("¿Eliminar el layout fijo? La IA generará la estructura libremente.")) return;
+  const el = document.getElementById("summaryagenticActiveLayout");
+  if (el) el.value = "null";
+  renderActiveLayout(null);
+  markDirty();
+});
+
 document.getElementById("summaryagenticHubspotTestBtn")?.addEventListener("click", async () => {
   const btn = document.getElementById("summaryagenticHubspotTestBtn");
   const result = document.getElementById("summaryagenticHubspotTestResult");
@@ -1584,6 +1673,10 @@ function fillForm(campaign) {
   if (fields.summaryagenticHubspotToken) fields.summaryagenticHubspotToken.value = campaign.summaryagenticHubspotToken || "";
   const hsObjects = Array.isArray(hs.objects) ? hs.objects : ["contacts","deals","tickets","calls"];
   document.querySelectorAll(".sa-hs-obj").forEach((cb) => { cb.checked = hsObjects.includes(cb.value); });
+  // Active layout
+  const activeLayoutEl = document.getElementById("summaryagenticActiveLayout");
+  if (activeLayoutEl) activeLayoutEl.value = JSON.stringify(sa.activeLayout || null);
+  renderActiveLayout(sa.activeLayout || null);
   updateSummaryAgenticUrls(campaign.id || "");
   updateBreadcrumb(campaign.name || campaign.id || "");
   updateAdminPermissionUi();
@@ -1745,7 +1838,10 @@ function readForm() {
       hubspot: {
         enabled: fields.summaryagenticHubspotEnabled?.checked === true,
         objects: [...document.querySelectorAll(".sa-hs-obj:checked")].map((cb) => cb.value)
-      }
+      },
+      activeLayout: (() => {
+        try { return JSON.parse(document.getElementById("summaryagenticActiveLayout")?.value || "null"); } catch { return null; }
+      })()
     }
   };
 }
