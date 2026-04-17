@@ -218,7 +218,9 @@ const fields = {
   summaryagenticAiProvider: document.getElementById("summaryagenticAiProvider"),
   summaryagenticAiModel: document.getElementById("summaryagenticAiModel"),
   summaryagenticAiApiKey: document.getElementById("summaryagenticAiApiKey"),
-  summaryagenticAiPrompt: document.getElementById("summaryagenticAiPrompt")
+  summaryagenticAiPrompt: document.getElementById("summaryagenticAiPrompt"),
+  summaryagenticHubspotEnabled: document.getElementById("summaryagenticHubspotEnabled"),
+  summaryagenticHubspotToken: document.getElementById("summaryagenticHubspotToken")
 };
 
 const state = {
@@ -1212,6 +1214,33 @@ open cases, active subscriptions, pending orders, loyalty/points, last purchases
 recommended approach.
 Return ONLY the JSON object. No markdown, no explanation.`;
 
+document.getElementById("summaryagenticHubspotTestBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("summaryagenticHubspotTestBtn");
+  const result = document.getElementById("summaryagenticHubspotTestResult");
+  const token = fields.summaryagenticHubspotToken?.value.trim();
+  if (!token) { result.textContent = "⚠ Ingresa el token primero."; result.style.color = "var(--color-warn, #b45309)"; return; }
+  btn.disabled = true;
+  btn.textContent = "Probando…";
+  result.textContent = "";
+  try {
+    const campaignId = fields.id.value.trim();
+    const data = await apiRequest("/api/summaryagentic/hubspot-test", { method: "POST", body: JSON.stringify({ token, campaignId }) });
+    if (data.ok) {
+      result.textContent = "✓ Conexión exitosa con HubSpot";
+      result.style.color = "var(--color-success, #15803d)";
+    } else {
+      result.textContent = `✗ Error: ${data.error}`;
+      result.style.color = "var(--color-error, #dc2626)";
+    }
+  } catch (err) {
+    result.textContent = `✗ ${err.message}`;
+    result.style.color = "var(--color-error, #dc2626)";
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "✓ Test conexión";
+  }
+});
+
 summaryagenticLoadDefaultPromptButton?.addEventListener("click", () => {
   if (fields.summaryagenticAiPrompt.value.trim() && !confirm("This will replace your current prompt. Continue?")) return;
   fields.summaryagenticAiPrompt.value = SUMMARY_AGENTIC_DEFAULT_PROMPT;
@@ -1549,6 +1578,12 @@ function fillForm(campaign) {
   fields.summaryagenticAiPrompt.value = sa.aiPrompt || "";
   summaryagenticSourcesList.dataset.widgetLibrary = JSON.stringify(sa.widgetLibrary || []);
   renderSummaryDataSources(sa.dataSources || []);
+  // HubSpot
+  const hs = sa.hubspot || {};
+  if (fields.summaryagenticHubspotEnabled) fields.summaryagenticHubspotEnabled.checked = hs.enabled === true;
+  if (fields.summaryagenticHubspotToken) fields.summaryagenticHubspotToken.value = campaign.summaryagenticHubspotToken || "";
+  const hsObjects = Array.isArray(hs.objects) ? hs.objects : ["contacts","deals","tickets","calls"];
+  document.querySelectorAll(".sa-hs-obj").forEach((cb) => { cb.checked = hsObjects.includes(cb.value); });
   updateSummaryAgenticUrls(campaign.id || "");
   updateBreadcrumb(campaign.name || campaign.id || "");
   updateAdminPermissionUi();
@@ -1699,13 +1734,18 @@ function readForm() {
       }
     },
     summaryagenticAiApiKey: fields.summaryagenticAiApiKey.value.trim(),
+    summaryagenticHubspotToken: fields.summaryagenticHubspotToken?.value.trim() || "",
     summaryagentic: {
       enabled: fields.summaryagenticEnabled.checked,
       cacheSeconds: Number(fields.summaryagenticCacheSeconds.value || 60),
       aiProvider: fields.summaryagenticAiProvider.value || "claude",
       aiModel: fields.summaryagenticAiModel.value.trim(),
       aiPrompt: fields.summaryagenticAiPrompt.value.trim(),
-      dataSources: readSummaryDataSources()
+      dataSources: readSummaryDataSources(),
+      hubspot: {
+        enabled: fields.summaryagenticHubspotEnabled?.checked === true,
+        objects: [...document.querySelectorAll(".sa-hs-obj:checked")].map((cb) => cb.value)
+      }
     }
   };
 }

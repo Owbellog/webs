@@ -114,7 +114,7 @@ function decryptSecret(value) {
 }
 
 // Fields that must be encrypted at rest
-const SECRET_FIELDS = ["token", "cookie", "geminiApiKey", "questionsGeminiApiKey", "wielandNccCredential", "summaryagenticAiApiKey"];
+const SECRET_FIELDS = ["token", "cookie", "geminiApiKey", "questionsGeminiApiKey", "wielandNccCredential", "summaryagenticAiApiKey", "summaryagenticHubspotToken"];
 
 function encryptCampaignSecrets(campaign) {
   const result = { ...campaign };
@@ -704,6 +704,11 @@ async function handleRequest(req, res) {
 
   if (req.method === "DELETE" && url.pathname === "/api/summaryagentic/save-widget") {
     await handleSummaryAgenticDeleteWidget(req, res);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/summaryagentic/hubspot-test") {
+    await handleSummaryAgenticHubspotTest(req, res);
     return;
   }
 
@@ -1428,6 +1433,19 @@ async function handleSummaryAgenticSummary(req, res, url) {
       return { id: source.id, name: source.name, data: null, error: result.reason?.message || "Failed" };
     });
 
+    // HubSpot integration
+    const hubspotCfg = saConfig.hubspot || {};
+    const hubspotToken = config.summaryagenticHubspotToken || "";
+    if (hubspotCfg.enabled && hubspotToken && hubspotCfg.objects?.length) {
+      try {
+        const hsSources = await fetchHubspotData(hubspotToken, hubspotCfg.objects, identifiers);
+        sourceData.push(...hsSources);
+      } catch (err) {
+        console.error("[summaryagentic] HubSpot fetch error:", err.message);
+        sourceData.push({ id: "hubspot", name: "HubSpot", data: null, error: err.message });
+      }
+    }
+
     const aiProvider = saConfig.aiProvider || "claude";
     const aiApiKey = config.summaryagenticAiApiKey || "";
     const aiModel = saConfig.aiModel || defaultAiModel(aiProvider);
@@ -1804,6 +1822,123 @@ async function handleSummaryAgenticDeleteWidget(req, res) {
   } catch (error) {
     sendJson(res, 500, { error: `Delete widget failed: ${error.message}` });
   }
+}
+
+// ── HubSpot integration ───────────────────────────────────────────────────────
+
+async function handleSummaryAgenticHubspotTest(req, res) {
+  try {
+    let body;
+    try { body = await readJson(req); } catch { sendJson(res, 400, { error: "Invalid JSON body" }); return; }
+    const session = getSessionFromRequest(req);
+    if (!session) { sendJson(res, 401, { error: "Unauthorized" }); return; }
+    const token = String(body.token || "").trim();
+    if (!token) { sendJson(res, 400, { error: "token is required" }); return; }
+    const r = await fetch("https://api.hubapi.com/crm/v3/objects/contacts?limit=1", {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      sendJson(res, 200, { ok: false, error: err.message || `HTTP ${r.status}` });
+      return;
+    }
+    sendJson(res, 200, { ok: true });
+  } catch (err) {
+    sendJson(res, 500, { error: err.message });
+  }
+}
+
+async function fetchHubspotData(token, selectedObjects, identifiers) {
+  const authHeader = { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" };
+
+  async function hs(method, path, body = null) {
+    const opts = { method, headers: authHeader };
+    if (body) opts.body = JSON.stringify(body);
+    const r = await fetch(`https://api.hubapi.com${path}`, opts);
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}));
+      throw new Error(e.message || `HubSpot ${path} → HTTP ${r.status}`);
+    }
+    return r.json();
+  }
+
+  // 1. Find contact by phone (strip non-digits for flexible match)
+  const phone = (identifiers.phone || "").replace(/[^0-9+]/g, "");
+  const customerId = identifiers.customerId || "";
+  if (!phone && !customerId) throw new Error("No phone or customer_id to search HubSpot.");
+
+  const filters = [];
+  if (phone) filters.push({ propertyName: "phone", operator: "CONTAINS_TOKEN", value: phone });
+
+  const searchResult = await hs("POST", "/crm/v3/objects/contacts/search", {
+    filterGroups: [{ filters }],
+    properties: ["firstname","lastname","email","phone","mobilephone","company","jobtitle","hs_lead_status","lifecyclestage","createdate","lastmodifieddate","city","country"],
+    limit: 1
+  });
+
+  const contact = searchResult.results?.[0];
+  if (!contact) return [];
+
+  const contactId = contact.id;
+  const sources = [];
+
+  if (selectedObjects.includes("contacts")) {
+    sources.push({ id: "hubspot_contact", name: "HubSpot Contact", data: contact.properties, error: null });
+  }
+
+  async function getAssocIds(type) {
+    const r = await hs("GET", `/crm/v3/objects/contacts/${contactId}/associations/${type}`);
+    return (r.results || []).slice(0, 10).map((x) => ({ id: String(x.id || x.toObjectId) }));
+  }
+
+  async function batchRead(type, inputs, properties) {
+    if (!inputs.length) return [];
+    const r = await hs("POST", `/crm/v3/objects/${type}/batch/read`, { inputs, properties });
+    return (r.results || []).map((x) => x.properties);
+  }
+
+  const tasks = [];
+
+  if (selectedObjects.includes("deals")) {
+    tasks.push(async () => {
+      const ids = await getAssocIds("deals");
+      const data = await batchRead("deals", ids, ["dealname","amount","dealstage","closedate","pipeline","hs_deal_stage_probability","createdate"]);
+      sources.push({ id: "hubspot_deals", name: "HubSpot Deals", data, error: null });
+    });
+  }
+
+  if (selectedObjects.includes("tickets")) {
+    tasks.push(async () => {
+      const ids = await getAssocIds("tickets");
+      const data = await batchRead("tickets", ids, ["subject","content","hs_ticket_status","hs_pipeline_stage","createdate","hs_lastmodifieddate"]);
+      sources.push({ id: "hubspot_tickets", name: "HubSpot Tickets", data, error: null });
+    });
+  }
+
+  if (selectedObjects.includes("calls")) {
+    tasks.push(async () => {
+      const ids = await getAssocIds("calls");
+      const data = await batchRead("calls", ids, ["hs_call_title","hs_call_direction","hs_call_duration","hs_call_status","hs_timestamp","hs_call_body","hs_call_disposition"]);
+      sources.push({ id: "hubspot_calls", name: "HubSpot Calls", data, error: null });
+    });
+  }
+
+  if (selectedObjects.includes("notes")) {
+    tasks.push(async () => {
+      const ids = await getAssocIds("notes");
+      const data = await batchRead("notes", ids, ["hs_note_body","hs_timestamp","hs_lastmodifieddate"]);
+      sources.push({ id: "hubspot_notes", name: "HubSpot Notes", data, error: null });
+    });
+  }
+
+  const results = await Promise.allSettled(tasks.map((t) => t()));
+  results.forEach((r) => {
+    if (r.status === "rejected") {
+      console.error("[summaryagentic] HubSpot task error:", r.reason?.message);
+    }
+  });
+
+  return sources;
 }
 
 async function handleSummaryAgenticAnalyzeUrl(req, res) {
@@ -2932,6 +3067,7 @@ function normalizeCampaign(input) {
     },
     wielandNccCredential: String(input.wielandNccCredential || "").trim(),
     summaryagenticAiApiKey: String(input.summaryagenticAiApiKey || "").trim(),
+    summaryagenticHubspotToken: String(input.summaryagenticHubspotToken || "").trim(),
     summaryagentic: normalizeSummaryAgenticConfig(input.summaryagentic || {}),
     ui: normalizeUiConfig(input.ui || input)
   };
@@ -3439,7 +3575,13 @@ function normalizeSummaryAgenticConfig(input) {
     aiPrompt: String(src.aiPrompt || "").trim(),
     cacheSeconds: Math.max(0, parseInt(src.cacheSeconds ?? 60) || 60),
     dataSources: normalizeSummaryDataSources(src.dataSources || []),
-    widgetLibrary: Array.isArray(src.widgetLibrary) ? src.widgetLibrary : []
+    widgetLibrary: Array.isArray(src.widgetLibrary) ? src.widgetLibrary : [],
+    hubspot: {
+      enabled: src.hubspot?.enabled === true,
+      objects: Array.isArray(src.hubspot?.objects)
+        ? src.hubspot.objects.filter((o) => ["contacts","deals","tickets","calls","notes"].includes(o))
+        : ["contacts","deals","tickets","calls"]
+    }
   };
 }
 

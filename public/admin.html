@@ -793,6 +793,35 @@
                   </div>
                 </details>
 
+                <details class="admin-subsection">
+                  <summary>HubSpot Integration <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
+                    <div class="admin-field admin-field--full">
+                      <label><input id="summaryagenticHubspotEnabled" type="checkbox" /> Enable HubSpot</label>
+                      <span class="admin-field-note">Cuando está activo, el sistema busca al cliente en HubSpot por teléfono y agrega la información al resumen del agente.</span>
+                    </div>
+                    <div class="admin-field admin-field--full">
+                      <label>HubSpot Private App Token</label>
+                      <div style="display:flex;gap:8px;align-items:center;">
+                        <input id="summaryagenticHubspotToken" type="password" autocomplete="off" placeholder="pat-na1-…" style="flex:1;" />
+                        <button type="button" class="secondary" id="summaryagenticHubspotTestBtn" style="white-space:nowrap;">✓ Test conexión</button>
+                      </div>
+                      <span id="summaryagenticHubspotTestResult" class="admin-field-note" style="margin-top:4px;"></span>
+                      <span class="admin-field-note">Crea un Private App en HubSpot con scopes: <code>crm.objects.contacts.read</code>, <code>crm.objects.deals.read</code>, <code>crm.objects.tickets.read</code>, <code>crm.objects.calls.read</code>, <code>crm.objects.notes.read</code>.</span>
+                    </div>
+                    <div class="admin-field admin-field--full">
+                      <label>Objetos a incluir en el resumen</label>
+                      <div class="sa-hs-objects">
+                        <label><input type="checkbox" class="sa-hs-obj" value="contacts" checked /> Contacto (datos del cliente)</label>
+                        <label><input type="checkbox" class="sa-hs-obj" value="deals" checked /> Deals (negocios activos)</label>
+                        <label><input type="checkbox" class="sa-hs-obj" value="tickets" checked /> Tickets (soporte)</label>
+                        <label><input type="checkbox" class="sa-hs-obj" value="calls" checked /> Llamadas previas</label>
+                        <label><input type="checkbox" class="sa-hs-obj" value="notes" /> Notas</label>
+                      </div>
+                    </div>
+                  </div>
+                </details>
+
                 <details class="admin-subsection" open>
                   <summary>Widget URL <span class="chevron">▼</span></summary>
                   <div class="admin-section-grid admin-subsection-grid">

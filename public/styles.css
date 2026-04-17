@@ -5922,3 +5922,20 @@ body.embedded .copilot-shell {
   padding: 8px 12px;
   color: #1c2040;
 }
+
+/* ── HubSpot Integration ──────────────────────────────────────────────────── */
+.sa-hs-objects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  margin-top: 6px;
+}
+.sa-hs-objects label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: .83rem;
+  color: #1c2040;
+  cursor: pointer;
+  font-weight: 500;
+}
