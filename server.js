@@ -1437,9 +1437,18 @@ async function handleSummaryAgenticSummary(req, res, url) {
       throwConfig(`Campaign "${config.id}" is missing the AI API key for Summary Agentic.`);
     }
 
+    console.log("[summaryagentic] enabledSources count:", enabledSources.length);
+    sourceData.forEach((s, i) => {
+      const dataStr = JSON.stringify(s.data);
+      console.log(`[summaryagentic] source[${i}] id=${s.id} error=${s.error} dataLen=${dataStr.length} dataSample=${dataStr.slice(0, 300)}`);
+    });
     const contextText = buildSummaryContext(identifiers, sourceData, enabledSources);
+    console.log("[summaryagentic] context chars:", contextText.length);
     const rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, aiPrompt, contextText);
+    console.log("[summaryagentic] response chars:", rawText.length, "| tail:", rawText.slice(-200));
+    console.log("[summaryagentic] full response:", rawText);
     const sections = parseSummarySections(rawText);
+    console.log("[summaryagentic] parsed sections:", sections ? sections.length : null);
 
     const responseData = {
       ok: true,
@@ -2102,7 +2111,8 @@ function filterBySelectedFields(data, selectedFields) {
   if (Array.isArray(data)) {
     // Root is an array — filter each item using all array-item sub-keys
     const allSubKeys = new Set(selectedFields.map((f) => f.replace(/^[^.]*\./, "")));
-    return data.map((item) => filterItem(item, allSubKeys));
+    const filtered = data.map((item) => filterItem(item, allSubKeys));
+    return filtered.length > 0 ? filtered : data;
   }
 
   const out = {};
@@ -2114,7 +2124,8 @@ function filterBySelectedFields(data, selectedFields) {
       out[k] = v;
     }
   }
-  return out;
+  // If nothing matched (stale selectedFields), fall back to full data
+  return Object.keys(out).length > 0 ? out : data;
 }
 
 function flattenObjectKeys(obj, prefix = "", depth = 0) {
