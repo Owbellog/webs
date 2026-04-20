@@ -6,7 +6,9 @@
   "description": "Chat UI for NextIQ backed by the Thrio prediction API.",
   "scripts": {
     "start": "node server.js",
-    "start:functions": "functions-framework --target=nextiq"
+    "start:functions": "functions-framework --target=nextiq",
+    "deploy:staging": "node --check server.js && gcloud functions deploy nextiq-staging --project=voicebot-451222 --region=us-central1 --gen2 --runtime=nodejs22 --trigger-http --allow-unauthenticated --entry-point=nextiq --source=. --env-vars-file=env/staging.yaml --timeout=300",
+    "deploy:production": "node --check server.js && gcloud functions deploy nextiq-production --project=voicebot-451222 --region=us-central1 --gen2 --runtime=nodejs22 --trigger-http --allow-unauthenticated --entry-point=nextiq --source=. --env-vars-file=env/production.yaml --timeout=300"
   },
   "dependencies": {
     "@google-cloud/firestore": "^7.11.0",

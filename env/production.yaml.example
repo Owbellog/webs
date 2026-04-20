@@ -1,0 +1,11 @@
+# Variables de entorno para PRODUCCIÓN
+# Copia este archivo a env/production.yaml y rellena los valores reales.
+# NUNCA hagas commit de env/production.yaml (está en .gitignore).
+
+FIRESTORE_PREFIX: "prod"
+LOG_EXECUTION_ID: "false"
+THRIO_KB_ID: "XXXXXXXXXXXXXXXXXXXXXXXX"
+THRIO_AUTH_TOKEN: "PEGA_EL_TOKEN_AQUI"
+THRIO_COOKIE: ""
+ADMIN_PASSWORD: "CAMBIA_ESTO"
+ENCRYPTION_SALT: "nextiq-campaigns-salt-v1"

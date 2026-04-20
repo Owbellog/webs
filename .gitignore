@@ -8,3 +8,8 @@ wieland-config.json
 wieland-contacts.json
 *.bak
 migrate-encrypt.js
+
+# Env vars con secretos (las plantillas *.example sí se commitean)
+env/staging.yaml
+env/production.yaml
+env/local.env
