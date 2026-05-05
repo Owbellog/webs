@@ -6562,6 +6562,42 @@ function buildThrioCampaignPayload(name, callerId, workflowId) {
   };
 }
 
+function buildThrioPstnNumberPayload(number, description, provider) {
+  return {
+    objectType: "pstnnumber",
+    voice: false,
+    sid: "",
+    mms: false,
+    provider,
+    sms: false,
+    whatsAppSenderSid: "",
+    belongsToId: "",
+    whatsAppSenderCode: "",
+    stirShakenAttestation: null,
+    whatsAppCallbackUrl: "",
+    whatsAppSenderStatus: null,
+    phoneNumber: {
+      number: null,
+      isoCountry: null,
+      type: null,
+      voice: null,
+      sms: null,
+      mms: null
+    },
+    whatsAppBusinessProfileId: null,
+    name: number,
+    whatsAppFallbackUrl: "",
+    whatsAppStatusCallbackUrl: "",
+    whatsAppBusinessAccountId: "",
+    _adjustedByData: true,
+    _showDialPad: false,
+    _working: true,
+    selected: true,
+    _selected: true,
+    description
+  };
+}
+
 async function resolveThrioDataConfig(campaignId) {
   if (campaignId) {
     const campaigns = await readCampaigns();
@@ -6676,6 +6712,34 @@ async function handleThrioData(req, res, url) {
       });
       const data = await upstream.json();
       sendJson(res, upstream.status, data);
+    } catch (e) {
+      sendJson(res, 502, { error: `Upstream error: ${e.message}` });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/thrio-data/pstnnumbers") {
+    let body;
+    try { body = await readJson(req); } catch { sendJson(res, 400, { error: "JSON inválido." }); return; }
+
+    const number = String(body.number || "").trim();
+    const description = String(body.description || "").trim();
+    const provider = String(body.provider || "").trim();
+
+    if (!number || !description || !provider) {
+      sendJson(res, 400, { error: "number, description y provider son requeridos." });
+      return;
+    }
+
+    try {
+      const payload = buildThrioPstnNumberPayload(number, description, provider);
+      const upstream = await fetch(`${thrioConfig.dataBaseUrl}/pstnnumber`, {
+        method: "POST",
+        headers: thrioHeaders,
+        body: JSON.stringify(payload)
+      });
+      const data = await upstream.json().catch(() => ({}));
+      sendJson(res, upstream.status, Object.keys(data).length ? data : { ok: upstream.ok });
     } catch (e) {
       sendJson(res, 502, { error: `Upstream error: ${e.message}` });
     }

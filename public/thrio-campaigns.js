@@ -7,11 +7,14 @@ let sortCol = "name";
 let sortDir = 1;
 let widgetLanguage = "es";
 
+const ADDRESS_PROVIDERS = ["Bandwidth", "Chat", "External SIP", "Inteliquent", "Other SIP", "WhatsApp"];
+
 const I18N = {
   es: {
     page_title: "NCC — Gestión de Campañas SMS",
     tab_campaigns: "Campañas NCC",
     tab_create: "Crear campaña",
+    tab_address: "Address",
     missing_campaign_title: "Campaña no especificada",
     missing_campaign_text: 'Accede con el parámetro <code>?campaign=id</code> en la URL. Contacta al administrador para obtener tu enlace.',
     search_placeholder: "Buscar por nombre, ID, teléfono, workflow…",
@@ -73,12 +76,32 @@ const I18N = {
     bulk_ok_count: "✓ {count} exitosos",
     bulk_err_count: "✗ {count} errores",
     bulk_complete: "Cargue completo: {ok} ok, {err} errores.",
-    file_read_error: "Error leyendo el archivo."
+    file_read_error: "Error leyendo el archivo.",
+    address_single_title: "Crear Address individual",
+    address_number_label: "Número",
+    address_number_placeholder: "+19092502944",
+    address_provider_label: "Provider type",
+    address_select_provider: "— Selecciona provider —",
+    address_description_label: "Description",
+    address_description_placeholder: "Block Core Group Inc",
+    create_address: "Crear Address",
+    creating_address: "Creando Address…",
+    address_created: 'Address "{number}" creado.',
+    enter_address_number: "Ingresa el número.",
+    enter_address_description: "Ingresa la descripción.",
+    select_address_provider: "Selecciona un provider.",
+    invalid_address_provider: "Provider inválido: {provider}",
+    address_bulk_title: "Carga masiva de Address",
+    address_file_format_title: "Formato del archivo (.xlsx / .xls / .csv)",
+    address_file_format_text: "3 columnas: <code>number</code> &nbsp;|&nbsp; <code>description</code> &nbsp;|&nbsp; <code>provider</code>",
+    missing_address_bulk_fields: "Faltan campos: number, description o provider",
+    address_bulk_complete: "Cargue de Address completo: {ok} ok, {err} errores."
   },
   en: {
     page_title: "NCC — SMS Campaign Management",
     tab_campaigns: "NCC Campaigns",
     tab_create: "Create campaign",
+    tab_address: "Address",
     missing_campaign_title: "Campaign not specified",
     missing_campaign_text: 'Open this page with the <code>?campaign=id</code> URL parameter. Contact your administrator for your link.',
     search_placeholder: "Search by name, ID, phone, workflow…",
@@ -140,7 +163,26 @@ const I18N = {
     bulk_ok_count: "✓ {count} successful",
     bulk_err_count: "✗ {count} errors",
     bulk_complete: "Upload complete: {ok} ok, {err} errors.",
-    file_read_error: "Error reading the file."
+    file_read_error: "Error reading the file.",
+    address_single_title: "Create individual Address",
+    address_number_label: "Number",
+    address_number_placeholder: "+19092502944",
+    address_provider_label: "Provider type",
+    address_select_provider: "— Select provider —",
+    address_description_label: "Description",
+    address_description_placeholder: "Block Core Group Inc",
+    create_address: "Create Address",
+    creating_address: "Creating Address…",
+    address_created: 'Address "{number}" created.',
+    enter_address_number: "Enter the number.",
+    enter_address_description: "Enter the description.",
+    select_address_provider: "Select a provider.",
+    invalid_address_provider: "Invalid provider: {provider}",
+    address_bulk_title: "Bulk Address upload",
+    address_file_format_title: "File format (.xlsx / .xls / .csv)",
+    address_file_format_text: "3 columns: <code>number</code> &nbsp;|&nbsp; <code>description</code> &nbsp;|&nbsp; <code>provider</code>",
+    missing_address_bulk_fields: "Missing fields: number, description, or provider",
+    address_bulk_complete: "Address upload complete: {ok} ok, {err} errors."
   }
 };
 
@@ -454,6 +496,41 @@ async function createSingleCampaign() {
   }
 }
 
+// ── Crear Address ─────────────────────────────────────────────────────────
+function normalizeAddressProvider(provider) {
+  const value = String(provider || "").trim();
+  return ADDRESS_PROVIDERS.find((item) => item.toLowerCase() === value.toLowerCase()) || "";
+}
+
+async function createAddress(number, description, provider) {
+  return apiPost(apiPath("/api/thrio-data/pstnnumbers"), { number, description, provider });
+}
+
+async function createSingleAddress() {
+  const number = document.getElementById("addressNumber").value.trim();
+  const description = document.getElementById("addressDescription").value.trim();
+  const provider = normalizeAddressProvider(document.getElementById("addressProvider").value);
+
+  if (!number) { showToast(translate("enter_address_number"), true); return; }
+  if (!description) { showToast(translate("enter_address_description"), true); return; }
+  if (!provider) { showToast(translate("select_address_provider"), true); return; }
+
+  const btn = document.getElementById("createAddressBtn");
+  btn.disabled = true; btn.textContent = translate("creating_address");
+  try {
+    await createAddress(number, description, provider);
+    showToast(translate("address_created", { number }));
+    document.getElementById("addressNumber").value = "";
+    document.getElementById("addressDescription").value = "";
+    document.getElementById("addressProvider").value = "";
+    await loadPhoneNumbers();
+  } catch (e) {
+    showToast(e.message, true);
+  } finally {
+    btn.disabled = false; btn.textContent = translate("create_address");
+  }
+}
+
 // ── Bulk upload ───────────────────────────────────────────────────────────
 const dropzone = document.getElementById("dropzone");
 dropzone.addEventListener("dragover", (e) => { e.preventDefault(); dropzone.classList.add("drag-over"); });
@@ -520,6 +597,79 @@ async function handleBulkFile(file) {
   showToast(translate("bulk_complete", { ok, err }), err > 0 && ok === 0);
   if (ok > 0) loadPhoneNumbers();
   document.getElementById("bulkFileInput").value = "";
+}
+
+// ── Address bulk upload ───────────────────────────────────────────────────
+const addressDropzone = document.getElementById("addressDropzone");
+addressDropzone.addEventListener("dragover", (e) => { e.preventDefault(); addressDropzone.classList.add("drag-over"); });
+addressDropzone.addEventListener("dragleave", () => addressDropzone.classList.remove("drag-over"));
+addressDropzone.addEventListener("drop", (e) => {
+  e.preventDefault(); addressDropzone.classList.remove("drag-over");
+  if (e.dataTransfer.files[0]) handleAddressBulkFile(e.dataTransfer.files[0]);
+});
+
+async function handleAddressBulkFile(file) {
+  if (!file) return;
+  if (!selectedCampaignId) { showToast(translate("no_campaign_url"), true); return; }
+  let rows;
+  try { rows = await parseFile(file); }
+  catch (e) { showToast(translate("read_error", { message: e.message }), true); return; }
+  if (!rows.length) { showToast(translate("empty_file"), true); return; }
+
+  const progress = document.getElementById("addressBulkProgress");
+  const fill = document.getElementById("addressProgressFill");
+  const progressText = document.getElementById("addressProgressText");
+  const bulkLog = document.getElementById("addressBulkLog");
+  const bulkLogRows = document.getElementById("addressBulkLogRows");
+
+  progress.style.display = "block"; bulkLog.style.display = "none";
+  bulkLogRows.innerHTML = ""; fill.style.width = "0%";
+
+  const log = []; let ok = 0, err = 0;
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const number = String(row.number || row.numero || row.número || row.Number || row.NUMBER || "").trim();
+    const description = String(row.description || row.Description || row.DESCRIPTION || row.descripcion || row.descripción || "").trim();
+    const rawProvider = String(row.provider || row.Provider || row.PROVIDER || "").trim();
+    const provider = normalizeAddressProvider(rawProvider);
+    const rowLabel = translate("row_label", { index: i + 2 });
+
+    fill.style.width = `${Math.round(((i + 1) / rows.length) * 100)}%`;
+    progressText.textContent = translate("processing_row", { index: i + 1, total: rows.length, name: number || rowLabel });
+
+    if (!number || !description || !rawProvider) {
+      log.push({ name: number || rowLabel, ok: false, msg: translate("missing_address_bulk_fields") });
+      err++; continue;
+    }
+    if (!provider) {
+      log.push({ name: number || rowLabel, ok: false, msg: translate("invalid_address_provider", { provider: rawProvider }) });
+      err++; continue;
+    }
+    try {
+      await createAddress(number, description, provider);
+      log.push({ name: number, ok: true, msg: translate("created_ok") });
+      ok++;
+    } catch (e) {
+      log.push({ name: number, ok: false, msg: e.message });
+      err++;
+    }
+  }
+
+  progress.style.display = "none";
+  bulkLog.style.display = "block";
+  document.getElementById("addressBulkOkCount").textContent = translate("bulk_ok_count", { count: ok });
+  document.getElementById("addressBulkErrCount").textContent = translate("bulk_err_count", { count: err });
+  bulkLogRows.innerHTML = log.map((item) => `
+    <div class="tc-log-row ${item.ok ? "ok" : "err"}">
+      <div class="tc-log-icon">${item.ok ? "✅" : "❌"}</div>
+      <div class="tc-log-name">${escHtml(item.name)}</div>
+      <div class="tc-log-msg">${escHtml(item.msg)}</div>
+    </div>`).join("");
+
+  showToast(translate("address_bulk_complete", { ok, err }), err > 0 && ok === 0);
+  if (ok > 0) loadPhoneNumbers();
+  document.getElementById("addressBulkFileInput").value = "";
 }
 
 function parseFile(file) {

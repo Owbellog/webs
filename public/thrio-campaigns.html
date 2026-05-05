@@ -129,7 +129,7 @@
       .tc-dropzone-icon { font-size: 2.2rem; margin-bottom: 10px; }
       .tc-dropzone-text { font-weight: 600; color: var(--brand); margin-bottom: 4px; }
       .tc-dropzone-sub { font-size: 0.82rem; color: var(--muted); }
-      #bulkFileInput { display: none; }
+      #bulkFileInput, #addressBulkFileInput { display: none; }
 
       .tc-bulk-log { margin-top: 20px; border: 1px solid var(--line-soft); border-radius: 12px; overflow: hidden; }
       .tc-bulk-log-header {
@@ -191,6 +191,7 @@
       <nav class="tc-tabs">
         <button class="tc-tab active" data-tab="campaigns" data-i18n="tab_campaigns">Campañas NCC</button>
         <button class="tc-tab" data-tab="create" data-i18n="tab_create">Crear campaña</button>
+        <button class="tc-tab" data-tab="address" data-i18n="tab_address">Address</button>
       </nav>
 
       <!-- Sin campaña en URL -->
@@ -302,6 +303,68 @@
                 </div>
               </div>
               <div class="tc-log-rows" id="bulkLogRows"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB: Address -->
+        <div class="tc-panel" id="panel-address">
+          <div class="tc-card">
+            <div class="tc-card-title" data-i18n="address_single_title">Crear Address individual</div>
+            <div class="tc-form-row">
+              <div class="tc-field">
+                <label class="tc-label" data-i18n="address_number_label">Número</label>
+                <input class="tc-input" id="addressNumber" type="text" placeholder="+19092502944" data-i18n-placeholder="address_number_placeholder" />
+              </div>
+              <div class="tc-field">
+                <label class="tc-label" data-i18n="address_provider_label">Provider type</label>
+                <select class="tc-select-input" id="addressProvider">
+                  <option value="" data-i18n="address_select_provider">— Selecciona provider —</option>
+                  <option value="Bandwidth">Bandwidth</option>
+                  <option value="Chat">Chat</option>
+                  <option value="External SIP">External SIP</option>
+                  <option value="Inteliquent">Inteliquent</option>
+                  <option value="Other SIP">Other SIP</option>
+                  <option value="WhatsApp">WhatsApp</option>
+                </select>
+              </div>
+            </div>
+            <div class="tc-form-row single">
+              <div class="tc-field">
+                <label class="tc-label" data-i18n="address_description_label">Description</label>
+                <input class="tc-input" id="addressDescription" type="text" placeholder="Block Core Group Inc" data-i18n-placeholder="address_description_placeholder" />
+              </div>
+            </div>
+            <div style="margin-top:8px;">
+              <button class="tc-btn tc-btn-primary" id="createAddressBtn" onclick="createSingleAddress()" data-i18n="create_address">Crear Address</button>
+            </div>
+          </div>
+
+          <div class="tc-card">
+            <div class="tc-card-title" data-i18n="address_bulk_title">Carga masiva de Address</div>
+            <div class="tc-template-hint">
+              <strong data-i18n="address_file_format_title">Formato del archivo (.xlsx / .xls / .csv)</strong>
+              <span data-i18n-html="address_file_format_text">3 columnas: <code>number</code> &nbsp;|&nbsp; <code>description</code> &nbsp;|&nbsp; <code>provider</code></span>
+            </div>
+            <div class="tc-dropzone" id="addressDropzone" onclick="document.getElementById('addressBulkFileInput').click()">
+              <div class="tc-dropzone-icon">📂</div>
+              <div class="tc-dropzone-text" data-i18n="dropzone_text">Haz clic o arrastra tu archivo aquí</div>
+              <div class="tc-dropzone-sub" data-i18n="dropzone_sub">Formatos: .xlsx, .xls, .csv</div>
+            </div>
+            <input type="file" id="addressBulkFileInput" accept=".xlsx,.xls,.csv" onchange="handleAddressBulkFile(this.files[0])" />
+            <div class="tc-progress" id="addressBulkProgress" style="display:none;">
+              <div class="tc-progress-bar"><div class="tc-progress-fill" id="addressProgressFill"></div></div>
+              <div class="tc-progress-text" id="addressProgressText" data-i18n="processing">Procesando…</div>
+            </div>
+            <div class="tc-bulk-log" id="addressBulkLog" style="display:none;">
+              <div class="tc-bulk-log-header">
+                <span data-i18n="upload_result">Resultado del cargue</span>
+                <div class="tc-bulk-summary">
+                  <span class="tc-bulk-ok" id="addressBulkOkCount" data-i18n="bulk_ok_zero">✓ 0 exitosos</span>
+                  <span class="tc-bulk-err" id="addressBulkErrCount" data-i18n="bulk_err_zero">✗ 0 errores</span>
+                </div>
+              </div>
+              <div class="tc-log-rows" id="addressBulkLogRows"></div>
             </div>
           </div>
         </div>
