@@ -9,8 +9,8 @@ let widgetLanguage = "es";
 
 const I18N = {
   es: {
-    page_title: "Thrio — Gestión de Campañas SMS",
-    tab_campaigns: "Campañas Thrio",
+    page_title: "NCC — Gestión de Campañas SMS",
+    tab_campaigns: "Campañas NCC",
     tab_create: "Crear campaña",
     missing_campaign_title: "Campaña no especificada",
     missing_campaign_text: 'Accede con el parámetro <code>?campaign=id</code> en la URL. Contacta al administrador para obtener tu enlace.',
@@ -24,7 +24,7 @@ const I18N = {
     table_phones: "Teléfonos",
     table_actions: "Acciones",
     loading: "Cargando…",
-    loading_campaigns: "Cargando campañas de Thrio…",
+    loading_campaigns: "Cargando campañas de NCC…",
     no_results: "Sin resultados.",
     create_single_title: "Crear campaña individual",
     campaign_name_label: "Nombre de la campaña",
@@ -33,7 +33,7 @@ const I18N = {
     loading_numbers: "— Cargando números… —",
     no_numbers: "— Sin números disponibles —",
     select_number: "— Selecciona un número —",
-    caller_id_hint: "Números sin asignar en Thrio",
+    caller_id_hint: "Números sin asignar en NCC",
     loading_workflows: "— Cargando workflows… —",
     no_workflows: "— Sin workflows —",
     select_workflow: "— Selecciona un workflow —",
@@ -76,8 +76,8 @@ const I18N = {
     file_read_error: "Error leyendo el archivo."
   },
   en: {
-    page_title: "Thrio — SMS Campaign Management",
-    tab_campaigns: "Thrio Campaigns",
+    page_title: "NCC — SMS Campaign Management",
+    tab_campaigns: "NCC Campaigns",
     tab_create: "Create campaign",
     missing_campaign_title: "Campaign not specified",
     missing_campaign_text: 'Open this page with the <code>?campaign=id</code> URL parameter. Contact your administrator for your link.',
@@ -91,7 +91,7 @@ const I18N = {
     table_phones: "Phones",
     table_actions: "Actions",
     loading: "Loading…",
-    loading_campaigns: "Loading Thrio campaigns…",
+    loading_campaigns: "Loading NCC campaigns…",
     no_results: "No results.",
     create_single_title: "Create individual campaign",
     campaign_name_label: "Campaign name",
@@ -100,7 +100,7 @@ const I18N = {
     loading_numbers: "— Loading numbers… —",
     no_numbers: "— No numbers available —",
     select_number: "— Select a number —",
-    caller_id_hint: "Unassigned numbers in Thrio",
+    caller_id_hint: "Unassigned numbers in NCC",
     loading_workflows: "— Loading workflows… —",
     no_workflows: "— No workflows —",
     select_workflow: "— Select a workflow —",
@@ -257,7 +257,7 @@ async function initCampaign() {
   loadWorkflows();
 }
 
-// ── Campañas Thrio ────────────────────────────────────────────────────────
+// ── Campañas NCC ──────────────────────────────────────────────────────────
 async function loadThrioCampaigns() {
   const tbody = document.getElementById("campaignTableBody");
   tbody.innerHTML = `<tr><td colspan="5" class="tc-loading">${translate("loading_campaigns")}</td></tr>`;
@@ -384,7 +384,7 @@ function exportCampaigns() {
   const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url; a.download = `thrio-campaigns-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.href = url; a.download = `ncc-campaigns-${new Date().toISOString().slice(0, 10)}.csv`;
   a.click(); URL.revokeObjectURL(url);
   showToast(translate("exported"));
 }
