@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Thrio — Gestión de Campañas SMS</title>
+    <title>Thrio — SMS Campaign Management</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
@@ -189,15 +189,15 @@
 
       <!-- Tabs -->
       <nav class="tc-tabs">
-        <button class="tc-tab active" data-tab="campaigns">Campañas Thrio</button>
-        <button class="tc-tab" data-tab="create">Crear campaña</button>
+        <button class="tc-tab active" data-tab="campaigns" data-i18n="tab_campaigns">Campañas Thrio</button>
+        <button class="tc-tab" data-tab="create" data-i18n="tab_create">Crear campaña</button>
       </nav>
 
       <!-- Sin campaña en URL -->
       <div class="tc-no-campaign" id="noCampaignMsg" style="display:none;">
         <div class="tc-no-campaign-icon">🔗</div>
-        <h2>Campaña no especificada</h2>
-        <p>Accede con el parámetro <code>?campaign=id</code> en la URL. Contacta al administrador para obtener tu enlace.</p>
+        <h2 data-i18n="missing_campaign_title">Campaña no especificada</h2>
+        <p data-i18n-html="missing_campaign_text">Accede con el parámetro <code>?campaign=id</code> en la URL. Contacta al administrador para obtener tu enlace.</p>
       </div>
 
       <!-- Contenido principal -->
@@ -206,32 +206,32 @@
         <!-- TAB: Campañas Thrio -->
         <div class="tc-panel active" id="panel-campaigns">
           <div class="tc-toolbar">
-            <input class="tc-search" id="campaignSearch" type="text" placeholder="Buscar por nombre, ID, teléfono, workflow…" />
+            <input class="tc-search" id="campaignSearch" type="text" placeholder="Buscar por nombre, ID, teléfono, workflow…" data-i18n-placeholder="search_placeholder" />
             <select class="tc-select-filter" id="filterField">
-              <option value="all">Todos los campos</option>
-              <option value="name">Nombre</option>
+              <option value="all" data-i18n="filter_all">Todos los campos</option>
+              <option value="name" data-i18n="filter_name">Nombre</option>
               <option value="id">Campaign ID</option>
-              <option value="addresses">Teléfono</option>
+              <option value="addresses" data-i18n="filter_phone">Teléfono</option>
               <option value="workflowId">Workflow ID</option>
             </select>
             <span class="tc-count" id="campaignCount"></span>
-            <button class="tc-btn tc-btn-ghost" onclick="exportCampaigns()">⬇ Exportar CSV</button>
-            <button class="tc-btn tc-btn-primary" onclick="loadThrioCampaigns()">↺ Actualizar</button>
+            <button class="tc-btn tc-btn-ghost" onclick="exportCampaigns()" data-i18n="export_csv">⬇ Exportar CSV</button>
+            <button class="tc-btn tc-btn-primary" onclick="loadThrioCampaigns()" data-i18n="refresh">↺ Actualizar</button>
           </div>
 
           <div class="tc-table-wrap">
             <table class="tc-table">
               <thead>
                 <tr>
-                  <th data-col="name">Nombre <span class="sort-icon">↕</span></th>
+                  <th data-col="name"><span data-i18n="table_name">Nombre</span> <span class="sort-icon">↕</span></th>
                   <th data-col="id">Campaign ID <span class="sort-icon">↕</span></th>
-                  <th data-col="addresses">Teléfonos</th>
+                  <th data-col="addresses" data-i18n="table_phones">Teléfonos</th>
                   <th data-col="workflowId">Workflow ID <span class="sort-icon">↕</span></th>
-                  <th>Acciones</th>
+                  <th data-i18n="table_actions">Acciones</th>
                 </tr>
               </thead>
               <tbody id="campaignTableBody">
-                <tr><td colspan="5" class="tc-loading">Cargando…</td></tr>
+                <tr><td colspan="5" class="tc-loading" data-i18n="loading">Cargando…</td></tr>
               </tbody>
             </table>
           </div>
@@ -240,32 +240,32 @@
         <!-- TAB: Crear -->
         <div class="tc-panel" id="panel-create">
           <div class="tc-card">
-            <div class="tc-card-title">Crear campaña individual</div>
+            <div class="tc-card-title" data-i18n="create_single_title">Crear campaña individual</div>
             <div class="tc-form-row single">
               <div class="tc-field">
-                <label class="tc-label">Nombre de la campaña</label>
-                <input class="tc-input" id="newName" type="text" placeholder="Ej: SMS Outreach Q3" />
+                <label class="tc-label" data-i18n="campaign_name_label">Nombre de la campaña</label>
+                <input class="tc-input" id="newName" type="text" placeholder="Ej: SMS Outreach Q3" data-i18n-placeholder="campaign_name_placeholder" />
               </div>
             </div>
             <div class="tc-form-row">
               <div class="tc-field">
-                <label class="tc-label">Caller ID (número de salida)</label>
+                <label class="tc-label" data-i18n="caller_id_label">Caller ID (número de salida)</label>
                 <select class="tc-select-input" id="newCallerId">
-                  <option value="">— Cargando números… —</option>
+                  <option value="" data-i18n="loading_numbers">— Cargando números… —</option>
                 </select>
-                <span class="tc-hint">Números sin asignar en Thrio</span>
+                <span class="tc-hint" data-i18n="caller_id_hint">Números sin asignar en Thrio</span>
               </div>
               <div class="tc-field">
                 <label class="tc-label">Workflow</label>
                 <select class="tc-select-input" id="newWorkflowId">
-                  <option value="">— Cargando workflows… —</option>
+                  <option value="" data-i18n="loading_workflows">— Cargando workflows… —</option>
                 </select>
               </div>
             </div>
             <div class="tc-form-row">
               <div class="tc-field">
                 <label class="tc-label">useForSMS</label>
-                <div class="tc-fixed-badge">✓ true (fijo)</div>
+                <div class="tc-fixed-badge" data-i18n="fixed_true">✓ true (fijo)</div>
               </div>
               <div class="tc-field">
                 <label class="tc-label">autoDispositionId</label>
@@ -273,32 +273,32 @@
               </div>
             </div>
             <div style="margin-top:8px;">
-              <button class="tc-btn tc-btn-primary" id="createBtn" onclick="createSingleCampaign()">Crear campaña</button>
+              <button class="tc-btn tc-btn-primary" id="createBtn" onclick="createSingleCampaign()" data-i18n="create_campaign">Crear campaña</button>
             </div>
           </div>
 
           <div class="tc-card">
-            <div class="tc-card-title">Carga masiva desde Excel</div>
+            <div class="tc-card-title" data-i18n="bulk_title">Carga masiva desde Excel</div>
             <div class="tc-template-hint">
-              <strong>Formato del archivo (.xlsx / .xls / .csv)</strong>
-              3 columnas: <code>name</code> &nbsp;|&nbsp; <code>callerId</code> &nbsp;|&nbsp; <code>workflowId</code>
+              <strong data-i18n="file_format_title">Formato del archivo (.xlsx / .xls / .csv)</strong>
+              <span data-i18n-html="file_format_text">3 columnas: <code>name</code> &nbsp;|&nbsp; <code>callerId</code> &nbsp;|&nbsp; <code>workflowId</code></span>
             </div>
             <div class="tc-dropzone" id="dropzone" onclick="document.getElementById('bulkFileInput').click()">
               <div class="tc-dropzone-icon">📂</div>
-              <div class="tc-dropzone-text">Haz clic o arrastra tu archivo aquí</div>
-              <div class="tc-dropzone-sub">Formatos: .xlsx, .xls, .csv</div>
+              <div class="tc-dropzone-text" data-i18n="dropzone_text">Haz clic o arrastra tu archivo aquí</div>
+              <div class="tc-dropzone-sub" data-i18n="dropzone_sub">Formatos: .xlsx, .xls, .csv</div>
             </div>
             <input type="file" id="bulkFileInput" accept=".xlsx,.xls,.csv" onchange="handleBulkFile(this.files[0])" />
             <div class="tc-progress" id="bulkProgress" style="display:none;">
               <div class="tc-progress-bar"><div class="tc-progress-fill" id="progressFill"></div></div>
-              <div class="tc-progress-text" id="progressText">Procesando…</div>
+              <div class="tc-progress-text" id="progressText" data-i18n="processing">Procesando…</div>
             </div>
             <div class="tc-bulk-log" id="bulkLog" style="display:none;">
               <div class="tc-bulk-log-header">
-                <span>Resultado del cargue</span>
+                <span data-i18n="upload_result">Resultado del cargue</span>
                 <div class="tc-bulk-summary">
-                  <span class="tc-bulk-ok" id="bulkOkCount">✓ 0 exitosos</span>
-                  <span class="tc-bulk-err" id="bulkErrCount">✗ 0 errores</span>
+                  <span class="tc-bulk-ok" id="bulkOkCount" data-i18n="bulk_ok_zero">✓ 0 exitosos</span>
+                  <span class="tc-bulk-err" id="bulkErrCount" data-i18n="bulk_err_zero">✗ 0 errores</span>
                 </div>
               </div>
               <div class="tc-log-rows" id="bulkLogRows"></div>
