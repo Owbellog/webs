@@ -203,6 +203,17 @@ function asList(data, ...keys) {
   return [];
 }
 
+function phoneValueFromAddress(address) {
+  if (!address || typeof address !== "object") return String(address || "");
+  const candidates = [
+    address.number,
+    address.address,
+    address.name,
+    address.phoneNumber?.number
+  ];
+  return String(candidates.find((value) => /^\+?\d[\d\s().-]*$/.test(String(value || "").trim())) || "").trim();
+}
+
 function translate(key, vars = {}) {
   const dictionary = I18N[widgetLanguage] || I18N.es;
   const template = dictionary[key] || I18N.es[key] || key;
@@ -441,10 +452,11 @@ async function loadPhoneNumbers() {
     if (!numbers.length) { sel.innerHTML = `<option value="">${translate("no_numbers")}</option>`; return; }
     sel.innerHTML = `<option value="">${translate("select_number")}</option>` +
       numbers.map((n) => {
-        const val = n.number || n.address || n.pstnnumberId || n._id || String(n);
+        const val = phoneValueFromAddress(n);
         const label = n.name || n.number || n.address || val;
+        if (!val) return "";
         return `<option value="${escHtml(val)}">${escHtml(label)}</option>`;
-      }).join("");
+      }).filter(Boolean).join("");
   } catch (e) {
     sel.innerHTML = `<option value="">${translate("load_failed")}</option>`;
     showToast(translate("numbers_error", { message: e.message }), true);
