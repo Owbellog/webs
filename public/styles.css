@@ -3887,16 +3887,18 @@ body.embedded .sentiment-bar-board {
 }
 
 .copilot-shell {
-  min-height: 100vh;
+  height: 100vh;
   padding: 12px;
   display: grid;
   gap: 12px;
-  align-content: start;
+  grid-template-rows: auto 1fr;
+  overflow: hidden;
 }
 
 .copilot-guidance,
 .copilot-panel {
   width: 100%;
+  min-height: 0;
 }
 
 .copilot-guidance-card,
@@ -3911,6 +3913,8 @@ body.embedded .sentiment-bar-board {
   padding: 14px;
   display: grid;
   gap: 10px;
+  overflow-y: auto;
+  max-height: 35vh;
 }
 
 .copilot-guidance-card.refreshed {
@@ -4020,9 +4024,12 @@ body.embedded .sentiment-bar-board {
 }
 
 .copilot-panel {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
   padding: 14px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .copilot-panel-header {
@@ -4051,8 +4058,8 @@ body.embedded .sentiment-bar-board {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  min-height: 180px;
-  max-height: min(44vh, 340px);
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 2px 2px 4px;
 }

@@ -541,14 +541,75 @@ document.getElementById("listsContainer").addEventListener("click", async (e) =>
 const listModal = document.getElementById("listModal");
 const listModalAlert = document.getElementById("listModalAlert");
 
+function showListStep(step) {
+  document.getElementById("listStep1").hidden = step !== 1;
+  document.getElementById("listStep2").hidden = step !== 2;
+}
+
 document.getElementById("newListBtn").addEventListener("click", () => {
   clearModalAlert(listModalAlert);
   document.getElementById("listName").value = "";
   document.getElementById("listDescription").value = "";
+  showListStep(1);
+  renderListContactPicker();
   listModal.classList.remove("hidden");
 });
+
 document.getElementById("listModalCancel").addEventListener("click", () => listModal.classList.add("hidden"));
+
+document.getElementById("listSelectAll").addEventListener("click", () => {
+  document.querySelectorAll("#listContactList input[type='checkbox']").forEach(i => { i.checked = true; });
+  updateListContactCount();
+});
+document.getElementById("listClearAll").addEventListener("click", () => {
+  document.querySelectorAll("#listContactList input[type='checkbox']").forEach(i => { i.checked = false; });
+  updateListContactCount();
+});
+
+document.getElementById("listStepNext").addEventListener("click", () => {
+  const checked = document.querySelectorAll("#listContactList input:checked").length;
+  if (!checked) { showModalAlert(listModalAlert, "Select at least one contact."); return; }
+  clearModalAlert(listModalAlert);
+  showListStep(2);
+});
+
+document.getElementById("listStepBack").addEventListener("click", () => {
+  clearModalAlert(listModalAlert);
+  showListStep(1);
+});
+
 document.getElementById("listModalSave").addEventListener("click", createList);
+
+function updateListContactCount() {
+  const total = document.querySelectorAll("#listContactList input[type='checkbox']").length;
+  const checked = document.querySelectorAll("#listContactList input:checked").length;
+  document.getElementById("listContactCount").textContent = `${checked} / ${total} seleccionados`;
+}
+
+function renderListContactPicker() {
+  const listEl = document.getElementById("listContactList");
+  const eligible = allContacts
+    .filter(c => c.call_priority < INELIGIBLE_PRIORITY)
+    .sort((a, b) => (b.call_priority || 0) - (a.call_priority || 0));
+
+  if (!eligible.length) {
+    listEl.innerHTML = `<div style="padding:16px;text-align:center;color:var(--muted);">No eligible contacts found.</div>`;
+    document.getElementById("listContactCount").textContent = "";
+    return;
+  }
+
+  listEl.innerHTML = eligible.map(c => {
+    const name = `${c.firstName || ""} ${c.lastName || ""}`.trim();
+    const cid = escHtml(getContactKey(c));
+    return `<label class="w-check-item">
+      <input type="checkbox" value="${cid}" checked />
+      ${priorityChip(c.call_priority, allContacts.length)} ${escHtml(name)} — ${escHtml(c.shift_type || c.trade || "—")} (${c.seniority_years || 0}y)
+    </label>`;
+  }).join("");
+
+  document.getElementById("listContactList").addEventListener("change", updateListContactCount);
+  updateListContactCount();
+}
 
 async function createList() {
   const btn = document.getElementById("listModalSave");
@@ -556,13 +617,17 @@ async function createList() {
   const description = document.getElementById("listDescription").value.trim();
   if (!name) { showModalAlert(listModalAlert, "List name is required."); return; }
 
+  const selectedContactIds = Array.from(
+    document.querySelectorAll("#listContactList input:checked")
+  ).map(i => i.value);
+
   btn.disabled = true;
   btn.textContent = "Creating…";
   clearModalAlert(listModalAlert);
   try {
-    const data = await apiPost("/api/wieland/lists", { name, description });
+    const data = await apiPost("/api/wieland/lists", { name, description, selectedContactIds });
     listModal.classList.add("hidden");
-    showToast(`List created with ${data.contactsInCsv || 0} eligible contacts.`);
+    showToast(`List created with ${data.contactsInCsv || 0} contacts.`);
     await loadLists();
   } catch (err) {
     showModalAlert(listModalAlert, err.message);
@@ -653,13 +718,8 @@ async function assignContacts() {
     const c = allContacts.find(x => getContactKey(x) === exId);
     if (!c) return null;
     return {
+      ...c,
       name: `${c.firstName || ""} ${c.lastName || ""}`.trim(),
-      firstName: c.firstName || "",
-      lastName: c.lastName || "",
-      phone: c.phone || "",
-      mobile: c.mobile || "",
-      email: c.email || "",
-      externalId: c.externalId || "",
       outboundListId: listId
     };
   }).filter(Boolean);

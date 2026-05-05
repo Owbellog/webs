@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Thrio — Gestión de Campañas SMS</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css" />
+    <style>
+      .tc-shell { min-height: 100vh; display: flex; flex-direction: column; }
+
+      .tc-header {
+        display: flex; align-items: center; gap: 14px;
+        padding: 14px 32px; background: white;
+        border-bottom: 1px solid var(--line-soft);
+        position: sticky; top: 0; z-index: 100; flex-wrap: wrap;
+      }
+      .tc-header-brand { font-size: 1.1rem; font-weight: 800; color: var(--brand); letter-spacing: -0.03em; }
+      .tc-header-sep { color: var(--line); font-size: 1.2rem; }
+
+      .tc-campaign-badge {
+        font-size: 0.75rem; padding: 3px 9px; border-radius: 20px;
+        background: #eef1fb; color: var(--brand); font-weight: 700;
+        border: 1px solid #c5cef0; white-space: nowrap;
+      }
+
+      .tc-tabs {
+        display: flex; background: white;
+        border-bottom: 1px solid var(--line-soft); padding: 0 32px;
+      }
+      .tc-tab {
+        padding: 12px 18px; font-weight: 600; font-size: 0.9rem;
+        color: var(--muted); border-bottom: 3px solid transparent;
+        cursor: pointer; background: none; border-top: none;
+        border-left: none; border-right: none; transition: all 0.15s;
+      }
+      .tc-tab:hover { color: var(--brand); }
+      .tc-tab.active { color: var(--brand); border-bottom-color: var(--brand); }
+
+      /* No-campaign overlay */
+      .tc-no-campaign {
+        flex: 1; display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        gap: 12px; padding: 60px 32px; text-align: center;
+        color: var(--muted);
+      }
+      .tc-no-campaign-icon { font-size: 2.8rem; }
+      .tc-no-campaign h2 { margin: 0; font-size: 1.1rem; color: var(--brand); }
+      .tc-no-campaign p { margin: 0; font-size: 0.88rem; max-width: 340px; }
+
+      .tc-content { flex: 1; padding: 28px 32px; max-width: 1200px; width: 100%; margin: 0 auto; }
+      .tc-panel { display: none; }
+      .tc-panel.active { display: block; }
+
+      .tc-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
+      .tc-search {
+        flex: 1; min-width: 220px; padding: 9px 14px;
+        border: 1px solid var(--line-soft); border-radius: 10px;
+        font-family: inherit; font-size: 0.9rem; background: white;
+      }
+      .tc-search:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px rgba(28,40,83,.08); }
+      .tc-select-filter {
+        padding: 9px 12px; border: 1px solid var(--line-soft); border-radius: 10px;
+        font-family: inherit; font-size: 0.85rem; background: white; cursor: pointer;
+      }
+      .tc-btn {
+        padding: 9px 18px; border: none; border-radius: 10px;
+        font-family: inherit; font-size: 0.88rem; font-weight: 600;
+        cursor: pointer; transition: all 0.15s; white-space: nowrap;
+      }
+      .tc-btn-primary { background: var(--brand); color: white; }
+      .tc-btn-primary:hover { background: #263870; }
+      .tc-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+      .tc-btn-ghost { background: white; color: var(--brand); border: 1.5px solid var(--line-soft); }
+      .tc-btn-ghost:hover { border-color: var(--brand); background: #f0f4ff; }
+      .tc-btn-danger { background: #fff5f5; color: #b42318; border: 1.5px solid #f5c2bd; }
+      .tc-btn-danger:hover { background: #ffe4e1; border-color: #e5483f; }
+      .tc-count { font-size: 0.82rem; color: var(--muted); white-space: nowrap; }
+
+      .tc-table-wrap { overflow-x: auto; background: white; border-radius: 14px; border: 1px solid var(--line-soft); }
+      .tc-table { width: 100%; border-collapse: collapse; font-size: 0.87rem; }
+      .tc-table th {
+        text-align: left; padding: 11px 14px; background: #f8f9fc;
+        font-weight: 700; font-size: 0.8rem; color: var(--muted);
+        text-transform: uppercase; letter-spacing: 0.04em;
+        border-bottom: 1px solid var(--line-soft);
+        cursor: pointer; user-select: none; white-space: nowrap;
+      }
+      .tc-table th:hover { color: var(--brand); }
+      .tc-table th .sort-icon { font-size: 0.7rem; margin-left: 4px; opacity: 0.5; }
+      .tc-table th.sorted .sort-icon { opacity: 1; color: var(--brand); }
+      .tc-table td { padding: 10px 14px; border-bottom: 1px solid var(--line-soft); vertical-align: middle; }
+      .tc-table tr:last-child td { border-bottom: none; }
+      .tc-table tr:hover td { background: #f8f9fc; }
+      .tc-table .mono { font-family: "SF Mono", Monaco, monospace; font-size: 0.78rem; color: var(--muted); }
+      .tc-table .phone-chip {
+        display: inline-block; padding: 2px 8px; background: #f0f4ff; color: var(--brand);
+        border-radius: 6px; font-size: 0.78rem; font-weight: 600; margin: 2px 2px 2px 0;
+      }
+      .tc-empty { text-align: center; padding: 48px 0; color: var(--muted); font-size: 0.9rem; }
+      .tc-loading { text-align: center; padding: 48px 0; color: var(--muted); }
+
+      .tc-card { background: white; border: 1px solid var(--line-soft); border-radius: 14px; padding: 28px 28px 24px; margin-bottom: 24px; }
+      .tc-card-title { font-size: 1rem; font-weight: 700; color: var(--brand); margin: 0 0 20px; padding-bottom: 14px; border-bottom: 1px solid var(--line-soft); }
+      .tc-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+      .tc-form-row.single { grid-template-columns: 1fr; }
+      .tc-field { display: flex; flex-direction: column; gap: 6px; }
+      .tc-label { font-size: 0.82rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+      .tc-input, .tc-select-input {
+        padding: 10px 13px; border: 1px solid var(--line-soft); border-radius: 10px;
+        font-family: inherit; font-size: 0.9rem; background: white; width: 100%; transition: border 0.15s;
+      }
+      .tc-input:focus, .tc-select-input:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px rgba(28,40,83,.08); }
+      .tc-hint { font-size: 0.78rem; color: var(--muted); }
+      .tc-fixed-badge {
+        display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px;
+        background: #edf7ed; color: #2e7d32; border-radius: 8px;
+        font-size: 0.78rem; font-weight: 700; border: 1px solid #c8e6c9;
+      }
+
+      .tc-dropzone {
+        border: 2px dashed var(--line-soft); border-radius: 14px;
+        padding: 40px 24px; text-align: center; cursor: pointer;
+        transition: all 0.2s; background: #fafbfc; margin-top: 16px;
+      }
+      .tc-dropzone:hover, .tc-dropzone.drag-over { border-color: var(--brand); background: #f0f4ff; }
+      .tc-dropzone-icon { font-size: 2.2rem; margin-bottom: 10px; }
+      .tc-dropzone-text { font-weight: 600; color: var(--brand); margin-bottom: 4px; }
+      .tc-dropzone-sub { font-size: 0.82rem; color: var(--muted); }
+      #bulkFileInput { display: none; }
+
+      .tc-bulk-log { margin-top: 20px; border: 1px solid var(--line-soft); border-radius: 12px; overflow: hidden; }
+      .tc-bulk-log-header {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 12px 16px; background: #f8f9fc;
+        border-bottom: 1px solid var(--line-soft); font-weight: 700; font-size: 0.88rem;
+      }
+      .tc-bulk-summary { display: flex; gap: 16px; font-size: 0.85rem; }
+      .tc-bulk-ok { color: #2e7d32; font-weight: 700; }
+      .tc-bulk-err { color: #c62828; font-weight: 700; }
+      .tc-log-rows { max-height: 300px; overflow-y: auto; }
+      .tc-log-row {
+        display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 10px;
+        padding: 9px 16px; border-bottom: 1px solid var(--line-soft); font-size: 0.84rem;
+      }
+      .tc-log-row:last-child { border-bottom: none; }
+      .tc-log-row.ok { background: #f9fef9; }
+      .tc-log-row.err { background: #fff5f5; }
+      .tc-log-icon { font-size: 1rem; text-align: center; }
+      .tc-log-name { font-weight: 600; }
+      .tc-log-msg { font-size: 0.78rem; color: var(--muted); text-align: right; }
+      .tc-log-row.err .tc-log-msg { color: #c62828; }
+
+      .tc-progress { margin: 16px 0; }
+      .tc-progress-bar { height: 6px; background: var(--line-soft); border-radius: 3px; overflow: hidden; }
+      .tc-progress-fill { height: 100%; background: var(--brand); border-radius: 3px; transition: width 0.2s; width: 0%; }
+      .tc-progress-text { font-size: 0.82rem; color: var(--muted); margin-top: 6px; text-align: center; }
+
+      .tc-toast {
+        position: fixed; bottom: 24px; right: 24px; z-index: 999;
+        padding: 12px 20px; border-radius: 12px; font-weight: 600; font-size: 0.88rem;
+        background: var(--brand); color: white; box-shadow: 0 8px 24px rgba(28,40,83,.22);
+        transform: translateY(80px); opacity: 0; transition: all 0.25s; pointer-events: none;
+      }
+      .tc-toast.show { transform: translateY(0); opacity: 1; }
+      .tc-toast.error { background: #c62828; }
+
+      .tc-template-hint { padding: 12px 16px; background: #f0f4ff; border-radius: 10px; font-size: 0.82rem; color: var(--brand); }
+      .tc-template-hint strong { display: block; margin-bottom: 4px; }
+
+      @media (max-width: 640px) {
+        .tc-header, .tc-content, .tc-tabs { padding-left: 16px; padding-right: 16px; }
+        .tc-form-row { grid-template-columns: 1fr; }
+        .tc-campaign-select { max-width: 100%; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="tc-shell">
+
+      <!-- Header -->
+      <header class="tc-header">
+        <div class="tc-header-brand">Thrio Campaigns</div>
+        <span class="tc-header-sep">|</span>
+        <span class="tc-campaign-badge" id="campaignBadge"></span>
+      </header>
+
+      <!-- Tabs -->
+      <nav class="tc-tabs">
+        <button class="tc-tab active" data-tab="campaigns">Campañas Thrio</button>
+        <button class="tc-tab" data-tab="create">Crear campaña</button>
+      </nav>
+
+      <!-- Sin campaña en URL -->
+      <div class="tc-no-campaign" id="noCampaignMsg" style="display:none;">
+        <div class="tc-no-campaign-icon">🔗</div>
+        <h2>Campaña no especificada</h2>
+        <p>Accede con el parámetro <code>?campaign=id</code> en la URL. Contacta al administrador para obtener tu enlace.</p>
+      </div>
+
+      <!-- Contenido principal -->
+      <main class="tc-content" id="mainContent" style="display:none;">
+
+        <!-- TAB: Campañas Thrio -->
+        <div class="tc-panel active" id="panel-campaigns">
+          <div class="tc-toolbar">
+            <input class="tc-search" id="campaignSearch" type="text" placeholder="Buscar por nombre, ID, teléfono, workflow…" />
+            <select class="tc-select-filter" id="filterField">
+              <option value="all">Todos los campos</option>
+              <option value="name">Nombre</option>
+              <option value="id">Campaign ID</option>
+              <option value="addresses">Teléfono</option>
+              <option value="workflowId">Workflow ID</option>
+            </select>
+            <span class="tc-count" id="campaignCount"></span>
+            <button class="tc-btn tc-btn-ghost" onclick="exportCampaigns()">⬇ Exportar CSV</button>
+            <button class="tc-btn tc-btn-primary" onclick="loadThrioCampaigns()">↺ Actualizar</button>
+          </div>
+
+          <div class="tc-table-wrap">
+            <table class="tc-table">
+              <thead>
+                <tr>
+                  <th data-col="name">Nombre <span class="sort-icon">↕</span></th>
+                  <th data-col="id">Campaign ID <span class="sort-icon">↕</span></th>
+                  <th data-col="addresses">Teléfonos</th>
+                  <th data-col="workflowId">Workflow ID <span class="sort-icon">↕</span></th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="campaignTableBody">
+                <tr><td colspan="5" class="tc-loading">Cargando…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- TAB: Crear -->
+        <div class="tc-panel" id="panel-create">
+          <div class="tc-card">
+            <div class="tc-card-title">Crear campaña individual</div>
+            <div class="tc-form-row single">
+              <div class="tc-field">
+                <label class="tc-label">Nombre de la campaña</label>
+                <input class="tc-input" id="newName" type="text" placeholder="Ej: SMS Outreach Q3" />
+              </div>
+            </div>
+            <div class="tc-form-row">
+              <div class="tc-field">
+                <label class="tc-label">Caller ID (número de salida)</label>
+                <select class="tc-select-input" id="newCallerId">
+                  <option value="">— Cargando números… —</option>
+                </select>
+                <span class="tc-hint">Números sin asignar en Thrio</span>
+              </div>
+              <div class="tc-field">
+                <label class="tc-label">Workflow</label>
+                <select class="tc-select-input" id="newWorkflowId">
+                  <option value="">— Cargando workflows… —</option>
+                </select>
+              </div>
+            </div>
+            <div class="tc-form-row">
+              <div class="tc-field">
+                <label class="tc-label">useForSMS</label>
+                <div class="tc-fixed-badge">✓ true (fijo)</div>
+              </div>
+              <div class="tc-field">
+                <label class="tc-label">autoDispositionId</label>
+                <div class="tc-fixed-badge" style="font-family:monospace;font-size:0.72rem;">669ed3189e9f697c726c718b</div>
+              </div>
+            </div>
+            <div style="margin-top:8px;">
+              <button class="tc-btn tc-btn-primary" id="createBtn" onclick="createSingleCampaign()">Crear campaña</button>
+            </div>
+          </div>
+
+          <div class="tc-card">
+            <div class="tc-card-title">Carga masiva desde Excel</div>
+            <div class="tc-template-hint">
+              <strong>Formato del archivo (.xlsx / .xls / .csv)</strong>
+              3 columnas: <code>name</code> &nbsp;|&nbsp; <code>callerId</code> &nbsp;|&nbsp; <code>workflowId</code>
+            </div>
+            <div class="tc-dropzone" id="dropzone" onclick="document.getElementById('bulkFileInput').click()">
+              <div class="tc-dropzone-icon">📂</div>
+              <div class="tc-dropzone-text">Haz clic o arrastra tu archivo aquí</div>
+              <div class="tc-dropzone-sub">Formatos: .xlsx, .xls, .csv</div>
+            </div>
+            <input type="file" id="bulkFileInput" accept=".xlsx,.xls,.csv" onchange="handleBulkFile(this.files[0])" />
+            <div class="tc-progress" id="bulkProgress" style="display:none;">
+              <div class="tc-progress-bar"><div class="tc-progress-fill" id="progressFill"></div></div>
+              <div class="tc-progress-text" id="progressText">Procesando…</div>
+            </div>
+            <div class="tc-bulk-log" id="bulkLog" style="display:none;">
+              <div class="tc-bulk-log-header">
+                <span>Resultado del cargue</span>
+                <div class="tc-bulk-summary">
+                  <span class="tc-bulk-ok" id="bulkOkCount">✓ 0 exitosos</span>
+                  <span class="tc-bulk-err" id="bulkErrCount">✗ 0 errores</span>
+                </div>
+              </div>
+              <div class="tc-log-rows" id="bulkLogRows"></div>
+            </div>
+          </div>
+        </div>
+
+      </main>
+    </div>
+
+    <div class="tc-toast" id="toast"></div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.mini.min.js"></script>
+    <script src="./thrio-campaigns.js"></script>
+  </body>
+</html>

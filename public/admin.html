@@ -157,6 +157,12 @@
                 </div>
 
                 <div class="admin-field">
+                  <label for="transcriptRefreshSeconds">Transcript refresh interval (seconds)</label>
+                  <input id="transcriptRefreshSeconds" type="number" min="1" max="120" step="1" placeholder="10" />
+                  <span class="admin-field-note">Cada cuántos segundos se consulta la transcripción en vivo. Mínimo 5s. Por defecto 10s.</span>
+                </div>
+
+                <div class="admin-field">
                   <label for="workitemTitleText">Title text</label>
                   <input id="workitemTitleText" type="text" placeholder="NextIQ Workitem" />
                 </div>
@@ -524,6 +530,17 @@
                     </div>
 
                     <div class="admin-field">
+                      <label><input id="clientQuestionsUseGemini" type="checkbox" checked /> Use Gemini for client question detection</label>
+                      <span class="admin-field-note">Detecta automáticamente las preguntas del cliente durante la llamada usando IA. Si está desactivado, usa detección por palabras clave.</span>
+                    </div>
+
+                    <div class="admin-field">
+                      <label for="clientQuestionsRefreshSeconds">Client questions refresh interval (seconds)</label>
+                      <input id="clientQuestionsRefreshSeconds" type="number" min="5" max="300" step="1" placeholder="30" />
+                      <span class="admin-field-note">Cada cuántos segundos se actualizan las preguntas detectadas del cliente. Por defecto 30s.</span>
+                    </div>
+
+                    <div class="admin-field">
                       <label for="questionsGeminiApiKey">Gemini API key</label>
                       <input id="questionsGeminiApiKey" type="password" placeholder="AIza..." />
                     </div>
@@ -843,6 +860,32 @@
                     </div>
                     <!-- Hidden field to persist active layout JSON -->
                     <input type="hidden" id="summaryagenticActiveLayout" value="null" />
+                  </div>
+                </details>
+
+                <details class="admin-subsection">
+                  <summary>Pre-warming (llamada entrante) <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
+                    <div class="admin-field admin-field--full">
+                      <span class="admin-field-note">Cuando llega una llamada, tu marcador/PBX puede invocar el endpoint de warm-up <strong>antes</strong> de que el agente abra el widget. El resumen se genera en background y queda en caché — el agente lo ve al instante.</span>
+                    </div>
+                    <div class="admin-field admin-field--full">
+                      <label>Warm Token (secreto)</label>
+                      <div style="display:flex;gap:8px;align-items:center;">
+                        <input id="summaryagenticWarmToken" type="text" autocomplete="off" placeholder="Token secreto para autenticar el webhook" style="flex:1;font-family:monospace;font-size:.85rem;" />
+                        <button type="button" class="secondary" id="summaryagenticWarmTokenGenBtn" style="white-space:nowrap;">⟳ Generar</button>
+                      </div>
+                      <span class="admin-field-note">Copia este token y configúralo también en tu PBX/marcador.</span>
+                    </div>
+                    <div class="admin-field admin-field--full">
+                      <label>Endpoint de warm-up</label>
+                      <input id="summaryagenticWarmUrl" type="text" readonly style="font-family:monospace;font-size:.82rem;" placeholder="Guarda la campaña primero…" />
+                      <span class="admin-field-note">Llama a este endpoint con <code>POST</code> y body JSON: <code>{"campaign":"ID","phone":"+1555…","token":"tu-token"}</code></span>
+                    </div>
+                    <div class="admin-field admin-field--full">
+                      <label>Ejemplo cURL</label>
+                      <textarea id="summaryagenticWarmCurl" rows="4" readonly style="font-family:monospace;font-size:.78rem;" placeholder="Guarda la campaña primero…"></textarea>
+                    </div>
                   </div>
                 </details>
 

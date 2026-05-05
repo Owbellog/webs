@@ -1,0 +1,992 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Asistente NIA</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{height:100%}
+body{font-family:"Avenir","Avenir Next","Nunito Sans","Segoe UI",Arial,sans-serif;background:#f0f2f5;height:100%;max-height:100vh;display:flex;flex-direction:column;font-size:13px;color:#1B2A37;overflow:hidden}
+
+/* ── Header ── */
+.app-header{background:#fff;border-bottom:1px solid #e0e6ec;padding:0 24px;height:56px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;gap:16px}
+.header-brand{font-size:17px;font-weight:900;color:#0077C8;letter-spacing:-.3px;white-space:nowrap}
+.header-nav{display:flex;align-items:center;flex:1;justify-content:center}
+.nav-tab{display:flex;align-items:center;gap:5px;padding:0 14px;height:56px;font-size:12px;font-weight:600;color:#64748b;border-bottom:2px solid transparent;cursor:pointer;user-select:none;white-space:nowrap}
+.nav-tab:hover{color:#1B2A37}
+.nav-tab.active{color:#0077C8;border-bottom-color:#0077C8}
+.header-actions{display:flex;align-items:center;gap:8px}
+.online-pill{display:flex;align-items:center;gap:5px;background:#f0fdf4;color:#16a34a;font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;border:1px solid #bbf7d0}
+.online-dot{width:6px;height:6px;border-radius:50%;background:#16a34a}
+.icon-btn{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#64748b;border:none;background:transparent}
+.icon-btn:hover{background:#f1f5f9}
+.user-av{width:32px;height:32px;border-radius:50%;background:#0077C8;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;cursor:pointer;flex-shrink:0}
+
+/* ── Layout ── */
+.app-body{flex:1;display:grid;grid-template-columns:0.6fr 420px 340px;gap:14px;padding:14px;min-height:0;max-height:calc(100vh - 56px);overflow:hidden}
+
+/* ── COL 1 ── */
+.col-call{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.07);display:flex;flex-direction:column;height:0;min-height:100%;overflow:hidden}
+
+.call-header{padding:16px 20px 14px;border-bottom:1px solid #f1f5f9;flex-shrink:0}
+.call-title{font-size:22px;font-weight:900;color:#1B2A37;line-height:1.15;margin-bottom:8px}
+.call-meta{display:flex;align-items:center;gap:16px;margin-bottom:10px;flex-wrap:wrap}
+.call-meta-item{display:flex;align-items:center;gap:4px;color:#64748b;font-size:12px;font-weight:500}
+.call-badges{display:flex;gap:8px;flex-wrap:wrap}
+.badge{font-size:10px;font-weight:800;padding:4px 11px;border-radius:20px;text-transform:uppercase;letter-spacing:.4px}
+.badge-priority{background:#fde8e8;color:#c0392b}
+.badge-type{background:#e6f3fb;color:#0077C8}
+
+.transcript-scroll{flex:1;overflow-y:auto;padding:14px 20px;display:flex;flex-direction:column;gap:14px}
+.transcript-scroll::-webkit-scrollbar{width:4px}
+.transcript-scroll::-webkit-scrollbar-thumb{background:#d1d9e0;border-radius:2px}
+
+.msg-row{display:flex;gap:10px;align-items:flex-start}
+.msg-row.from-client{flex-direction:row-reverse}
+.msg-av{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.msg-av.agent{background:#f1f5f9;color:#64748b}
+.msg-av.client{background:#0077C8;color:#fff;font-size:11px;font-weight:800}
+.msg-card{flex:1;max-width:78%;background:#fff;border:1px solid #e8ecf0;border-radius:12px;padding:10px 14px;font-size:13px;line-height:1.55;color:#1B2A37;cursor:pointer;transition:border-color .15s,box-shadow .15s;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.msg-card:hover{border-color:#0077C8;box-shadow:0 2px 8px rgba(0,119,200,.1)}
+.msg-time{font-size:10px;color:#b0bec5;margin-top:5px}
+.msg-empty{text-align:center;color:#94a3b8;padding:40px 0;font-size:12px}
+
+/* ── Sentiment bar ── */
+.sentiment-bar{border-bottom:1px solid #f1f5f9;padding:10px 20px;flex-shrink:0;background:#fafbfc}
+.sentiment-bar-inner{display:flex;flex-direction:column;gap:6px}
+.sentiment-bar-labels{display:flex;align-items:center;justify-content:space-between}
+.sentiment-bar-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#94a3b8}
+.sentiment-chip{font-size:10px;font-weight:700;padding:2px 9px;border-radius:10px}
+.sentiment-chip.positive{background:#dcfce7;color:#16a34a}
+.sentiment-chip.negative{background:#fee2e2;color:#dc2626}
+.sentiment-chip.neutral{background:#fef9c3;color:#92600a}
+.sentiment-track{height:6px;background:#e0e6ec;border-radius:3px;overflow:hidden}
+.sentiment-fill{height:100%;border-radius:3px;transition:width .5s ease,background .5s ease}
+.sentiment-fill.positive{background:#16a34a}
+.sentiment-fill.negative{background:#dc2626}
+.sentiment-fill.neutral{background:#FFD100}
+
+/* ── Client questions ── */
+.client-questions{border-bottom:1px solid #f1f5f9;padding:8px 20px;flex-shrink:0;background:#fffbeb}
+.cq-header{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:#92600a;display:flex;align-items:center;gap:5px;margin-bottom:7px}
+.cq-list{display:flex;flex-wrap:wrap;gap:6px}
+.cq-chip{background:#fff;border:1px solid #fde68a;border-radius:20px;padding:4px 12px;font-size:11px;color:#1B2A37;cursor:pointer;transition:background .15s,border-color .15s;display:flex;align-items:center;gap:5px;max-width:100%}
+.cq-chip:hover{background:#fef9c3;border-color:#f59e0b}
+.cq-chip svg{flex-shrink:0;color:#f59e0b}
+.cq-chip span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px}
+
+.call-status-bar{padding:10px 20px;border-top:1px solid #f1f5f9;flex-shrink:0;display:flex;align-items:center;gap:7px;font-size:11px;color:#94a3b8}
+.status-dot{width:7px;height:7px;border-radius:50%;background:#dc2626;animation:pulse 1.4s infinite;flex-shrink:0}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+
+/* ── COL 2 ── */
+.col-mid{display:flex;flex-direction:column;gap:12px;min-height:0;overflow-y:auto}
+.col-mid::-webkit-scrollbar{width:4px}
+.col-mid::-webkit-scrollbar-thumb{background:#d1d9e0;border-radius:2px}
+
+.panel{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.07)}
+.panel-head{padding:12px 16px;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;justify-content:space-between}
+.panel-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.8px;color:#1B2A37;display:flex;align-items:center;gap:7px}
+.panel-title svg{color:#0077C8}
+.panel-body{padding:12px 16px}
+
+/* Checklist */
+.ck-list{display:flex;flex-direction:column;gap:10px}
+.ck-row{display:flex;align-items:center;gap:10px}
+.ck-box{width:18px;height:18px;border-radius:5px;border:2px solid #d1d9e0;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:10px;font-weight:900}
+.ck-box.checked{background:#0077C8;border-color:#0077C8;color:#fff}
+.ck-box.failed{background:#fee2e2;border-color:#e74c3c;color:#e74c3c}
+.ck-label{font-size:13px;color:#1B2A37;font-weight:500}
+.ck-label.checked{color:#0077C8;font-weight:700}
+.ck-label.pending{color:#94a3b8}
+.ck-ev{font-size:10px;color:#64748b;font-style:italic;margin-top:1px}
+.ck-empty{font-size:11px;color:#94a3b8;text-align:center;padding:10px 0}
+
+/* Form */
+.form-stack{display:flex;flex-direction:column;gap:9px}
+.f-section-title{font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.8px;color:#1B2A37;padding:4px 0 2px;border-bottom:1px solid #f1f5f9;margin-top:4px}
+.f-section-title:first-child{margin-top:0}
+.f-2col{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.f-field{display:flex;flex-direction:column;gap:4px}
+.f-label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#94a3b8}
+.f-input{border:1px solid #e0e6ec;border-radius:8px;padding:7px 11px;font-size:13px;color:#1B2A37;outline:none;font-family:inherit;background:#fff;width:100%}
+.f-input:focus{border-color:#0077C8;outline:2px solid rgba(0,119,200,.12)}
+.f-input::placeholder{color:#b0bec5}
+.f-select{border:1px solid #e0e6ec;border-radius:8px;padding:7px 11px;font-size:13px;color:#1B2A37;outline:none;font-family:inherit;background:#fff;width:100%;cursor:pointer;appearance:auto}
+.f-select:focus{border-color:#0077C8;outline:2px solid rgba(0,119,200,.12)}
+.f-textarea{border:1px solid #e0e6ec;border-radius:8px;padding:7px 11px;font-size:13px;color:#1B2A37;outline:none;font-family:inherit;background:#fff;min-height:68px;resize:none;width:100%}
+.f-textarea:focus{border-color:#0077C8;outline:2px solid rgba(0,119,200,.12)}
+.f-textarea::placeholder{color:#b0bec5}
+.btn-save{width:100%;background:#1B2A37;color:#fff;border:none;border-radius:9px;padding:12px;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;transition:opacity .15s;margin-top:2px}
+.btn-save:hover{opacity:.87}
+.btn-transfer{width:100%;background:#fff;color:#0077C8;border:1.5px solid #0077C8;border-radius:9px;padding:11px;font-size:13px;font-weight:700;cursor:pointer;margin-top:8px;transition:background .15s}
+.btn-transfer:hover{background:#e6f3fb}
+.form-saved{display:none;text-align:center;font-size:11px;color:#16A34A;font-weight:700;padding:4px 0}
+.form-saved.visible{display:block}
+
+/* ── COL 3 ── */
+.col-right{display:flex;flex-direction:column;gap:12px;min-height:0;overflow:hidden}
+
+.ivr-panel{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.07);flex-shrink:0}
+.ivr-field{padding:10px 16px;border-bottom:1px solid #fafafa}
+.ivr-field:last-child{border-bottom:none}
+.ivr-field-label{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.8px;color:#94a3b8;margin-bottom:3px}
+.ivr-field-value{font-size:13px;font-weight:700;color:#1B2A37}
+.ivr-field-sub{font-size:11px;color:#64748b;margin-top:2px}
+.urgency-row{display:flex;align-items:center;gap:6px}
+.urgency-dot{width:7px;height:7px;border-radius:50%;background:#e74c3c;flex-shrink:0}
+
+.diana-panel{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.07);flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.diana-body{flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:8px}
+.diana-body::-webkit-scrollbar{width:4px}
+.diana-body::-webkit-scrollbar-thumb{background:#d1d9e0;border-radius:2px}
+
+.diana-welcome{font-size:11px;color:#94a3b8;text-align:center;padding:20px 0}
+.diana-suggest-card{background:#f0fdf4;border-radius:9px;padding:10px 12px;font-size:12px;color:#1B2A37;line-height:1.6;display:none}
+.diana-suggest-card.visible{display:block}
+
+/* Chat bubbles col3 */
+.chat-msg{display:flex;flex-direction:column;gap:2px}
+.chat-msg.user{align-items:flex-end}
+.chat-msg.assistant{align-items:flex-start}
+.chat-msg-label{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#94a3b8}
+.chat-bubble{max-width:90%;padding:8px 11px;border-radius:10px;font-size:12px;line-height:1.5}
+.chat-msg.user .chat-bubble{background:#0077C8;color:#fff;border-radius:10px 10px 2px 10px}
+.chat-msg.assistant .chat-bubble{background:#f1f5f9;color:#1B2A37;border-radius:10px 10px 10px 2px}
+
+.diana-thinking{display:none;align-items:center;gap:6px;font-size:11px;color:#64748b;padding:4px 0}
+.diana-thinking.visible{display:flex}
+.thinking-dots{display:flex;gap:3px}
+.thinking-dots span{width:4px;height:4px;border-radius:50%;background:#0077C8;animation:bounce 1.2s infinite}
+.thinking-dots span:nth-child(2){animation-delay:.2s}
+.thinking-dots span:nth-child(3){animation-delay:.4s}
+@keyframes bounce{0%,80%,100%{transform:translateY(0);opacity:.35}40%{transform:translateY(-5px);opacity:1}}
+
+.diana-form-wrap{border-top:1px solid #f1f5f9;padding:10px 16px;display:flex;align-items:center;gap:8px;flex-shrink:0}
+.diana-input{flex:1;border:none;outline:none;font-size:13px;color:#1B2A37;font-family:inherit;background:transparent}
+.diana-input::placeholder{color:#b0bec5}
+.diana-send{width:32px;height:32px;background:#1B2A37;color:#fff;border:none;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:opacity .15s}
+.diana-send:hover{opacity:.85}
+.diana-send:disabled{opacity:.35;cursor:not-allowed}
+.diana-footer{display:flex;gap:20px;justify-content:center;padding:8px 16px;font-size:10px;flex-shrink:0;border-top:1px solid #f8fafc}
+.diana-footer a{color:#94a3b8;cursor:pointer;display:flex;align-items:center;gap:3px;text-decoration:none}
+.diana-footer a:hover{color:#64748b}
+
+/* ── Next Step ── */
+.ns-action{font-size:13px;font-weight:800;color:#1B2A37;margin-bottom:4px}
+.ns-detail{font-size:12px;color:#64748b;line-height:1.5;margin-bottom:8px}
+.ns-phrase-label{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:#7c3aed;margin-bottom:4px}
+.ns-phrase{background:#f5f3ff;border-left:3px solid #7c3aed;border-radius:0 6px 6px 0;padding:7px 10px;font-size:12px;color:#1B2A37;line-height:1.5;cursor:pointer;transition:background .15s}
+.ns-phrase:hover{background:#ede9fe}
+.ns-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.ns-chip{background:#f1f5f9;border:1px solid #e0e6ec;border-radius:20px;padding:3px 10px;font-size:11px;color:#1B2A37;cursor:pointer;transition:background .15s}
+.ns-chip:hover{background:#e6f3fb;border-color:#0077C8;color:#0077C8}
+.ns-meta{display:flex;gap:8px;margin-top:8px;font-size:10px;color:#94a3b8}
+.ns-badge{padding:2px 7px;border-radius:10px;font-weight:700}
+.ns-badge.high{background:#fee2e2;color:#dc2626}
+.ns-badge.medium{background:#fef9c3;color:#92600a}
+.ns-badge.low{background:#dcfce7;color:#16a34a}
+
+/* Spinner */
+.spinner{width:12px;height:12px;border:2px solid #e0e6ec;border-top-color:#0077C8;border-radius:50%;animation:spin .8s linear infinite;display:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<!-- ═══════════ HEADER ═══════════ -->
+<header class="app-header">
+  <div class="header-brand">Asistente NIA</div>
+
+  <div></div>
+
+  <div class="header-actions">
+    <div class="online-pill"><div class="online-dot"></div>Online</div>
+    <button class="icon-btn" title="Notificaciones">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+    </button>
+    <button class="icon-btn" title="Configuración">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
+    <div class="user-av">A</div>
+  </div>
+</header>
+
+<!-- ═══════════ BODY ═══════════ -->
+<div class="app-body">
+
+  <!-- ── COL 1: Llamada + Transcripción ── -->
+  <div class="col-call">
+
+    <!-- Call header -->
+    <div class="call-header">
+      <div class="call-title" id="callTitle">Llamada en Curso</div>
+      <div class="call-meta">
+        <div class="call-meta-item">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          <span id="callClient">—</span>
+        </div>
+        <div class="call-meta-item">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <span id="callTimer">00:00</span>
+        </div>
+        <div class="spinner" id="transcriptSpinner"></div>
+      </div>
+      <div class="call-badges" id="callBadges">
+        <span class="badge badge-priority" id="badgePriority" style="display:none">ALTA PRIORIDAD</span>
+        <span class="badge badge-type" id="badgeType" style="display:none">EN CURSO</span>
+      </div>
+    </div>
+
+    <!-- Sentiment bar -->
+    <div class="sentiment-bar" id="sentimentBar">
+      <div class="sentiment-bar-inner">
+        <div class="sentiment-bar-labels">
+          <span class="sentiment-bar-title">Sentimiento del cliente</span>
+          <span class="sentiment-chip neutral" id="sentimentChip">Neutral</span>
+        </div>
+        <div class="sentiment-track"><div class="sentiment-fill neutral" id="sentimentFill" style="width:50%"></div></div>
+      </div>
+    </div>
+
+    <!-- Client questions detected -->
+    <div class="client-questions" id="clientQuestions" style="display:none">
+      <div class="cq-header">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        Preguntas del cliente — clic para enviar a NIA
+      </div>
+      <div class="cq-list" id="clientQuestionsList"></div>
+    </div>
+
+    <!-- Transcript messages -->
+    <div class="transcript-scroll" id="transcriptMessages">
+      <div class="msg-empty">Esperando mensajes de la llamada…</div>
+    </div>
+
+    <!-- Status bar -->
+    <div class="call-status-bar">
+      <div class="status-dot"></div>
+      Escuchando y transcribiendo en tiempo real…
+    </div>
+
+  </div>
+
+  <!-- ── COL 2: Checklist + Gestión ── -->
+  <div class="col-mid">
+
+    <!-- Smart Checklist -->
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          Smart Checklist
+        </div>
+        <div class="spinner" id="checklistSpinner"></div>
+      </div>
+      <div class="panel-body">
+        <div class="ck-list" id="checklistList">
+          <div class="ck-empty">Cargando checklist…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Gestión -->
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-title">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6M9 13h6M9 17h4"/></svg>
+          Gestión
+        </div>
+      </div>
+      <div class="panel-body">
+        <div class="form-stack">
+
+          <!-- Datos del cliente -->
+          <div class="f-section-title">Datos del Cliente</div>
+          <div class="f-2col">
+            <div class="f-field">
+              <label class="f-label">Nombre</label>
+              <input class="f-input" id="f-nombre" type="text" placeholder="Ej: Ricardo"/>
+            </div>
+            <div class="f-field">
+              <label class="f-label">Apellido</label>
+              <input class="f-input" id="f-apellido" type="text" placeholder="Ej: Alarcón"/>
+            </div>
+          </div>
+          <div class="f-2col">
+            <div class="f-field">
+              <label class="f-label">Teléfono</label>
+              <input class="f-input" id="f-telefono" type="tel" placeholder="600 123 456"/>
+            </div>
+            <div class="f-field">
+              <label class="f-label">Email</label>
+              <input class="f-input" id="f-email" type="email" placeholder="correo@…"/>
+            </div>
+          </div>
+          <div class="f-2col">
+            <div class="f-field">
+              <label class="f-label">N.º Cliente / DNI</label>
+              <input class="f-input" id="f-cliente-id" type="text" placeholder="ID o DNI"/>
+            </div>
+            <div class="f-field">
+              <label class="f-label">N.º Contrato</label>
+              <input class="f-input" id="f-contrato" type="text" placeholder="Contrato"/>
+            </div>
+          </div>
+
+          <!-- Gestión del ticket -->
+          <div class="f-section-title">Gestión del Ticket</div>
+          <div class="f-field">
+            <label class="f-label">Motivo de llamada</label>
+            <select class="f-select" id="f-motivo">
+              <option value="">Seleccionar…</option>
+              <option>Soporte Técnico - Fibra</option>
+              <option>Soporte Técnico - Móvil</option>
+              <option>Consulta comercial</option>
+              <option>Reclamación</option>
+              <option>Avería / Incidencia</option>
+              <option>Cambio de contrato</option>
+              <option>Otro</option>
+            </select>
+          </div>
+          <div class="f-2col">
+            <div class="f-field">
+              <label class="f-label">Prioridad</label>
+              <select class="f-select" id="f-prioridad">
+                <option value="">—</option>
+                <option>Alta</option>
+                <option>Media</option>
+                <option>Baja</option>
+              </select>
+            </div>
+            <div class="f-field">
+              <label class="f-label">Tipo</label>
+              <select class="f-select" id="f-tipo">
+                <option value="">—</option>
+                <option>Incidencia</option>
+                <option>Consulta</option>
+                <option>Solicitud</option>
+                <option>Queja</option>
+              </select>
+            </div>
+          </div>
+          <div class="f-field">
+            <label class="f-label">Estado de resolución</label>
+            <select class="f-select" id="f-estado">
+              <option value="">Seleccionar…</option>
+              <option>En Proceso</option>
+              <option>Resuelto en llamada</option>
+              <option>Escalado a técnico</option>
+              <option>Pendiente de cliente</option>
+              <option>Visita técnica programada</option>
+              <option>Sin resolver</option>
+            </select>
+          </div>
+          <div class="f-2col">
+            <div class="f-field">
+              <label class="f-label">N.º Referencia</label>
+              <input class="f-input" id="f-ref" type="text" placeholder="INC-00123"/>
+            </div>
+            <div class="f-field">
+              <label class="f-label">Seguimiento</label>
+              <select class="f-select" id="f-seguimiento">
+                <option value="">Ninguno</option>
+                <option>Llamada de seguimiento</option>
+                <option>Enviar email</option>
+                <option>Visita técnica</option>
+                <option>Crear ticket</option>
+              </select>
+            </div>
+          </div>
+          <div class="f-field">
+            <label class="f-label">Notas del agente</label>
+            <textarea class="f-textarea" id="f-notas" placeholder="Observaciones relevantes de la llamada…"></textarea>
+          </div>
+
+          <button class="btn-save" onclick="saveForm()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            Guardar Gestión
+          </button>
+          <button class="btn-transfer">Transferir Llamada</button>
+          <div class="form-saved" id="formSaved">✓ Guardado correctamente</div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /col-mid -->
+
+  <!-- ── COL 3: IVR + NIA ── -->
+  <div class="col-right">
+
+    <!-- IVR Summary -->
+    <div class="ivr-panel">
+      <div class="panel-head">
+        <div class="panel-title">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          Resumen IVR de Entrada
+        </div>
+      </div>
+      <div class="ivr-field">
+        <div class="ivr-field-label">Motivo Detectado</div>
+        <div class="ivr-field-value" id="ivr-motivo">—</div>
+      </div>
+      <div class="ivr-field">
+        <div class="ivr-field-label">Nivel de Urgencia</div>
+        <div class="urgency-row">
+          <div class="urgency-dot" id="ivrUrgencyDot"></div>
+          <div class="ivr-field-value" id="ivr-urgencia">—</div>
+        </div>
+      </div>
+      <div class="ivr-field">
+        <div class="ivr-field-label">Datos del Cliente</div>
+        <div class="ivr-field-value" id="ivr-cliente-id">—</div>
+        <div class="ivr-field-sub" id="ivr-cliente-seg"></div>
+      </div>
+    </div>
+
+    <!-- Next Step panel -->
+    <div class="panel" id="nextStepPanel" style="display:none;flex-shrink:0">
+      <div class="panel-head">
+        <div class="panel-title" style="color:#7c3aed">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg>
+          Siguiente Paso
+        </div>
+        <div class="spinner" id="nextStepSpinner"></div>
+      </div>
+      <div class="panel-body" id="nextStepBody" style="padding:10px 16px">
+        <div style="font-size:11px;color:#94a3b8;text-align:center">Cargando guía…</div>
+      </div>
+    </div>
+
+    <!-- NIA panel -->
+    <div class="diana-panel">
+      <div class="panel-head">
+        <div class="panel-title" style="color:#16a34a">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          NIA Sugiere
+        </div>
+      </div>
+
+      <div class="diana-body" id="dianaBody">
+        <div class="diana-welcome" id="dianaWelcome">Haz clic en un mensaje de la transcripción o escribe una pregunta.</div>
+        <div class="diana-thinking" id="dianaThinking">
+          <div class="thinking-dots"><span></span><span></span><span></span></div>
+          <span>NIA pensando…</span>
+        </div>
+      </div>
+
+      <form class="diana-form-wrap" id="dianaForm">
+        <input class="diana-input" id="dianaInput" type="text" placeholder="Pregunta a NIA…" autocomplete="off"/>
+        <button class="diana-send" id="dianaSend" type="submit">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="13" height="13"><path d="M5 12h11"/><path d="m12 5 7 7-7 7"/></svg>
+        </button>
+      </form>
+
+      <div class="diana-footer">
+        <a>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          Ayuda
+        </a>
+        <a>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          Salir
+        </a>
+      </div>
+    </div>
+
+  </div><!-- /col-right -->
+
+</div><!-- /app-body -->
+
+<script>
+// ── Config ────────────────────────────────────────────────────────
+const _p          = new URLSearchParams(location.search);
+const BASE_URL    = _p.get("base")       || _p.get("baseUrl")    || "";
+const WORKITEM_ID = _p.get("workitemid") || _p.get("workitemId") || "";
+const CAMPAIGN_ID = _p.get("campaign")   || "";
+
+let TRANSCRIPT_POLL      = 10_000;  // overridden by campaign config
+const CHECKLIST_POLL     = 30_000;
+let CLIENT_QUESTIONS_POLL = 30_000; // overridden by campaign config
+
+// ── State ─────────────────────────────────────────────────────────
+let lastMsgCount    = 0;
+let callStartTs     = null;
+let timerInterval   = null;
+let copilotConfig   = null;
+let callMetaSet     = false;
+let transcriptTimer = null;
+let checklistTimer  = null;
+let callEnded       = false;
+
+// ── Init call title from URL param ────────────────────────────────
+if (WORKITEM_ID) {
+  const shortId = WORKITEM_ID.slice(-4).toUpperCase();
+  document.getElementById("callTitle").textContent = `Llamada en Curso: ID-${shortId}`;
+  document.getElementById("badgeType").style.display = "";
+}
+
+// ── Timer ─────────────────────────────────────────────────────────
+function startTimer(fromTs) {
+  callStartTs = fromTs || Date.now();
+  const el = document.getElementById("callTimer");
+  el.style.display = "";
+  if (timerInterval) clearInterval(timerInterval);
+  timerInterval = setInterval(() => {
+    const s = Math.floor((Date.now() - callStartTs) / 1000);
+    el.textContent = String(Math.floor(s/60)).padStart(2,"0") + ":" + String(s%60).padStart(2,"0");
+  }, 1000);
+}
+
+// ── Stop polling when call ends ───────────────────────────────────
+function stopPolling(reason) {
+  if (callEnded) return;
+  callEnded = true;
+  if (transcriptTimer) { clearInterval(transcriptTimer); transcriptTimer = null; }
+  if (checklistTimer)  { clearInterval(checklistTimer);  checklistTimer  = null; }
+  if (nextStepTimer)   { clearInterval(nextStepTimer);   nextStepTimer   = null; }
+  if (timerInterval)   { clearInterval(timerInterval);   timerInterval   = null; }
+  const bar = document.querySelector(".call-status-bar");
+  if (bar) bar.innerHTML = `<span style="color:#e74c3c;font-weight:700">● Llamada finalizada</span>&nbsp;&nbsp;${reason ? "— " + reason : ""}`;
+}
+
+// ── Transcript + Sentiment polling ────────────────────────────────
+async function fetchTranscript() {
+  if (!CAMPAIGN_ID || !WORKITEM_ID || callEnded) return;
+  document.getElementById("transcriptSpinner").style.display = "block";
+  try {
+    const res = await fetch(`${BASE_URL}/api/workitem?campaign=${enc(CAMPAIGN_ID)}&workitemid=${enc(WORKITEM_ID)}`, { cache:"no-store" });
+    if (!res.ok) {
+      // Si falla y no hay mensajes aún, reintenta en 3s
+      if (lastMsgCount === 0) setTimeout(fetchTranscript, 3000);
+      return;
+    }
+    const data = await res.json();
+    if (!data.ok) return;
+    // Check state — stop polling if no longer active
+    const state = (data.summary?.state || "").toLowerCase();
+    if (state && state !== "active") {
+      stopPolling(state);
+      return;
+    }
+    // Adjust poll intervals from campaign config (first call only)
+    if (!callMetaSet) {
+      const srvTranscript = data.campaign?.transcriptRefreshSeconds;
+      if (srvTranscript) {
+        const newPoll = Math.max(1, srvTranscript) * 1000;
+        if (newPoll !== TRANSCRIPT_POLL) {
+          TRANSCRIPT_POLL = newPoll;
+          if (transcriptTimer) { clearInterval(transcriptTimer); transcriptTimer = setInterval(fetchTranscript, TRANSCRIPT_POLL); }
+        }
+      }
+      const srvCQ = data.campaign?.clientQuestionsRefreshSeconds;
+      if (srvCQ) CLIENT_QUESTIONS_POLL = Math.max(5, srvCQ) * 1000;
+      const srvNS = data.campaign?.ui?.nextStep?.refreshIntervalSeconds;
+      if (srvNS) {
+        NEXT_STEP_POLL = Math.max(5, srvNS) * 1000;
+        if (nextStepTimer) { clearInterval(nextStepTimer); nextStepTimer = setInterval(fetchNextStep, NEXT_STEP_POLL); }
+      }
+    }
+    setCallMeta(data);
+    renderTranscript(data.transcript || []);
+    renderSentiment(data.messages || []);
+  } catch(_) {}
+  finally { document.getElementById("transcriptSpinner").style.display = "none"; }
+}
+
+function setCallMeta(data) {
+  if (callMetaSet) return;
+  callMetaSet = true;
+
+  const s = data.summary || {};
+
+  // Client name — viene en summary.contactName
+  const clientName = s.contactName || "";
+  if (clientName) document.getElementById("callClient").textContent = "Cliente: " + clientName;
+
+  // IVR fields — lo que tenemos en summary
+  const ivrMotivo = s.callType || s.channelType || "—";
+  document.getElementById("ivr-motivo").textContent = ivrMotivo;
+
+  const ivrUrgencia = s.state || "—";
+  document.getElementById("ivr-urgencia").textContent = ivrUrgencia;
+
+  const clientId = s.workitemId || "—";
+  document.getElementById("ivr-cliente-id").textContent = clientId !== "—" ? "ID: " + clientId : "—";
+
+  const phone = s.phone || "";
+  document.getElementById("ivr-cliente-seg").textContent = phone ? "Tel: " + phone : "";
+
+  // Pre-fill phone in form if available
+  if (phone) {
+    const fTel = document.getElementById("f-telefono");
+    if (fTel && !fTel.value) fTel.value = phone;
+  }
+  if (clientName) {
+    const parts = clientName.trim().split(" ");
+    const fNombre = document.getElementById("f-nombre");
+    const fApellido = document.getElementById("f-apellido");
+    if (fNombre && !fNombre.value) fNombre.value = parts[0] || "";
+    if (fApellido && !fApellido.value) fApellido.value = parts.slice(1).join(" ") || "";
+  }
+}
+
+function buildMsgRow(msg) {
+  const isAgent = msg.role === "agent";
+  const time = msg.timestamp
+    ? new Date(msg.timestamp).toLocaleTimeString("es-ES",{hour:"2-digit",minute:"2-digit",second:"2-digit"})
+    : "";
+
+  const row = document.createElement("div");
+  row.className = "msg-row" + (isAgent ? "" : " from-client");
+
+  const av = document.createElement("div");
+  av.className = "msg-av " + (isAgent ? "agent" : "client");
+  if (isAgent) {
+    av.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`;
+  } else {
+    av.textContent = "U";
+  }
+
+  const card = document.createElement("div");
+  card.className = "msg-card";
+  card.innerHTML = `${esc(msg.text)}${time ? `<div class="msg-time">${time}</div>` : ""}`;
+  card.addEventListener("click", () => sendToDiana(msg.text));
+
+  row.appendChild(av);
+  row.appendChild(card);
+  return row;
+}
+
+function renderTranscript(messages) {
+  if (!messages.length) return;
+  if (messages.length === lastMsgCount) return;
+
+  if (!callStartTs && messages[0]?.timestamp) startTimer(messages[0].timestamp);
+  else if (!timerInterval) startTimer();
+
+  const wrap = document.getElementById("transcriptMessages");
+
+  // First render: clear placeholder and render all
+  if (lastMsgCount === 0) {
+    wrap.innerHTML = "";
+    messages.forEach(msg => wrap.appendChild(buildMsgRow(msg)));
+  } else {
+    // Append only new messages — never clear existing ones
+    const newMsgs = messages.slice(lastMsgCount);
+    newMsgs.forEach(msg => wrap.appendChild(buildMsgRow(msg)));
+  }
+
+  lastMsgCount = messages.length;
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
+// ── Client questions (Gemini via API) ─────────────────────────────
+let lastClientQCount = 0;
+
+async function fetchClientQuestions() {
+  if (!CAMPAIGN_ID || !WORKITEM_ID || callEnded) return;
+  try {
+    const res = await fetch(`${BASE_URL}/api/client-questions?campaign=${enc(CAMPAIGN_ID)}&workitemid=${enc(WORKITEM_ID)}`, { cache:"no-store" });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.ok) return;
+    renderClientQuestions(data.questions || []);
+  } catch(_) {}
+}
+
+function renderClientQuestions(questions) {
+  const section = document.getElementById("clientQuestions");
+  const list = document.getElementById("clientQuestionsList");
+  if (!questions.length) { section.style.display = "none"; return; }
+  // Only re-render if questions changed
+  if (questions.length === lastClientQCount) return;
+  lastClientQCount = questions.length;
+  section.style.display = "";
+  list.innerHTML = "";
+  questions.forEach(q => {
+    const chip = document.createElement("div");
+    chip.className = "cq-chip";
+    chip.innerHTML = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h11"/><path d="m12 5 7 7-7 7"/></svg><span title="${esc(q)}">${esc(q)}</span>`;
+    chip.addEventListener("click", () => sendToDiana(q));
+    list.appendChild(chip);
+  });
+}
+
+function renderSentiment(messages) {
+  const scores = messages.map(m => Number(m?.sentiment?.score || 0)).filter(Number.isFinite);
+  if (!scores.length) return;
+  const avg = scores.reduce((a,b) => a+b, 0) / scores.length;
+
+  // Sentiment bar always visible
+  const chip = document.getElementById("sentimentChip");
+  const fill = document.getElementById("sentimentFill");
+
+  let label = "Neutral", cls = "neutral";
+  if (avg <= -0.2)      { label = "Negativo"; cls = "negative"; }
+  else if (avg >= 0.2)  { label = "Positivo"; cls = "positive"; }
+
+  chip.textContent = label;
+  chip.className = "sentiment-chip " + cls;
+  fill.className = "sentiment-fill " + cls;
+  fill.style.width = Math.round(((avg + 1) / 2) * 100) + "%";
+
+  // Also update urgency dot color
+  const dot = document.getElementById("ivrUrgencyDot");
+  if (dot) {
+    if (avg <= -0.2) dot.style.background = "#e74c3c";
+    else if (avg < 0.2) dot.style.background = "#f39c12";
+    else dot.style.background = "#16a34a";
+  }
+}
+
+// ── Checklist polling ─────────────────────────────────────────────
+async function fetchChecklist() {
+  if (!CAMPAIGN_ID || !WORKITEM_ID || callEnded) return;
+  document.getElementById("checklistSpinner").style.display = "block";
+  try {
+    const res = await fetch(`${BASE_URL}/api/questions-check?campaign=${enc(CAMPAIGN_ID)}&workitemid=${enc(WORKITEM_ID)}`, { cache:"no-store" });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.ok) return;
+    renderChecklist(data.questions || []);
+  } catch(_) {}
+  finally { document.getElementById("checklistSpinner").style.display = "none"; }
+}
+
+function renderChecklist(questions) {
+  const list = document.getElementById("checklistList");
+  if (!questions.length) {
+    list.innerHTML = '<div class="ck-empty">Sin preguntas configuradas.</div>';
+    return;
+  }
+  list.innerHTML = questions.map(q => {
+    const done    = q.fulfilled === true;
+    const failed  = q.fulfilled === false;
+    const pending = q.fulfilled == null;
+    const boxCls  = done ? "checked" : (failed ? "failed" : "");
+    const lblCls  = done ? "checked" : (pending ? "pending" : "");
+    const icon    = done ? "✓" : (failed ? "✗" : "");
+    return `<div class="ck-row">
+      <div class="ck-box ${boxCls}">${icon}</div>
+      <div>
+        <div class="ck-label ${lblCls}">${esc(q.question||"")}</div>
+        ${q.evidence ? `<div class="ck-ev">${esc(q.evidence)}</div>` : ""}
+      </div>
+    </div>`;
+  }).join("");
+}
+
+// ── NIA chat ────────────────────────────────────────────────────
+async function loadCopilotConfig() {
+  if (!CAMPAIGN_ID) return;
+  try {
+    const res = await fetch(`${BASE_URL}/api/config?campaign=${enc(CAMPAIGN_ID)}${WORKITEM_ID ? "&workitemid=" + enc(WORKITEM_ID) : ""}`);
+    const data = await res.json();
+    if (data.configured && data.request) copilotConfig = data.request;
+  } catch(_) {}
+}
+
+function sendToDiana(text) {
+  document.getElementById("dianaInput").value = text;
+  askDiana(text);
+}
+
+async function askDiana(message) {
+  if (!message.trim()) return;
+
+  const body   = document.getElementById("dianaBody");
+  const think  = document.getElementById("dianaThinking");
+  const welcome = document.getElementById("dianaWelcome");
+  const sendBtn = document.getElementById("dianaSend");
+
+  if (welcome) welcome.remove();
+  sendBtn.disabled = true;
+
+  // User bubble
+  const uDiv = document.createElement("div");
+  uDiv.className = "chat-msg user";
+  uDiv.innerHTML = `<div class="chat-msg-label">Tú</div><div class="chat-bubble">${esc(message)}</div>`;
+  body.insertBefore(uDiv, think);
+
+  think.classList.add("visible");
+  body.scrollTop = body.scrollHeight;
+
+  try {
+    const res = await fetch(`${BASE_URL}/api/prediction`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message,
+        campaignId: copilotConfig?.campaignId || CAMPAIGN_ID,
+        domain:     copilotConfig?.domain || "",
+        kb_ids:     copilotConfig?.kbIds  || []
+      })
+    });
+    const data   = await res.json();
+    const answer = data?.faq_response?.text || data?.error || "Sin respuesta.";
+    const escaped = esc(answer).replace(/\n\n+/g,"<br><br>").replace(/\n/g,"<br>");
+
+    const aDiv = document.createElement("div");
+    aDiv.className = "chat-msg assistant";
+    aDiv.innerHTML = `<div class="chat-msg-label">DIANA</div>
+      <div class="chat-bubble">${escaped}</div>`;
+    body.insertBefore(aDiv, think);
+  } catch(_) {
+    const eDiv = document.createElement("div");
+    eDiv.className = "chat-msg assistant";
+    eDiv.innerHTML = `<div class="chat-msg-label">DIANA</div><div class="chat-bubble">No se pudo completar la solicitud.</div>`;
+    body.insertBefore(eDiv, think);
+  } finally {
+    think.classList.remove("visible");
+    sendBtn.disabled = false;
+    body.scrollTop = body.scrollHeight;
+    document.getElementById("dianaInput").value = "";
+  }
+}
+
+document.getElementById("dianaForm").addEventListener("submit", e => {
+  e.preventDefault();
+  const msg = document.getElementById("dianaInput").value.trim();
+  if (msg) askDiana(msg);
+});
+
+// ── Form ──────────────────────────────────────────────────────────
+function getFormData() {
+  return {
+    campaign:   CAMPAIGN_ID,
+    workitemId: WORKITEM_ID,
+    nombre:     document.getElementById("f-nombre")?.value.trim()    || "",
+    apellido:   document.getElementById("f-apellido")?.value.trim()  || "",
+    telefono:   document.getElementById("f-telefono")?.value.trim()  || "",
+    email:      document.getElementById("f-email")?.value.trim()     || "",
+    clienteId:  document.getElementById("f-cliente-id")?.value.trim()|| "",
+    contrato:   document.getElementById("f-contrato")?.value.trim()  || "",
+    motivo:     document.getElementById("f-motivo")?.value           || "",
+    prioridad:  document.getElementById("f-prioridad")?.value        || "",
+    tipo:       document.getElementById("f-tipo")?.value             || "",
+    estado:     document.getElementById("f-estado")?.value           || "",
+    referencia: document.getElementById("f-ref")?.value.trim()       || "",
+    seguimiento:document.getElementById("f-seguimiento")?.value      || "",
+    notas:      document.getElementById("f-notas")?.value.trim()     || ""
+  };
+}
+
+function fillForm(ticket) {
+  if (!ticket) return;
+  const set = (id, val) => { const el = document.getElementById(id); if (el && val) el.value = val; };
+  set("f-nombre",     ticket.nombre);
+  set("f-apellido",   ticket.apellido);
+  set("f-telefono",   ticket.telefono);
+  set("f-email",      ticket.email);
+  set("f-cliente-id", ticket.clienteId);
+  set("f-contrato",   ticket.contrato);
+  set("f-motivo",     ticket.motivo);
+  set("f-prioridad",  ticket.prioridad);
+  set("f-tipo",       ticket.tipo);
+  set("f-estado",     ticket.estado);
+  set("f-ref",        ticket.referencia);
+  set("f-seguimiento",ticket.seguimiento);
+  set("f-notas",      ticket.notas);
+}
+
+async function loadTicket() {
+  if (!CAMPAIGN_ID || !WORKITEM_ID) return;
+  try {
+    const res = await fetch(`${BASE_URL}/api/ticket?campaign=${enc(CAMPAIGN_ID)}&workitemid=${enc(WORKITEM_ID)}`);
+    const data = await res.json();
+    if (data.ok && data.ticket) fillForm(data.ticket);
+  } catch(_) {}
+}
+
+async function saveForm() {
+  const saved = document.getElementById("formSaved");
+  const btn   = document.querySelector(".btn-save");
+  if (btn) { btn.disabled = true; btn.style.opacity = ".6"; }
+  try {
+    const res = await fetch(`${BASE_URL}/api/ticket`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(getFormData())
+    });
+    const data = await res.json();
+    saved.textContent = data.ok ? "✓ Guardado correctamente" : "✗ Error al guardar";
+    saved.classList.add("visible");
+    setTimeout(() => saved.classList.remove("visible"), 2500);
+  } catch(_) {
+    saved.textContent = "✗ Error de conexión";
+    saved.classList.add("visible");
+    setTimeout(() => saved.classList.remove("visible"), 2500);
+  } finally {
+    if (btn) { btn.disabled = false; btn.style.opacity = ""; }
+  }
+}
+
+// ── Utils ─────────────────────────────────────────────────────────
+function esc(str) {
+  return String(str)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+function enc(v) { return encodeURIComponent(v); }
+
+// ── Agent Next Step ───────────────────────────────────────────────
+let nextStepTimer = null;
+let NEXT_STEP_POLL = 30_000;
+
+async function fetchNextStep() {
+  if (!CAMPAIGN_ID || !WORKITEM_ID || callEnded) return;
+  document.getElementById("nextStepSpinner").style.display = "block";
+  try {
+    const res = await fetch(`${BASE_URL}/api/agent-next-step?campaign=${enc(CAMPAIGN_ID)}&workitemid=${enc(WORKITEM_ID)}`, { cache:"no-store" });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.ok) return;
+    renderNextStep(data.nextStep || {});
+    document.getElementById("nextStepPanel").style.display = "";
+  } catch(_) {}
+  finally { document.getElementById("nextStepSpinner").style.display = "none"; }
+}
+
+function renderNextStep(ns) {
+  const body = document.getElementById("nextStepBody");
+  if (!ns.actionTitle && !ns.actionDetail) { body.innerHTML = '<div style="font-size:11px;color:#94a3b8;text-align:center">Sin guía disponible aún.</div>'; return; }
+
+  const urgCls = ns.urgency === "high" ? "high" : ns.urgency === "medium" ? "medium" : "low";
+  const chips = Array.isArray(ns.quickActions) ? ns.quickActions.map(a =>
+    `<span class="ns-chip" onclick="sendToDiana('${esc(a.label||a)}')">${esc(a.label||a)}</span>`
+  ).join("") : "";
+
+  const phrase = ns.suggestedPhrase || "";
+  const escapedPhrase = phrase.replace(/'/g, "\\'");
+
+  body.innerHTML = `
+    <div class="ns-action">${esc(ns.actionTitle || "")}</div>
+    <div class="ns-detail">${esc(ns.actionDetail || "")}</div>
+    ${phrase ? `<div class="ns-phrase-label">Frase sugerida — clic para enviar a NIA</div>
+    <div class="ns-phrase" onclick="sendToDiana('${escapedPhrase}')">${esc(phrase)}</div>` : ""}
+    ${chips ? `<div class="ns-chips">${chips}</div>` : ""}
+    <div class="ns-meta">
+      <span class="ns-badge ${urgCls}">${esc(ns.urgency||"")}</span>
+      ${ns.confidence ? `<span>${Math.round(ns.confidence)}% confianza</span>` : ""}
+      ${ns.stage ? `<span>• ${esc(ns.stage)}</span>` : ""}
+    </div>`;
+}
+
+// ── Init ──────────────────────────────────────────────────────────
+loadCopilotConfig();
+loadTicket();
+if (CAMPAIGN_ID && WORKITEM_ID) {
+  fetchTranscript();
+  fetchChecklist();
+  fetchClientQuestions();
+  fetchNextStep();
+  transcriptTimer = setInterval(fetchTranscript, TRANSCRIPT_POLL);
+  checklistTimer  = setInterval(fetchChecklist,  CHECKLIST_POLL);
+  nextStepTimer   = setInterval(fetchNextStep,   NEXT_STEP_POLL);
+  setTimeout(() => setInterval(fetchClientQuestions, CLIENT_QUESTIONS_POLL), 2000);
+}
+</script>
+</body>
+</html>

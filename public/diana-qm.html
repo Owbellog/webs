@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>QM Management — NIA</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;font-family:"Avenir","Avenir Next","Nunito Sans","Segoe UI",Arial,sans-serif;background:#f0f2f5;font-size:13px;color:#1B2A37}
+
+/* ── Header ── */
+.app-header{background:#fff;border-bottom:1px solid #e0e6ec;padding:0 24px;height:56px;display:flex;align-items:center;justify-content:space-between;gap:16px;position:sticky;top:0;z-index:10}
+.header-left{display:flex;align-items:center;gap:14px}
+.header-brand{font-size:17px;font-weight:900;color:#0077C8;letter-spacing:-.3px}
+.header-sep{width:1px;height:20px;background:#e0e6ec}
+.header-campaign{font-size:12px;font-weight:600;color:#64748b}
+.header-right{display:flex;align-items:center;gap:10px}
+.refresh-pill{display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:#64748b;background:#f1f5f9;border-radius:20px;padding:4px 12px;border:1px solid #e0e6ec}
+.refresh-dot{width:7px;height:7px;border-radius:50%;background:#16a34a;flex-shrink:0}
+.refresh-dot.loading{background:#f59e0b;animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.live-badge{display:flex;align-items:center;gap:5px;background:#f0fdf4;color:#16a34a;font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px;border:1px solid #bbf7d0}
+.live-dot{width:6px;height:6px;border-radius:50%;background:#16a34a;animation:pulse 1.4s infinite}
+
+/* ── Overview KPI bar ── */
+.kpi-bar{background:#fff;border-bottom:1px solid #e0e6ec;padding:0 24px;display:flex;align-items:stretch;gap:0}
+.kpi-item{display:flex;flex-direction:column;justify-content:center;padding:14px 28px 14px 0;min-width:160px;border-right:1px solid #f1f5f9}
+.kpi-item:last-child{border-right:none}
+.kpi-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#94a3b8;margin-bottom:4px}
+.kpi-value{font-size:26px;font-weight:900;color:#1B2A37;line-height:1}
+.kpi-value.good{color:#16a34a}
+.kpi-value.warn{color:#d97706}
+.kpi-value.bad{color:#dc2626}
+.kpi-sub{font-size:10px;color:#94a3b8;margin-top:3px}
+
+/* ── Main content ── */
+.app-body{padding:20px 24px;min-height:calc(100vh - 56px - 68px)}
+
+.section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.section-title{font-size:13px;font-weight:800;color:#1B2A37;text-transform:uppercase;letter-spacing:.4px}
+.agent-count{font-size:11px;color:#94a3b8;font-weight:600}
+
+/* ── Agent Grid ── */
+.agents-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+
+/* ── Agent Card ── */
+.agent-card{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.07);border:2px solid transparent;overflow:hidden;transition:border-color .25s,box-shadow .25s}
+.agent-card.at-risk{border-color:#fca5a5;box-shadow:0 2px 12px rgba(220,38,38,.12)}
+.agent-card.inactive{opacity:.65}
+
+.agent-card-head{padding:14px 16px 12px;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;gap:10px}
+.agent-av{width:38px;height:38px;border-radius:50%;background:#0077C8;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:#fff;flex-shrink:0;text-transform:uppercase}
+.agent-av.inactive-av{background:#94a3b8}
+.agent-info{flex:1;min-width:0}
+.agent-name{font-size:13px;font-weight:800;color:#1B2A37;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.agent-id{font-size:10px;color:#94a3b8;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.agent-state-badge{font-size:10px;font-weight:700;padding:3px 9px;border-radius:20px;text-transform:uppercase;letter-spacing:.3px;white-space:nowrap;flex-shrink:0}
+.badge-active{background:#dcfce7;color:#16a34a}
+.badge-inactive{background:#f1f5f9;color:#94a3b8}
+.badge-other{background:#fef9c3;color:#92600a}
+.badge-risk{background:#fee2e2;color:#dc2626}
+
+.agent-card-body{padding:14px 16px}
+
+/* Sentiment row */
+.metric-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.metric-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#94a3b8;width:80px;flex-shrink:0}
+.metric-bar-wrap{flex:1;margin:0 10px}
+.metric-bar-track{height:5px;background:#e0e6ec;border-radius:3px;overflow:hidden}
+.metric-bar-fill{height:100%;border-radius:3px;transition:width .5s ease}
+.fill-green{background:#16a34a}
+.fill-yellow{background:#FFD100}
+.fill-red{background:#dc2626}
+.fill-blue{background:#0077C8}
+.metric-value{font-size:11px;font-weight:700;width:36px;text-align:right;flex-shrink:0}
+.metric-chip{font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px}
+.chip-positive{background:#dcfce7;color:#16a34a}
+.chip-neutral{background:#fef9c3;color:#92600a}
+.chip-negative{background:#fee2e2;color:#dc2626}
+
+/* Checklist mini */
+.checklist-mini{display:flex;align-items:center;gap:6px;margin-bottom:10px}
+.checklist-dots{display:flex;gap:3px;flex-wrap:wrap;flex:1}
+.ck-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.ck-dot.ok{background:#16a34a}
+.ck-dot.miss{background:#fca5a5}
+.ck-dot.empty{background:#e0e6ec}
+.checklist-mini-label{font-size:10px;color:#94a3b8;white-space:nowrap}
+
+/* Stats row */
+.stats-row{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.stat-pill{display:flex;align-items:center;gap:4px;font-size:10px;color:#64748b;font-weight:600}
+.stat-icon{color:#94a3b8}
+
+/* Alerts */
+.alerts-list{display:flex;flex-direction:column;gap:5px}
+.alert-item{display:flex;align-items:flex-start;gap:6px;padding:6px 10px;border-radius:8px;font-size:11px}
+.alert-item.high{background:#fee2e2;color:#dc2626}
+.alert-item.warning{background:#fef9c3;color:#92600a}
+.alert-item.info{background:#e6f3fb;color:#0077C8}
+.alert-icon{flex-shrink:0;margin-top:1px}
+.alert-detail{font-size:10px;opacity:.75;margin-top:1px}
+
+/* Trend sparkline */
+.sparkline{display:flex;align-items:flex-end;gap:2px;height:20px;width:60px}
+.spark-bar{flex:1;border-radius:1px;min-height:2px;background:#0077C8;opacity:.6;transition:height .3s}
+
+/* Empty / loading states */
+.board-empty{text-align:center;padding:60px 20px;color:#94a3b8;font-size:13px}
+.board-empty svg{display:block;margin:0 auto 12px;opacity:.4}
+.board-loading{display:flex;align-items:center;justify-content:center;gap:8px;padding:60px 0;color:#94a3b8;font-size:12px}
+.spin{animation:spin .8s linear infinite;display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Updated-at */
+.updated-at{font-size:10px;color:#94a3b8;text-align:right;margin-top:14px}
+
+/* Risk filter */
+.filter-bar{display:flex;align-items:center;gap:8px;margin-bottom:14px}
+.filter-btn{font-size:11px;font-weight:600;padding:5px 14px;border-radius:20px;border:1px solid #e0e6ec;background:#fff;color:#64748b;cursor:pointer;transition:background .15s,border-color .15s,color .15s}
+.filter-btn:hover{background:#f1f5f9}
+.filter-btn.active{background:#0077C8;color:#fff;border-color:#0077C8}
+
+@media(max-width:600px){
+  .kpi-item{min-width:120px;padding:12px 16px 12px 0}
+  .kpi-value{font-size:20px}
+  .agents-grid{grid-template-columns:1fr}
+  .app-body{padding:14px}
+}
+</style>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<header class="app-header">
+  <div class="header-left">
+    <span class="header-brand">NIA</span>
+    <div class="header-sep"></div>
+    <span class="header-campaign" id="campaignLabel">QM Management</span>
+  </div>
+  <div class="header-right">
+    <div class="refresh-pill">
+      <div class="refresh-dot" id="refreshDot"></div>
+      <span id="refreshLabel">Actualizando...</span>
+    </div>
+    <div class="live-badge">
+      <div class="live-dot"></div>
+      En vivo
+    </div>
+  </div>
+</header>
+
+<!-- ── KPI Overview ── -->
+<div class="kpi-bar">
+  <div class="kpi-item">
+    <div class="kpi-label">Total Asesores</div>
+    <div class="kpi-value" id="kpiTotal">—</div>
+    <div class="kpi-sub">en campaña</div>
+  </div>
+  <div class="kpi-item">
+    <div class="kpi-label">Compliance Prom.</div>
+    <div class="kpi-value" id="kpiCompliance">—</div>
+    <div class="kpi-sub">script adherencia</div>
+  </div>
+  <div class="kpi-item">
+    <div class="kpi-label">Alertas Activas</div>
+    <div class="kpi-value" id="kpiAlerts">—</div>
+    <div class="kpi-sub">requieren atención</div>
+  </div>
+  <div class="kpi-item">
+    <div class="kpi-label">Asesores en Riesgo</div>
+    <div class="kpi-value" id="kpiRisk">—</div>
+    <div class="kpi-sub">bajo umbral</div>
+  </div>
+</div>
+
+<!-- ── Board ── -->
+<div class="app-body">
+
+  <div class="filter-bar">
+    <button class="filter-btn active" data-filter="all" onclick="setFilter('all')">Todos</button>
+    <button class="filter-btn" data-filter="active" onclick="setFilter('active')">Activos</button>
+    <button class="filter-btn" data-filter="risk" onclick="setFilter('risk')">En Riesgo</button>
+  </div>
+
+  <div class="section-header">
+    <span class="section-title">Asesores</span>
+    <span class="agent-count" id="agentCount">—</span>
+  </div>
+
+  <div id="boardGrid" class="agents-grid">
+    <div class="board-loading">
+      <span class="spin">&#9696;</span> Cargando datos...
+    </div>
+  </div>
+
+  <div class="updated-at" id="updatedAt"></div>
+</div>
+
+<script>
+// ── Config from URL params ──
+const params = new URLSearchParams(location.search);
+const BASE_URL    = params.get("base") || params.get("baseUrl") || "";
+const CAMPAIGN    = params.get("campaign") || "";
+const REFRESH_SEC = Math.max(5, parseInt(params.get("refresh") || "30") || 30);
+const LIMIT       = Math.max(1, Math.min(24, parseInt(params.get("limit") || "24") || 24));
+
+let currentFilter = "all";
+let lastAgents    = [];
+let countdown     = REFRESH_SEC;
+let refreshTimer  = null;
+
+// ── Build API URL ──
+function buildUrl() {
+  const q = new URLSearchParams();
+  if (CAMPAIGN) q.set("campaign", CAMPAIGN);
+  q.set("limit", LIMIT);
+  return `${BASE_URL}/api/agent-quality-board?${q}`;
+}
+
+// ── Fetch + render ──
+async function fetchBoard() {
+  const dot = document.getElementById("refreshDot");
+  dot.classList.add("loading");
+  document.getElementById("refreshLabel").textContent = "Actualizando...";
+
+  try {
+    const res = await fetch(buildUrl());
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "Error");
+
+    // Campaign label
+    if (data.campaign?.name) {
+      document.getElementById("campaignLabel").textContent = data.campaign.name + " — QM Management";
+    }
+
+    // Overview KPIs
+    const ov = data.overview || {};
+    setKpi("kpiTotal", ov.totalAgents ?? "—", null);
+    setKpi("kpiCompliance", ov.averageCompliance != null ? ov.averageCompliance + "%" : "—",
+      ov.averageCompliance >= 80 ? "good" : ov.averageCompliance >= 60 ? "warn" : "bad");
+    setKpi("kpiAlerts", ov.activeAlerts ?? "—",
+      ov.activeAlerts === 0 ? "good" : ov.activeAlerts > 3 ? "bad" : "warn");
+    setKpi("kpiRisk", ov.agentsAtRisk ?? "—",
+      ov.agentsAtRisk === 0 ? "good" : ov.agentsAtRisk > 2 ? "bad" : "warn");
+
+    lastAgents = Array.isArray(data.agents) ? data.agents : [];
+    renderAgents(lastAgents);
+
+    const ts = data.updatedAt ? new Date(data.updatedAt) : new Date();
+    document.getElementById("updatedAt").textContent = "Última actualización: " + ts.toLocaleTimeString("es-ES");
+
+  } catch (err) {
+    const grid = document.getElementById("boardGrid");
+    grid.innerHTML = `<div class="board-empty">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+      </svg>
+      No se pudo cargar el tablero.<br><small>${err.message}</small>
+    </div>`;
+  }
+
+  dot.classList.remove("loading");
+  countdown = REFRESH_SEC;
+  updateCountdown();
+}
+
+function setKpi(id, val, cls) {
+  const el = document.getElementById(id);
+  el.textContent = val;
+  el.className = "kpi-value" + (cls ? " " + cls : "");
+}
+
+// ── Render agents ──
+function renderAgents(agents) {
+  const filtered = filterAgents(agents, currentFilter);
+  const grid = document.getElementById("boardGrid");
+  document.getElementById("agentCount").textContent =
+    filtered.length + " asesor" + (filtered.length !== 1 ? "es" : "");
+
+  if (!filtered.length) {
+    grid.innerHTML = `<div class="board-empty">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+        <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+      </svg>
+      Sin asesores con el filtro seleccionado.
+    </div>`;
+    return;
+  }
+
+  grid.innerHTML = filtered.map(buildAgentCard).join("");
+}
+
+function filterAgents(agents, filter) {
+  if (filter === "active") return agents.filter(a => a.summary?.state === "active");
+  if (filter === "risk")   return agents.filter(a => isAtRisk(a));
+  return agents;
+}
+
+function isAtRisk(a) {
+  return a.sentiment?.color === "red" || a.compliance?.ok === false || (a.alerts?.length > 0);
+}
+
+function buildAgentCard(agent) {
+  const s       = agent.summary  || {};
+  const sent    = agent.sentiment || {};
+  const comp    = agent.compliance || {};
+  const alerts  = Array.isArray(agent.alerts) ? agent.alerts : [];
+  const chk     = Array.isArray(agent.checklist) ? agent.checklist : [];
+  const risk    = isAtRisk(agent);
+  const active  = s.state === "active";
+
+  const initials = (s.agentUsername || "?").slice(0, 2).toUpperCase();
+  const name     = s.agentUsername || "Asesor desconocido";
+  const stateLabel = active ? "Activo" : (s.state || "Inactivo");
+  const stateCls   = active ? "badge-active" : (s.state ? "badge-other" : "badge-inactive");
+  const cardCls    = risk ? "agent-card at-risk" : (!active ? "agent-card inactive" : "agent-card");
+  const avCls      = active ? "agent-av" : "agent-av inactive-av";
+
+  // Sentiment
+  const sentPct   = Math.round(((sent.score || 0) + 1) / 2 * 100);
+  const sentCls   = sent.color === "green" ? "fill-green" : sent.color === "red" ? "fill-red" : "fill-yellow";
+  const sentChip  = sent.color === "green" ? "chip-positive" : sent.color === "red" ? "chip-negative" : "chip-neutral";
+  const sentLabel = sent.label === "Positive" ? "Positivo" : sent.label === "Negative" ? "Negativo" : "Neutral";
+
+  // Compliance
+  const compCls = comp.score >= 80 ? "fill-green" : comp.score >= 60 ? "fill-yellow" : "fill-red";
+
+  // Checklist dots (max 12)
+  const dotsHtml = chk.slice(0, 12).map(item =>
+    `<div class="ck-dot ${item.fulfilled ? "ok" : "miss"}" title="${escHtml(item.question || "")}"></div>`
+  ).join("") + (chk.length === 0 ? `<div class="ck-dot empty"></div>`.repeat(6) : "");
+
+  // Sparkline
+  const trend = Array.isArray(sent.trend) ? sent.trend : [];
+  const sparkHtml = buildSparkline(trend);
+
+  // Alerts
+  const alertsHtml = alerts.length
+    ? `<div class="alerts-list">${alerts.map(al => `
+        <div class="alert-item ${al.tone === "high" ? "high" : al.tone === "warning" ? "warning" : "info"}">
+          <span class="alert-icon">${al.tone === "high" ? "⚠" : al.tone === "warning" ? "●" : "ℹ"}</span>
+          <div>
+            <div>${escHtml(al.label)}</div>
+            <div class="alert-detail">${escHtml(al.detail)}</div>
+          </div>
+        </div>`).join("")}</div>`
+    : "";
+
+  // Updated ago
+  const updAgo = agent.updatedAt ? timeAgo(agent.updatedAt) : "";
+
+  return `
+<div class="${cardCls}">
+  <div class="agent-card-head">
+    <div class="${avCls}">${initials}</div>
+    <div class="agent-info">
+      <div class="agent-name">${escHtml(name)}</div>
+      <div class="agent-id">${s.workitemId ? "#" + escHtml(s.workitemId) : "Sin llamada"}</div>
+    </div>
+    <span class="agent-state-badge ${stateCls}">${stateLabel}</span>
+  </div>
+  <div class="agent-card-body">
+
+    <div class="metric-row">
+      <span class="metric-label">Sentimiento</span>
+      <div class="metric-bar-wrap">
+        <div class="metric-bar-track">
+          <div class="metric-bar-fill ${sentCls}" style="width:${sentPct}%"></div>
+        </div>
+      </div>
+      <span class="metric-chip ${sentChip}">${sentLabel}</span>
+    </div>
+
+    <div class="metric-row">
+      <span class="metric-label">Compliance</span>
+      <div class="metric-bar-wrap">
+        <div class="metric-bar-track">
+          <div class="metric-bar-fill ${compCls}" style="width:${comp.score ?? 100}%"></div>
+        </div>
+      </div>
+      <span class="metric-value" style="color:${comp.score >= 80 ? "#16a34a" : comp.score >= 60 ? "#d97706" : "#dc2626"}">${comp.score ?? 100}%</span>
+    </div>
+
+    ${chk.length > 0 ? `
+    <div class="checklist-mini">
+      <div class="checklist-dots">${dotsHtml}</div>
+      <span class="checklist-mini-label">${comp.fulfilled}/${comp.total} ítems</span>
+    </div>` : ""}
+
+    <div class="stats-row">
+      <div class="stat-pill">
+        <svg class="stat-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+        ${agent.messageCount ?? 0} msgs
+      </div>
+      ${s.callType ? `<div class="stat-pill">
+        <svg class="stat-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.62 3.26 2 2 0 0 1 3.6 1h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 8.91a16 16 0 0 0 6 6l.81-.81a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+        </svg>
+        ${s.callType}
+      </div>` : ""}
+      ${updAgo ? `<div class="stat-pill" style="margin-left:auto;color:#94a3b8">${updAgo}</div>` : ""}
+      <div class="sparkline">${sparkHtml}</div>
+    </div>
+
+    ${alertsHtml}
+
+  </div>
+</div>`;
+}
+
+function buildSparkline(trend) {
+  if (!trend.length) return "";
+  const max = Math.max(...trend.map(Math.abs), .01);
+  return trend.map(v => {
+    const pct = Math.round(((v + 1) / 2) * 100);
+    const cls = v >= 0.2 ? "fill-green" : v <= -0.2 ? "fill-red" : "fill-yellow";
+    return `<div class="spark-bar ${cls}" style="height:${pct}%"></div>`;
+  }).join("");
+}
+
+function timeAgo(ts) {
+  const diffMs = Date.now() - ts;
+  const diffS  = Math.round(diffMs / 1000);
+  if (diffS < 60)  return "hace " + diffS + "s";
+  if (diffS < 3600) return "hace " + Math.round(diffS / 60) + "m";
+  return "hace " + Math.round(diffS / 3600) + "h";
+}
+
+function escHtml(str) {
+  return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+// ── Filter ──
+function setFilter(f) {
+  currentFilter = f;
+  document.querySelectorAll(".filter-btn").forEach(b => {
+    b.classList.toggle("active", b.dataset.filter === f);
+  });
+  renderAgents(lastAgents);
+}
+
+// ── Countdown ──
+function updateCountdown() {
+  const lbl = document.getElementById("refreshLabel");
+  if (countdown <= 0) {
+    lbl.textContent = "Actualizando...";
+    return;
+  }
+  lbl.textContent = "Próx. en " + countdown + "s";
+  countdown--;
+}
+
+// ── Init ──
+fetchBoard();
+refreshTimer = setInterval(fetchBoard, REFRESH_SEC * 1000);
+setInterval(updateCountdown, 1000);
+</script>
+</body>
+</html>

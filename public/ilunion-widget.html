@@ -1,0 +1,966 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DIANA — Ilunion</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: "Avenir", "Avenir Next", "Nunito Sans", "Segoe UI", Arial, sans-serif;
+  background: #eef1f5;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Header ── */
+.app-header {
+  background: #1B2A37;
+  padding: 0 24px;
+  height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+.header-left { display: flex; align-items: center; gap: 32px; }
+.header-logo { display: flex; align-items: center; gap: 10px; }
+.header-logo img { height: 36px; object-fit: contain; }
+.header-nav { display: flex; gap: 4px; }
+.nav-item {
+  padding: 6px 14px;
+  font-size: 13px;
+  color: rgba(255,255,255,.6);
+  cursor: pointer;
+  border-radius: 4px;
+  font-weight: 500;
+  transition: color .15s;
+  border-bottom: 2px solid transparent;
+}
+.nav-item:hover { color: #fff; }
+.nav-item.active { color: #fff; border-bottom-color: #0077C8; }
+.header-right { display: flex; align-items: center; gap: 16px; }
+.header-user {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: rgba(255,255,255,.8);
+}
+.user-dot {
+  width: 32px; height: 32px; border-radius: 50%;
+  background: #0077C8; display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700; color: #fff;
+}
+.user-status { font-size: 10px; color: #2ecc71; font-weight: 600; text-transform: uppercase; }
+
+/* ── Main layout ── */
+.app-body {
+  flex: 1;
+  display: flex;
+  gap: 16px;
+  padding: 16px;
+  min-height: 0;
+}
+
+/* ── Left: Transcript ── */
+.col-transcript {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.transcript-card {
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.08);
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.transcript-header {
+  padding: 14px 18px;
+  border-bottom: 1px solid #e8ecf0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+.transcript-title {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 14px; font-weight: 700; color: #1B2A37;
+}
+.transcript-title svg { color: #0077C8; }
+.live-badge {
+  display: flex; align-items: center; gap: 5px;
+  background: #fee2e2; color: #dc2626;
+  font-size: 10px; font-weight: 700;
+  padding: 3px 8px; border-radius: 20px;
+  text-transform: uppercase; letter-spacing: .5px;
+}
+.live-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #dc2626;
+  animation: pulse 1.4s infinite;
+}
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+.transcript-timer { font-size: 13px; color: #64748b; font-weight: 600; }
+
+.transcript-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Messages */
+.msg-group { display: flex; flex-direction: column; gap: 3px; }
+.msg-meta {
+  font-size: 10px; font-weight: 700; letter-spacing: .5px;
+  text-transform: uppercase; color: #94a3b8;
+  display: flex; align-items: center; gap: 6px;
+}
+.msg-meta.agent { justify-content: flex-end; color: #0077C8; }
+.msg-bubble {
+  max-width: 80%;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #1B2A37;
+}
+.msg-bubble.client {
+  background: #f1f5f9;
+  border-radius: 2px 10px 10px 10px;
+  align-self: flex-start;
+}
+.msg-bubble.agent {
+  background: #1B2A37;
+  color: #fff;
+  border-radius: 10px 2px 10px 10px;
+  align-self: flex-end;
+}
+
+/* Copilot thinking */
+.copilot-thinking {
+  display: flex; align-items: center; gap: 8px;
+  justify-content: center;
+  padding: 6px 0;
+}
+.copilot-thinking-label {
+  font-size: 11px; color: #0077C8; font-weight: 600;
+  letter-spacing: .5px; text-transform: uppercase;
+}
+.thinking-dots { display: flex; gap: 3px; align-items: center; }
+.thinking-dots span {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: #0077C8; animation: bounce 1.2s infinite;
+}
+.thinking-dots span:nth-child(2) { animation-delay: .2s; }
+.thinking-dots span:nth-child(3) { animation-delay: .4s; }
+@keyframes bounce {
+  0%,80%,100% { transform: translateY(0); opacity:.4; }
+  40% { transform: translateY(-4px); opacity:1; }
+}
+
+/* Bottom copilot bar */
+.copilot-bar {
+  border-top: 1px solid #e8ecf0;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  background: #f8fafc;
+}
+.copilot-bar-icon {
+  width: 30px; height: 30px; border-radius: 50%;
+  background: #fff; display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; border: 1px solid #e0e6ec;
+}
+.copilot-bar-icon img { width: 22px; height: 22px; object-fit: contain; }
+.copilot-bar-label { font-size: 12px; font-weight: 700; color: #1B2A37; white-space: nowrap; }
+.copilot-bar-input {
+  flex: 1;
+  border: 1px solid #d1d9e0;
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 12px;
+  color: #1B2A37;
+  outline: none;
+  background: #fff;
+}
+.copilot-bar-input:focus { border-color: #0077C8; }
+.copilot-bar-send {
+  width: 32px; height: 32px;
+  background: #0077C8; color: #fff; border: none; border-radius: 8px;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; transition: opacity .15s;
+}
+.copilot-bar-send:hover { opacity: .85; }
+.copilot-bar-send:disabled { opacity: .4; cursor: not-allowed; }
+.copilot-answer-toast {
+  display: none;
+  background: #fff;
+  border: 1px solid #b3d9f0;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #1B2A37;
+  line-height: 1.5;
+  margin: 0 16px 10px;
+  position: relative;
+}
+.copilot-answer-toast.visible { display: block; }
+.copilot-answer-actions { display: flex; gap: 6px; margin-top: 8px; }
+.copilot-answer-btn {
+  font-size: 11px; padding: 3px 10px;
+  border: 1px solid #b3d9f0; border-radius: 6px;
+  background: #e6f3fb; color: #0077C8;
+  cursor: pointer; font-weight: 600;
+}
+.copilot-answer-btn:hover { background: #cce6f7; }
+
+/* ── Right: Controls ── */
+.col-controls {
+  width: 300px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ctrl-card {
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.08);
+  overflow: hidden;
+}
+.ctrl-section-title {
+  font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 1px;
+  color: #94a3b8;
+  padding: 12px 16px 8px;
+}
+
+/* Estado de gestión */
+.estado-card { background: #1B2A37; border-radius: 10px; overflow: hidden; }
+.estado-title {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 1px; color: rgba(255,255,255,.5);
+  padding: 12px 16px 8px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.estado-info { width: 16px; height: 16px; border-radius: 50%; border: 1px solid rgba(255,255,255,.3); display: flex; align-items: center; justify-content: center; font-size: 10px; color: rgba(255,255,255,.4); cursor: default; }
+.estado-list { display: flex; flex-direction: column; padding: 0 0 12px; }
+.estado-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px;
+  border-top: 1px solid rgba(255,255,255,.07);
+}
+.estado-item:first-child { border-top: none; }
+.estado-label { font-size: 13px; font-weight: 700; color: #fff; letter-spacing: .5px; }
+
+/* Toggle switch (dark) */
+.tgl { position: relative; width: 48px; height: 26px; flex-shrink: 0; }
+.tgl input { opacity: 0; width: 0; height: 0; position: absolute; }
+.tgl-track {
+  position: absolute; inset: 0;
+  background: rgba(255,255,255,.15);
+  border-radius: 13px; cursor: pointer; transition: background .2s;
+}
+.tgl-track::after {
+  content: ""; position: absolute;
+  width: 20px; height: 20px; background: #fff; border-radius: 50%;
+  top: 3px; left: 3px; transition: transform .2s;
+  box-shadow: 0 1px 4px rgba(0,0,0,.3);
+}
+.tgl input:checked + .tgl-track { background: #FFD100; }
+.tgl input:checked + .tgl-track::after { transform: translateX(22px); }
+.tgl input:not(:checked) + .tgl-track { background: rgba(255,255,255,.15); }
+
+/* Género de locución */
+.genero-btns { display: flex; gap: 8px; padding: 0 16px 14px; }
+.genero-btn {
+  flex: 1; padding: 10px 8px;
+  border: 2px solid #e0e6ec; border-radius: 8px;
+  background: #fff; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  font-size: 12px; font-weight: 700; color: #64748b;
+  transition: border-color .2s, background .2s, color .2s;
+}
+.genero-btn:hover { border-color: #0077C8; }
+.genero-btn.selected { border-color: #0077C8; background: #e6f3fb; color: #0077C8; }
+.genero-btn svg { width: 16px; height: 16px; }
+
+/* Respuestas rápidas */
+.quick-grid { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 14px; }
+.quick-btn {
+  background: #0077C8; color: #fff; border: none; border-radius: 20px;
+  padding: 7px 14px; font-size: 11px; font-weight: 700;
+  cursor: pointer; transition: opacity .15s; letter-spacing: .3px;
+  display: flex; align-items: center; gap: 5px;
+}
+.quick-btn:hover { opacity: .88; }
+.quick-btn:active { transform: scale(.97); }
+.quick-btn:disabled { opacity: .5; cursor: not-allowed; }
+.quick-btn.urgente { background: #dc2626; }
+
+/* Mensaje manual */
+.manual-area {
+  margin: 0 16px 10px;
+  border: 1px solid #d1d9e0; border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px; color: #1B2A37;
+  width: calc(100% - 32px);
+  min-height: 70px; resize: vertical;
+  outline: none; font-family: inherit;
+  transition: border-color .2s;
+}
+.manual-area:focus { border-color: #0077C8; }
+.manual-bottom { display: flex; gap: 8px; padding: 0 16px 14px; }
+.btn-corrector {
+  flex: 1; background: #FFD100; color: #1B2A37;
+  border: none; border-radius: 8px; height: 40px;
+  font-size: 13px; font-weight: 700; cursor: pointer;
+  transition: opacity .15s;
+}
+.btn-corrector:hover { opacity: .88; }
+.btn-corrector:disabled { opacity: .5; cursor: not-allowed; }
+.btn-play {
+  width: 40px; height: 40px;
+  background: #0077C8; color: #fff;
+  border: none; border-radius: 8px;
+  font-size: 16px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; transition: opacity .15s;
+}
+.btn-play:hover { opacity: .88; }
+.btn-play:disabled { opacity: .5; cursor: not-allowed; }
+.voz-label { font-size: 10px; color: #94a3b8; font-weight: 600; text-transform: uppercase; padding: 0 16px 10px; }
+
+/* Recordatorio de calidad */
+.reminder-card {
+  background: #fff; border-radius: 10px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.08);
+  padding: 12px 14px;
+  display: flex; gap: 10px; align-items: flex-start;
+}
+.reminder-icon {
+  width: 28px; height: 28px; border-radius: 50%;
+  background: #fff3cd; display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; font-size: 14px;
+}
+.reminder-label { font-size: 10px; font-weight: 700; color: #92600a; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 3px; }
+.reminder-text { font-size: 11px; color: #64748b; line-height: 1.4; }
+
+/* Aviso automático */
+.aviso-card { background: #fff; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+.aviso-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 16px;
+  border-bottom: 1px solid #f1f5f9;
+}
+.aviso-row:last-child { border-bottom: none; }
+.tgl-sm { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
+.tgl-sm input { opacity: 0; width: 0; height: 0; position: absolute; }
+.tgl-sm-track {
+  position: absolute; inset: 0;
+  background: #cbd5e0; border-radius: 10px; cursor: pointer; transition: background .2s;
+}
+.tgl-sm-track::after {
+  content: ""; position: absolute;
+  width: 14px; height: 14px; background: #fff; border-radius: 50%;
+  top: 3px; left: 3px; transition: transform .2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,.2);
+}
+.tgl-sm input:checked + .tgl-sm-track { background: #0077C8; }
+.tgl-sm input:checked + .tgl-sm-track::after { transform: translateX(16px); }
+.aviso-label { font-size: 11px; font-weight: 600; color: #374151; flex: 1; }
+.aviso-msg-input {
+  flex: 1; min-width: 0;
+  border: 1px solid #d1d9e0; border-radius: 6px;
+  padding: 4px 8px; font-size: 11px; color: #1B2A37; outline: none;
+  height: 26px;
+}
+.aviso-msg-input:focus { border-color: #0077C8; }
+.aviso-num {
+  width: 44px; height: 26px;
+  border: 1px solid #d1d9e0; border-radius: 6px;
+  padding: 0 6px; font-size: 11px; text-align: center;
+  color: #1B2A37; outline: none; flex-shrink: 0;
+}
+.aviso-num:focus { border-color: #0077C8; }
+.aviso-unit { font-size: 10px; color: #94a3b8; font-weight: 600; white-space: nowrap; }
+.chip-ok {
+  font-size: 10px; font-weight: 700; padding: 2px 8px;
+  background: #dcfce7; color: #16A34A; border-radius: 10px;
+  display: none;
+}
+.chip-ok.visible { display: inline-block; }
+
+/* Typing dots (small) */
+.typing-dots-sm { display: none; align-items: center; gap: 2px; }
+.typing-dots-sm.active { display: flex; }
+.typing-dots-sm span {
+  width: 4px; height: 4px; border-radius: 50%;
+  background: #0077C8; animation: bounce 1.2s infinite;
+}
+.typing-dots-sm span:nth-child(2) { animation-delay: .2s; }
+.typing-dots-sm span:nth-child(3) { animation-delay: .4s; }
+
+/* Error toast */
+.error-toast {
+  display: none; background: #fee2e2; color: #dc2626;
+  font-size: 11px; padding: 6px 12px; border-radius: 6px;
+  margin: 0 16px 8px;
+}
+.error-toast.visible { display: block; }
+
+/* Scrollbar */
+.transcript-messages::-webkit-scrollbar { width: 4px; }
+.transcript-messages::-webkit-scrollbar-track { background: transparent; }
+.transcript-messages::-webkit-scrollbar-thumb { background: #d1d9e0; border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<header class="app-header">
+  <div class="header-left">
+    <div class="header-logo">
+      <img src="./ilunion.jpeg" alt="Ilunion" />
+      <span style="color:#fff;font-size:15px;font-weight:900;letter-spacing:2px">ILUNION</span>
+    </div>
+    <nav class="header-nav">
+      <span class="nav-item active">Dashboard</span>
+    </nav>
+  </div>
+  <div class="header-right">
+    <div class="header-user">
+      <div>
+        <div style="font-weight:700;font-size:12px">Operator 042</div>
+        <div class="user-status">En línea</div>
+      </div>
+      <div class="user-dot">O</div>
+    </div>
+  </div>
+</header>
+
+<!-- Body -->
+<div class="app-body">
+
+  <!-- LEFT: Transcript -->
+  <div class="col-transcript">
+    <div class="transcript-card">
+      <div class="transcript-header">
+        <div class="transcript-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          Transcripción de la llamada
+        </div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <div class="live-badge" id="liveBadge" style="display:none">
+            <div class="live-dot"></div> LIVE
+          </div>
+          <div class="transcript-timer" id="callTimer" style="display:none">00:00</div>
+          <div class="poll-spinner" id="transcriptSpinner" style="width:14px;height:14px;border:2px solid #e0e6ec;border-top-color:#0077C8;border-radius:50%;display:none;animation:spin .8s linear infinite"></div>
+        </div>
+      </div>
+
+      <div class="transcript-messages" id="transcriptMessages">
+        <div style="text-align:center;padding:40px 0;font-size:13px;color:#94a3b8">
+          Esperando mensajes de la llamada…
+        </div>
+      </div>
+
+      <!-- Copilot answer toast -->
+      <div class="copilot-answer-toast" id="copilotAnswerToast"></div>
+
+      <!-- Copilot bar -->
+      <div class="copilot-bar" id="copilotBar" style="display:none">
+        <div class="copilot-bar-icon">
+          <img src="./Diana.png" alt="DIANA" />
+        </div>
+        <span class="copilot-bar-label">DIANA</span>
+        <form id="copilotForm" style="display:flex;flex:1;gap:8px">
+          <input class="copilot-bar-input" id="copilotInput" type="text" placeholder="Pregunta al asistente..." autocomplete="off" />
+          <button class="copilot-bar-send" id="copilotSend" type="submit">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M5 12h11"/><path d="m12 5 7 7-7 7"/></svg>
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: Controls -->
+  <div class="col-controls">
+
+    <!-- Estado de gestión -->
+    <div class="estado-card">
+      <div class="estado-title">
+        Estado de gestión
+        <div class="estado-info">i</div>
+      </div>
+      <div class="estado-list">
+        <div class="estado-item" onclick="toggleStep('privacidad')">
+          <span class="estado-label">PRIVACIDAD</span>
+          <label class="tgl" onclick="event.stopPropagation()">
+            <input type="checkbox" id="toggle-privacidad" onchange="toggleStep('privacidad')" />
+            <div class="tgl-track"></div>
+          </label>
+        </div>
+        <div class="estado-item" onclick="toggleStep('identidad')">
+          <span class="estado-label">IDENTIDAD</span>
+          <label class="tgl" onclick="event.stopPropagation()">
+            <input type="checkbox" id="toggle-identidad" onchange="toggleStep('identidad')" />
+            <div class="tgl-track"></div>
+          </label>
+        </div>
+        <div class="estado-item" onclick="toggleStep('resolucion')">
+          <span class="estado-label">RESOLUCIÓN</span>
+          <label class="tgl" onclick="event.stopPropagation()">
+            <input type="checkbox" id="toggle-resolucion" onchange="toggleStep('resolucion')" />
+            <div class="tgl-track"></div>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Género de locución -->
+    <div class="ctrl-card">
+      <div class="ctrl-section-title">Género de locución</div>
+      <div class="genero-btns">
+        <button class="genero-btn selected" id="btn-masculino" onclick="selectVoice('masculino')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10" cy="10" r="7"/><path d="M21 21l-4.35-4.35M17 3h4m0 0v4m0-4l-5 5"/></svg>
+          Masculino
+        </button>
+        <button class="genero-btn" id="btn-femenino" onclick="selectVoice('femenino')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="9" r="7"/><path d="M12 16v6M9 19h6"/></svg>
+          Femenino
+        </button>
+      </div>
+    </div>
+
+    <!-- Respuestas rápidas -->
+    <div class="ctrl-card">
+      <div class="ctrl-section-title">Respuestas rápidas</div>
+      <div class="quick-grid">
+        <button class="quick-btn" onclick="playQuick('Hola, ¿en qué puedo ayudarle?')">🤝 SALUDO</button>
+        <button class="quick-btn" onclick="playQuick('Le informo que por motivos de calidad, esta llamada puede ser grabada.')">⚖ LEGAL</button>
+        <button class="quick-btn" onclick="playQuick('Por favor, espere un momento.')">⏳ ESPERA</button>
+        <button class="quick-btn urgente" onclick="playQuick('Le atiendo en este momento, es urgente.')">! URGENTE</button>
+      </div>
+    </div>
+
+    <!-- Mensaje manual -->
+    <div class="ctrl-card">
+      <div class="ctrl-section-title">Mensaje Manual</div>
+      <textarea class="manual-area" id="manualInput"
+        placeholder="Escriba el mensaje para el usuario..."
+        oninput="onInputChange(this.value)"
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();onPlayClick()}"></textarea>
+      <div class="manual-bottom">
+        <button class="btn-corrector" id="btnCorrector" onclick="onCorrector()">CORRECTOR</button>
+        <button class="btn-play" id="btnPlay" onclick="onPlayClick()" title="Reproducir">▶</button>
+      </div>
+      <div class="voz-label" id="vozLabel">Voz activa: es-ES-Standard-B</div>
+      <div class="error-toast" id="errorToast"></div>
+
+      <!-- Aviso automático -->
+      <div style="border-top:1px solid #f1f5f9;padding-top:4px;margin-bottom:4px">
+        <div class="aviso-row">
+          <label class="tgl-sm">
+            <input type="checkbox" id="typingEnabledToggle" checked onchange="typingEnabled = this.checked" />
+            <div class="tgl-sm-track"></div>
+          </label>
+          <span class="aviso-label">Aviso automático</span>
+          <input class="aviso-msg-input" id="typingMsgInput" type="text" value="Un momento, estoy preparando su respuesta." oninput="typingMessage = this.value" />
+          <input class="aviso-num" id="typingDelayInput" type="number" min="0.5" max="60" step="0.5" value="1.5" oninput="typingDelay = Math.max(500, parseFloat(this.value||1.5)*1000)" />
+          <span class="aviso-unit">seg</span>
+          <div class="typing-dots-sm" id="typingDots"><span></span><span></span><span></span></div>
+          <span class="chip-ok" id="chipSent">✓</span>
+        </div>
+        <div class="aviso-row">
+          <label class="tgl-sm">
+            <input type="checkbox" id="wordTriggerToggle" onchange="wordTriggerEnabled = this.checked" />
+            <div class="tgl-sm-track"></div>
+          </label>
+          <span class="aviso-label">Por palabras</span>
+          <input class="aviso-num" id="wordTriggerCount" type="number" min="1" max="50" step="1" value="3" />
+          <span class="aviso-unit">palabras</span>
+          <span class="chip-ok" id="chipWordSent">✓</span>
+        </div>
+      </div>
+    </div>
+
+
+  </div><!-- /col-controls -->
+</div><!-- /app-body -->
+
+<style>
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+
+<script>
+// ── Config (query params) ─────────────────────────────────────
+const _p               = new URLSearchParams(location.search);
+const BASE_URL         = _p.get("base")       || _p.get("baseUrl")    || "";
+const WORKITEM_ID      = _p.get("workitemid") || _p.get("workitemId") || "";
+const CAMPAIGN_ID      = _p.get("campaign")   || "";
+const CORRECTOR_API_ID = _p.get("correctorId")|| "69a6bcfb6ce3b458cbf93a97";
+
+const POLL_INTERVAL_MS   = 10_000;   // Transcripción: cada 10s
+const DEFAULT_TYPING_MSG = "Un momento, estoy preparando su respuesta.";
+const DEFAULT_DELAY      = 1500;
+
+// ── Estado ────────────────────────────────────────────────────
+const stepState = { privacidad: false, identidad: false, resolucion: false };
+let cbvoice            = "es-ES-Standard-B";
+let texto              = "";
+let typingMessage      = DEFAULT_TYPING_MSG;
+let typingDelay        = DEFAULT_DELAY;
+let typingSent         = false;
+let typingEnabled      = true;
+let typingTimer        = null;
+let wordTriggerEnabled = false;
+let wordTriggerSent    = false;
+
+let transcriptTimer    = null;
+let lastMsgCount       = 0;
+let callStartTs        = null;
+let timerInterval      = null;
+let copilotRequestConfig = null;
+let callEnded          = false;
+
+// ── Guion toggles ─────────────────────────────────────────────
+function toggleStep(field) {
+  stepState[field] = !stepState[field];
+  document.getElementById("toggle-" + field).checked = stepState[field];
+}
+
+// ── Género ────────────────────────────────────────────────────
+function selectVoice(gender) {
+  cbvoice = gender === "masculino" ? "es-ES-Standard-B" : "es-ES-Neural2-F";
+  document.getElementById("btn-masculino").classList.toggle("selected", gender === "masculino");
+  document.getElementById("btn-femenino").classList.toggle("selected", gender === "femenino");
+  document.getElementById("vozLabel").textContent = "Voz activa: " + cbvoice;
+}
+
+// ── TTS ───────────────────────────────────────────────────────
+async function callTTS(text, voice) {
+  if (!text.trim()) return;
+  const url = `${BASE_URL}/api/tts?campaign=${encodeURIComponent(CAMPAIGN_ID)}&workitemid=${encodeURIComponent(WORKITEM_ID)}`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, voiceName: voice })
+    });
+    if (!res.ok) throw new Error(`TTS error ${res.status}`);
+    hideError();
+  } catch (err) {
+    showError("Error TTS: " + err.message);
+  }
+}
+
+function playQuick(text) {
+  const btns = document.querySelectorAll(".quick-btn");
+  btns.forEach(b => b.disabled = true);
+  callTTS(text, cbvoice).finally(() => btns.forEach(b => b.disabled = false));
+}
+
+function onPlayClick() {
+  const el = document.getElementById("manualInput");
+  const val = el.value.trim();
+  if (!val) return;
+  const btn = document.getElementById("btnPlay");
+  btn.disabled = true;
+  callTTS(val, cbvoice).finally(() => { btn.disabled = false; });
+  el.value = "";
+  texto = "";
+  typingSent = false;
+  wordTriggerSent = false;
+  clearTimeout(typingTimer);
+  document.getElementById("typingDots").classList.remove("active");
+  document.getElementById("chipSent").classList.remove("visible");
+  document.getElementById("chipWordSent").style.display = "none";
+}
+
+// ── Corrector ─────────────────────────────────────────────────
+async function onCorrector() {
+  const input = document.getElementById("manualInput");
+  const val = input.value.trim();
+  if (!val) return;
+  const btn = document.getElementById("btnCorrector");
+  btn.disabled = true; btn.textContent = "Corrigiendo…";
+  try {
+    const url = `${BASE_URL}/rest-calls/api/restcallwithresponse/${CORRECTOR_API_ID}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ "data.json": JSON.stringify({ textoco: val }) })
+    });
+    if (!res.ok) throw new Error(`Corrector error ${res.status}`);
+    const data = await res.json();
+    const matches = data?.correcion?.result?.matches || data?.matches || [];
+    if (matches.length > 0) {
+      let corrected = val;
+      for (const m of [...matches].sort((a,b) => b.offset - a.offset)) {
+        if (m.replacements?.length > 0)
+          corrected = corrected.slice(0, m.offset) + m.replacements[0].value + corrected.slice(m.offset + m.length);
+      }
+      input.value = corrected; texto = corrected;
+    }
+    hideError();
+  } catch (err) { showError("Error corrector: " + err.message); }
+  finally { btn.disabled = false; btn.textContent = "CORRECTOR"; }
+}
+
+// ── Aviso automático ──────────────────────────────────────────
+function onInputChange(newValue) {
+  texto = newValue;
+  if (!newValue.trim()) {
+    typingSent = false; wordTriggerSent = false;
+    clearTimeout(typingTimer);
+    document.getElementById("typingDots").classList.remove("active");
+    document.getElementById("chipSent").classList.remove("visible");
+    document.getElementById("chipWordSent").style.display = "none";
+    return;
+  }
+  // Por palabras
+  if (wordTriggerEnabled && !wordTriggerSent) {
+    const wc = newValue.trim().split(/\s+/).filter(Boolean).length;
+    const thr = parseInt(document.getElementById("wordTriggerCount").value || "3", 10);
+    if (wc >= thr) {
+      wordTriggerSent = true;
+      const msgToSend = newValue.trim();
+      document.getElementById("manualInput").value = "";
+      texto = "";
+      callTTS(msgToSend, cbvoice).then(() => {
+        const chip = document.getElementById("chipWordSent");
+        chip.style.display = "inline-block";
+        setTimeout(() => { chip.style.display = "none"; }, 3000);
+      });
+      return;
+    }
+  }
+  // Por tiempo
+  if (typingSent || !typingEnabled) return;
+  clearTimeout(typingTimer);
+  document.getElementById("typingDots").classList.add("active");
+  typingTimer = setTimeout(() => {
+    document.getElementById("typingDots").classList.remove("active");
+    callTTS(typingMessage, cbvoice).then(() => {
+      typingSent = true;
+      document.getElementById("chipSent").classList.add("visible");
+    });
+  }, typingDelay);
+}
+
+// ── Transcripción ─────────────────────────────────────────────
+function stopPolling() {
+  if (callEnded) return;
+  callEnded = true;
+  if (transcriptTimer) { clearInterval(transcriptTimer); transcriptTimer = null; }
+  if (timerInterval)   { clearInterval(timerInterval);   timerInterval   = null; }
+  const badge = document.getElementById("liveBadge");
+  if (badge) { badge.style.background = "#fee2e2"; badge.style.color = "#dc2626"; badge.innerHTML = "● FIN"; }
+}
+
+async function fetchTranscript() {
+  if (!CAMPAIGN_ID || !WORKITEM_ID || callEnded) return;
+  const spinner = document.getElementById("transcriptSpinner");
+  spinner.style.display = "block";
+  try {
+    const url = `${BASE_URL}/api/workitem?campaign=${encodeURIComponent(CAMPAIGN_ID)}&workitemid=${encodeURIComponent(WORKITEM_ID)}`;
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "Error");
+    // Detener polling si la llamada ya no está activa
+    const state = (data.summary?.state || "").toLowerCase();
+    if (state && state !== "active") {
+      stopPolling();
+      return;
+    }
+    renderTranscript(data.transcript || data.messages || []);
+  } catch (err) {
+    // silencioso, no interrumpir flujo
+  } finally {
+    spinner.style.display = "none";
+  }
+}
+
+function renderTranscript(messages) {
+  if (!messages.length) return;
+  const wrap = document.getElementById("transcriptMessages");
+  if (messages.length === lastMsgCount) return;
+
+  // Mostrar LIVE badge y timer
+  document.getElementById("liveBadge").style.display = "flex";
+  document.getElementById("callTimer").style.display = "block";
+  if (!callStartTs && messages[0]?.timestamp) {
+    callStartTs = messages[0].timestamp;
+    startCallTimer();
+  }
+
+  // Detectar si el usuario está al fondo antes de añadir mensajes
+  const isAtBottom = wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 60;
+
+  // Si es la primera carga, limpiar el placeholder
+  if (lastMsgCount === 0) wrap.innerHTML = "";
+
+  // Solo añadir los mensajes nuevos
+  const newMessages = messages.slice(lastMsgCount);
+  lastMsgCount = messages.length;
+
+  newMessages.forEach((msg) => {
+    const isAgent = msg.role === "agent" || msg.role === "USER";
+    const time = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString("es-ES", { hour:"2-digit", minute:"2-digit", second:"2-digit" }) : "";
+
+    const group = document.createElement("div");
+    group.className = "msg-group";
+
+    const meta = document.createElement("div");
+    meta.className = "msg-meta" + (isAgent ? " agent" : "");
+    meta.textContent = (isAgent ? "AGENTE" : "USUARIO") + (time ? "   " + time : "");
+    group.appendChild(meta);
+
+    const bubble = document.createElement("div");
+    bubble.className = "msg-bubble " + (isAgent ? "agent" : "client");
+    bubble.textContent = msg.text;
+    group.appendChild(bubble);
+
+    wrap.appendChild(group);
+  });
+
+  // Auto-scroll solo si el usuario ya estaba al fondo
+  if (isAtBottom) wrap.scrollTop = wrap.scrollHeight;
+}
+
+function startCallTimer() {
+  const el = document.getElementById("callTimer");
+  timerInterval = setInterval(() => {
+    if (!callStartTs) return;
+    const secs = Math.floor((Date.now() - callStartTs) / 1000);
+    const m = String(Math.floor(secs / 60)).padStart(2, "0");
+    const s = String(secs % 60).padStart(2, "0");
+    el.textContent = `${m}:${s}`;
+  }, 1000);
+}
+
+// ── Copilot chat ──────────────────────────────────────────────
+async function initCopilot() {
+  if (!CAMPAIGN_ID) return;
+  document.getElementById("copilotBar").style.display = "flex";
+
+  try {
+    const res = await fetch(`${BASE_URL}/api/config?campaign=${encodeURIComponent(CAMPAIGN_ID)}${WORKITEM_ID ? `&workitemid=${encodeURIComponent(WORKITEM_ID)}` : ""}`);
+    const data = await res.json();
+    if (data.configured && data.request) copilotRequestConfig = data.request;
+  } catch (_) {}
+
+  document.getElementById("copilotForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const input = document.getElementById("copilotInput");
+    const msg = input.value.trim();
+    if (!msg) return;
+    input.value = "";
+    document.getElementById("copilotSend").disabled = true;
+    showCopilotThinking(true);
+    try {
+      const res = await fetch(`${BASE_URL}/api/prediction`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: msg,
+          campaignId: copilotRequestConfig?.campaignId || CAMPAIGN_ID,
+          domain: copilotRequestConfig?.domain || "",
+          kb_ids: copilotRequestConfig?.kbIds || []
+        })
+      });
+      const data = await res.json();
+      showCopilotThinking(false);
+      const answer = data?.faq_response?.text || data?.error || "Sin respuesta.";
+      showCopilotAnswer(answer);
+    } catch (_) {
+      showCopilotThinking(false);
+      showCopilotAnswer("No se pudo completar la solicitud.");
+    } finally {
+      document.getElementById("copilotSend").disabled = false;
+      input.focus();
+    }
+  });
+}
+
+function showCopilotThinking(show) {
+  const wrap = document.getElementById("transcriptMessages");
+  const existing = wrap.querySelector(".copilot-thinking");
+  if (show && !existing) {
+    const el = document.createElement("div");
+    el.className = "copilot-thinking";
+    el.innerHTML = `
+      <div class="copilot-bar-icon" style="width:24px;height:24px;background:#fff;border:1px solid #e0e6ec">
+        <img src="./Diana.png" alt="" style="width:16px;height:16px;object-fit:contain" />
+      </div>
+      <span class="copilot-thinking-label">✦ DIANA analizando…</span>
+      <div class="thinking-dots"><span></span><span></span><span></span></div>`;
+    wrap.appendChild(el);
+    wrap.scrollTop = wrap.scrollHeight;
+  } else if (!show && existing) {
+    existing.remove();
+  }
+}
+
+function showCopilotAnswer(text) {
+  const toast = document.getElementById("copilotAnswerToast");
+  const escaped = esc(text).replace(/\n\n+/g, "<br><br>").replace(/\n/g, "<br>");
+  const safeText = text.replace(/\\/g,"\\\\").replace(/'/g,"\\'");
+  toast.innerHTML = `<div>${escaped}</div>
+    <div class="copilot-answer-actions">
+      <button class="copilot-answer-btn" onclick="copyCopilotAnswer(this,'${safeText}')">Copiar</button>
+      <button class="copilot-answer-btn" onclick="useCopilotAnswer('${safeText}')">Usar en campo</button>
+      <button class="copilot-answer-btn" onclick="document.getElementById('copilotAnswerToast').classList.remove('visible')" style="margin-left:auto;color:#94a3b8">✕</button>
+    </div>`;
+  toast.classList.add("visible");
+}
+
+function copyCopilotAnswer(btn, text) {
+  navigator.clipboard.writeText(text).catch(() => {});
+  btn.textContent = "✓ Copiado";
+  setTimeout(() => { btn.textContent = "Copiar"; }, 1500);
+}
+
+function useCopilotAnswer(text) {
+  document.getElementById("manualInput").value = text;
+  texto = text;
+  document.getElementById("manualInput").focus();
+}
+
+// ── Utils ─────────────────────────────────────────────────────
+function esc(str) {
+  return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+function showError(msg) {
+  const t = document.getElementById("errorToast");
+  t.textContent = msg; t.classList.add("visible");
+  setTimeout(() => t.classList.remove("visible"), 5000);
+}
+function hideError() { document.getElementById("errorToast").classList.remove("visible"); }
+
+// ── Init ──────────────────────────────────────────────────────
+document.getElementById("typingMsgInput").value = DEFAULT_TYPING_MSG;
+
+if (CAMPAIGN_ID && WORKITEM_ID) {
+  fetchTranscript();
+  transcriptTimer = setInterval(fetchTranscript, POLL_INTERVAL_MS);
+}
+initCopilot();
+</script>
+</body>
+</html>

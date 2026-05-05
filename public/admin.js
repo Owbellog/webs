@@ -102,6 +102,7 @@ const fields = {
   workitemApiUrl: document.getElementById("workitemApiUrl"),
   agentChatApiUrl: document.getElementById("agentChatApiUrl"),
   agentUserId: document.getElementById("agentUserId"),
+  transcriptRefreshSeconds: document.getElementById("transcriptRefreshSeconds"),
   sentimentProvider: document.getElementById("sentimentProvider"),
   geminiApiKey: document.getElementById("geminiApiKey"),
   geminiModel: document.getElementById("geminiModel"),
@@ -135,6 +136,8 @@ const fields = {
   workitemShowMeta: document.getElementById("workitemShowMeta"),
   questionsGeminiApiKey: document.getElementById("questionsGeminiApiKey"),
   questionsUseGemini: document.getElementById("questionsUseGemini"),
+  clientQuestionsUseGemini: document.getElementById("clientQuestionsUseGemini"),
+  clientQuestionsRefreshSeconds: document.getElementById("clientQuestionsRefreshSeconds"),
   questionsGeminiModel: document.getElementById("questionsGeminiModel"),
   questionsGeminiApiUrl: document.getElementById("questionsGeminiApiUrl"),
   questionsGeminiPrompt: document.getElementById("questionsGeminiPrompt"),
@@ -220,7 +223,8 @@ const fields = {
   summaryagenticAiApiKey: document.getElementById("summaryagenticAiApiKey"),
   summaryagenticAiPrompt: document.getElementById("summaryagenticAiPrompt"),
   summaryagenticHubspotEnabled: document.getElementById("summaryagenticHubspotEnabled"),
-  summaryagenticHubspotToken: document.getElementById("summaryagenticHubspotToken")
+  summaryagenticHubspotToken: document.getElementById("summaryagenticHubspotToken"),
+  summaryagenticWarmToken: document.getElementById("summaryagenticWarmToken")
 };
 
 const state = {
@@ -326,10 +330,11 @@ function renderWielandMappingEditors(widgetMap = {}, contactToListMap = {}) {
 
   if (wielandContactToListRows) {
     wielandContactToListRows.innerHTML = WIELAND_CONTACT_FIELD_DESCRIPTIONS.map(([contactField, description]) => {
-      const val = contactToListMap[contactField] || "";
+      const raw = contactToListMap[contactField];
+      const val = Array.isArray(raw) ? raw.join(", ") : (raw || "");
       return `<tr>
         <td><span class="admin-mapping-code">${escapeHtml(contactField)}</span></td>
-        <td><input class="admin-mapping-input${val ? " admin-mapping-input--filled" : ""}" type="text" data-wieland-contact-field="${escapeHtml(contactField)}" value="${escapeHtml(val)}" placeholder="NCC column name" /></td>
+        <td><input class="admin-mapping-input${val ? " admin-mapping-input--filled" : ""}" type="text" data-wieland-contact-field="${escapeHtml(contactField)}" value="${escapeHtml(val)}" placeholder="NCC column (use commas for multiple)" /></td>
         <td class="admin-mapping-description">${escapeHtml(description)}</td>
       </tr>`;
     }).join("");
@@ -350,8 +355,10 @@ function readWielandContactToListMap() {
   const result = {};
   document.querySelectorAll("[data-wieland-contact-field]").forEach((input) => {
     const key = input.getAttribute("data-wieland-contact-field");
-    const value = input.value.trim();
-    if (key && value) result[key] = value;
+    const raw = input.value.trim();
+    if (!key || !raw) return;
+    const parts = raw.split(",").map((v) => v.trim()).filter(Boolean);
+    result[key] = parts.length === 1 ? parts[0] : parts;
   });
   return result;
 }
@@ -1032,18 +1039,27 @@ function updateSummaryAgenticUrls(campaignId) {
   const urlPhone = document.getElementById("summaryagenticUrlPhone");
   const urlCustomerId = document.getElementById("summaryagenticUrlCustomerId");
   const embedCode = document.getElementById("summaryagenticEmbedCode");
+  const warmUrl = document.getElementById("summaryagenticWarmUrl");
+  const warmCurl = document.getElementById("summaryagenticWarmCurl");
   const base = `${window.location.origin}${window.location.pathname.replace(/\/[^/]*$/, "/summaryagentic.html")}`;
+  const apiBase = `${window.location.origin}${window.location.pathname.replace(/\/[^/]*$/, "")}`;
 
   if (campaignId) {
     if (saLink) { saLink.href = `./summaryagentic.html?campaign=${encodeURIComponent(campaignId)}`; saLink.hidden = false; }
     if (urlPhone) urlPhone.value = `${base}?campaign=${encodeURIComponent(campaignId)}&phone=+15551234567`;
     if (urlCustomerId) urlCustomerId.value = `${base}?campaign=${encodeURIComponent(campaignId)}&customer_id=C-001`;
     if (embedCode) embedCode.value = `<iframe src="${base}?campaign=${encodeURIComponent(campaignId)}&phone={{PHONE}}" style="width:100%;height:900px;border:none;" allow="clipboard-write"></iframe>`;
+    const warmEndpoint = `${apiBase}/api/summaryagentic/warm`;
+    const warmTokenVal = fields.summaryagenticWarmToken?.value.trim() || "TU_WARM_TOKEN";
+    if (warmUrl) warmUrl.value = warmEndpoint;
+    if (warmCurl) warmCurl.value = `curl -X POST ${warmEndpoint} \\\n  -H "Content-Type: application/json" \\\n  -d '{"campaign":"${campaignId}","phone":"+15551234567","token":"${warmTokenVal}"}'`;
   } else {
     if (saLink) saLink.hidden = true;
     if (urlPhone) urlPhone.value = "";
     if (urlCustomerId) urlCustomerId.value = "";
     if (embedCode) embedCode.value = "";
+    if (warmUrl) warmUrl.value = "";
+    if (warmCurl) warmCurl.value = "";
   }
 }
 
@@ -1381,6 +1397,17 @@ document.getElementById("saLayoutClearBtn")?.addEventListener("click", () => {
   markDirty();
 });
 
+document.getElementById("summaryagenticWarmTokenGenBtn")?.addEventListener("click", () => {
+  const input = fields.summaryagenticWarmToken;
+  if (!input) return;
+  const array = new Uint8Array(32);
+  crypto.getRandomValues(array);
+  input.value = Array.from(array).map(b => b.toString(16).padStart(2, "0")).join("");
+  // Regenerate cURL example if campaign is already saved
+  const campaignId = fields.id?.value.trim();
+  if (campaignId) updateSummaryAgenticUrls(campaignId);
+});
+
 document.getElementById("summaryagenticHubspotTestBtn")?.addEventListener("click", async () => {
   const btn = document.getElementById("summaryagenticHubspotTestBtn");
   const result = document.getElementById("summaryagenticHubspotTestResult");
@@ -1613,6 +1640,7 @@ function fillForm(campaign) {
   fields.workitemApiUrl.value = campaign.workitemApiUrl || "";
   fields.agentChatApiUrl.value = campaign.agentChatApiUrl || "";
   fields.agentUserId.value = campaign.agentUserId || "";
+  fields.transcriptRefreshSeconds.value = campaign.transcriptRefreshSeconds || "";
   fields.sentimentProvider.value = campaign.sentimentProvider || "heuristic";
   fields.geminiApiKey.value = campaign.geminiApiKey || "";
   fields.geminiModel.value = campaign.geminiModel || "gemini-2.5-flash";
@@ -1656,6 +1684,8 @@ function fillForm(campaign) {
   fields.workitemShowMeta.checked = campaign.ui?.workitem?.showMeta !== false;
   fields.questionsGeminiApiKey.value = campaign.questionsGeminiApiKey || "";
   fields.questionsUseGemini.checked = campaign.ui?.questions?.useGemini !== false;
+  fields.clientQuestionsUseGemini.checked = campaign.ui?.questions?.clientQuestionsUseGemini !== false;
+  fields.clientQuestionsRefreshSeconds.value = campaign.ui?.questions?.clientQuestionsRefreshSeconds || "";
   fields.questionsGeminiModel.value = campaign.questionsGeminiModel || "gemini-2.5-flash";
   fields.questionsGeminiApiUrl.value = campaign.questionsGeminiApiUrl || "https://generativelanguage.googleapis.com";
   fields.questionsGeminiPrompt.value = campaign.questionsGeminiPrompt || "";
@@ -1749,6 +1779,7 @@ function fillForm(campaign) {
   const hs = sa.hubspot || {};
   if (fields.summaryagenticHubspotEnabled) fields.summaryagenticHubspotEnabled.checked = hs.enabled === true;
   if (fields.summaryagenticHubspotToken) fields.summaryagenticHubspotToken.value = campaign.summaryagenticHubspotToken || "";
+  if (fields.summaryagenticWarmToken) fields.summaryagenticWarmToken.value = campaign.summaryagenticWarmToken || "";
   const hsObjects = Array.isArray(hs.objects) ? hs.objects : ["contacts","deals","tickets","calls"];
   document.querySelectorAll(".sa-hs-obj").forEach((cb) => { cb.checked = hsObjects.includes(cb.value); });
   // Active layout
@@ -1770,6 +1801,7 @@ function readForm() {
     workitemApiUrl: fields.workitemApiUrl.value.trim(),
     agentChatApiUrl: fields.agentChatApiUrl.value.trim(),
     agentUserId: fields.agentUserId.value.trim(),
+    transcriptRefreshSeconds: parseInt(fields.transcriptRefreshSeconds.value) || 10,
     sentimentProvider: fields.sentimentProvider.value,
     geminiApiKey: fields.geminiApiKey.value.trim(),
     geminiModel: fields.geminiModel.value.trim(),
@@ -1831,6 +1863,8 @@ function readForm() {
         embedMaxHeight: fields.questionsEmbedMaxHeight.value.trim(),
         refreshIntervalSeconds: Number(fields.questionsRefreshIntervalSeconds.value || 30),
         useGemini: fields.questionsUseGemini.checked,
+        clientQuestionsUseGemini: fields.clientQuestionsUseGemini.checked,
+        clientQuestionsRefreshSeconds: parseInt(fields.clientQuestionsRefreshSeconds.value) || 30,
         showTitle: fields.questionsShowTitle.checked,
         showPageHeader: fields.questionsShowPageHeader.checked,
         showMeta: fields.questionsShowMeta.checked,
@@ -1906,6 +1940,7 @@ function readForm() {
     },
     summaryagenticAiApiKey: fields.summaryagenticAiApiKey.value.trim(),
     summaryagenticHubspotToken: fields.summaryagenticHubspotToken?.value.trim() || "",
+    summaryagenticWarmToken: fields.summaryagenticWarmToken?.value.trim() || "",
     summaryagentic: {
       enabled: fields.summaryagenticEnabled.checked,
       cacheSeconds: Number(fields.summaryagenticCacheSeconds.value || 60),
@@ -2045,6 +2080,8 @@ function applyDefaultUiValues() {
   fields.workitemShowMeta.checked = true;
   fields.questionsGeminiApiKey.value = "";
   fields.questionsUseGemini.checked = true;
+  fields.clientQuestionsUseGemini.checked = true;
+  fields.clientQuestionsRefreshSeconds.value = "";
   fields.questionsGeminiModel.value = "gemini-2.5-flash";
   fields.questionsGeminiApiUrl.value = "https://generativelanguage.googleapis.com";
   fields.questionsGeminiPrompt.value = "";

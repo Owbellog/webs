@@ -745,20 +745,38 @@
       <div class="w-modal">
         <div class="w-modal-title">Create New List</div>
         <div class="w-alert" id="listModalAlert"></div>
-        <p style="font-size:0.86rem;color:var(--muted);margin-bottom:16px;">
-          A CSV will be auto-generated from all eligible contacts (Active + Union + no-DNC), sorted by call_priority (seniority descending). The list will be uploaded to NCC and assigned to the configured campaign.
-        </p>
-        <div class="w-field">
-          <label for="listName">List name</label>
-          <input id="listName" type="text" placeholder="OT_CastingA_Week23" required />
+
+        <!-- Step 1: select contacts -->
+        <div id="listStep1">
+          <p style="font-size:0.86rem;color:var(--muted);margin-bottom:10px;">
+            Select the contacts to include in this list. Sorted by call_priority (seniority descending).
+          </p>
+          <div style="display:flex;gap:8px;margin-bottom:8px;">
+            <button class="w-btn w-btn-secondary" id="listSelectAll" type="button">Select all</button>
+            <button class="w-btn w-btn-secondary" id="listClearAll" type="button">Clear all</button>
+            <span id="listContactCount" style="margin-left:auto;font-size:0.85rem;color:var(--muted);align-self:center;"></span>
+          </div>
+          <div class="w-check-list" id="listContactList"></div>
+          <div class="w-modal-actions">
+            <button class="w-btn w-btn-secondary" id="listModalCancel">Cancel</button>
+            <button class="w-btn w-btn-primary" id="listStepNext">Next →</button>
+          </div>
         </div>
-        <div class="w-field">
-          <label for="listDescription">Description (optional)</label>
-          <input id="listDescription" type="text" placeholder="Overtime call for casting plant A" />
-        </div>
-        <div class="w-modal-actions">
-          <button class="w-btn w-btn-secondary" id="listModalCancel">Cancel</button>
-          <button class="w-btn w-btn-primary" id="listModalSave">Create &amp; upload</button>
+
+        <!-- Step 2: name & description -->
+        <div id="listStep2" hidden>
+          <div class="w-field">
+            <label for="listName">List name</label>
+            <input id="listName" type="text" placeholder="OT_CastingA_Week23" required />
+          </div>
+          <div class="w-field">
+            <label for="listDescription">Description (optional)</label>
+            <input id="listDescription" type="text" placeholder="Overtime call for casting plant A" />
+          </div>
+          <div class="w-modal-actions">
+            <button class="w-btn w-btn-secondary" id="listStepBack">← Back</button>
+            <button class="w-btn w-btn-primary" id="listModalSave">Create &amp; upload</button>
+          </div>
         </div>
       </div>
     </div>

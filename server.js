@@ -540,8 +540,14 @@ function handleAdminMe(req, res) {
 }
 
 async function handleAdminSetupStatus(res) {
-  const users = await readUsers();
-  sendJson(res, 200, { needsSetup: users.length === 0 });
+  try {
+    const users = await readUsers();
+    sendJson(res, 200, { needsSetup: users.length === 0 });
+  } catch (err) {
+    console.error("[setup-status] readUsers error:", err.message);
+    // Fail safe: assume setup is done to avoid showing setup screen on Firestore timeout
+    sendJson(res, 200, { needsSetup: false });
+  }
 }
 
 async function handleAdminSetup(req, res) {
@@ -599,13 +605,45 @@ const MIME_TYPES = {
   ".ico": "image/x-icon"
 };
 
+// ── Widget API token validation ───────────────────────────────────────────────
+// If a campaign has `apiAccessToken` configured, requests to widget API routes
+// must include Authorization: Bearer <token> matching that value.
+const WIDGET_API_PATHS = new Set([
+  "/api/config", "/api/workitem", "/api/tts", "/api/prediction",
+  "/api/agent-next-step", "/api/questions-check", "/api/client-questions",
+  "/api/ticket", "/api/agent-quality-board"
+]);
+
+async function checkWidgetApiToken(req, res, url) {
+  if (!WIDGET_API_PATHS.has(url.pathname)) return true;
+  const campaignId = url.searchParams.get("campaign") || "";
+  if (!campaignId) return true; // no campaign = use default, no token enforced
+  try {
+    const campaigns = await readCampaigns();
+    const campaign = campaigns.find(c => c.id === campaignId);
+    const requiredToken = campaign?.apiAccessToken ? String(campaign.apiAccessToken).trim() : "";
+    if (!requiredToken) return true; // not configured → no restriction
+    const auth = req.headers["authorization"] || "";
+    const provided = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+    if (provided !== requiredToken) {
+      sendJson(res, 401, { error: "Unauthorized: invalid or missing API token." });
+      return false;
+    }
+  } catch { /* readCampaigns error → allow through */ }
+  return true;
+}
+
 async function handleRequest(req, res) {
-  const url = new URL(req.url, `http://${req.headers.host}`);
+  // Cloud Functions Gen2 may prepend /nextiq to the path — strip it
+  const rawUrl = req.url.replace(/^\/nextiq(?=\/|$)/, "") || "/";
+  const url = new URL(rawUrl, `http://${req.headers.host}`);
 
   if (req.method === "GET" && url.pathname === "/api/health") {
     sendJson(res, 200, getHealthStatus());
     return;
   }
+
+  if (!(await checkWidgetApiToken(req, res, url))) return;
 
   if (req.method === "GET" && url.pathname === "/api/config") {
     await handleConfig(req, res, url);
@@ -622,8 +660,28 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/client-questions") {
+    await handleClientQuestions(req, res, url);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/ticket") {
+    await handleSaveTicket(req, res, url);
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/ticket") {
+    await handleGetTicket(req, res, url);
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/agent-next-step") {
     await handleAgentNextStep(req, res, url);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/tts") {
+    await handleTts(req, res, url);
     return;
   }
 
@@ -717,6 +775,11 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/summaryagentic/warm") {
+    await handleSummaryAgenticWarm(req, res);
+    return;
+  }
+
   // Public admin auth routes (no session required)
   if (req.method === "POST" && url.pathname === "/api/admin/login") {
     await handleAdminLogin(req, res);
@@ -761,6 +824,11 @@ async function handleRequest(req, res) {
 
   if (url.pathname.startsWith("/api/wieland/")) {
     await handleWieland(req, res, url);
+    return;
+  }
+
+  if (url.pathname.startsWith("/api/thrio-data/")) {
+    await handleThrioData(req, res, url);
     return;
   }
 
@@ -815,7 +883,7 @@ async function handleWorkitem(req, res, url) {
       throwConfig('Missing workitem id. Provide ?workitemid=... in the URL.');
     }
 
-    const config = await resolveCampaignConfigAsync(selection);
+    const config = applyTokenOverride(await resolveCampaignConfigAsync(selection), req);
     const workitemData = await fetchWorkitem(config, workitemId);
 
     sendJson(res, 200, {
@@ -827,17 +895,187 @@ async function handleWorkitem(req, res, url) {
         domain: config.domain,
         workitemApiUrl: config.workitemApiUrl,
         sentimentProvider: config.sentimentProvider,
+        transcriptRefreshSeconds: config.transcriptRefreshSeconds,
+        clientQuestionsRefreshSeconds: config.ui?.questions?.clientQuestionsRefreshSeconds,
         ui: config.ui
       },
       summary: summarizeWorkitem(workitemData),
-      messages: await extractClientMessages(workitemData, config)
+      messages: await extractClientMessages(workitemData, config),
+      transcript: extractChecklistMessages(workitemData)
     });
   } catch (error) {
     const status = error.code === "CONFIG" ? 400 : 502;
     sendJson(res, status, {
       error: status === 400 ? error.message : "Failed to reach workitem API",
+      details: error.message
+    });
+  }
+}
+
+const TICKETS_COLLECTION = `${FIRESTORE_PREFIX}_tickets`;
+
+async function handleSaveTicket(req, res, url) {
+  try {
+    const body = await readJson(req);
+    const campaignId = String(body.campaign || url.searchParams?.get("campaign") || "").trim();
+    const workitemId = String(body.workitemId || body.workitem_id || "").trim();
+    if (!campaignId || !workitemId) throwConfig("Missing campaign or workitemId.");
+
+    const docId = `${campaignId}_${workitemId}`;
+    const data = {
+      campaign: campaignId,
+      workitemId,
+      updatedAt: Date.now(),
+      nombre: String(body.nombre || "").trim(),
+      apellido: String(body.apellido || "").trim(),
+      telefono: String(body.telefono || "").trim(),
+      email: String(body.email || "").trim(),
+      clienteId: String(body.clienteId || "").trim(),
+      contrato: String(body.contrato || "").trim(),
+      motivo: String(body.motivo || "").trim(),
+      prioridad: String(body.prioridad || "").trim(),
+      tipo: String(body.tipo || "").trim(),
+      estado: String(body.estado || "").trim(),
+      referencia: String(body.referencia || "").trim(),
+      seguimiento: String(body.seguimiento || "").trim(),
+      notas: String(body.notas || "").trim()
+    };
+
+    if (firestore) {
+      await firestore.collection(TICKETS_COLLECTION).doc(docId).set(data, { merge: true });
+    }
+
+    sendJson(res, 200, { ok: true, docId });
+  } catch (error) {
+    const status = error.code === "CONFIG" ? 400 : 500;
+    sendJson(res, status, { ok: false, error: error.message });
+  }
+}
+
+async function handleGetTicket(req, res, url) {
+  try {
+    const campaignId = String(url.searchParams.get("campaign") || "").trim();
+    const workitemId = String(url.searchParams.get("workitemid") || url.searchParams.get("workitemId") || "").trim();
+    if (!campaignId || !workitemId) throwConfig("Missing campaign or workitemId.");
+
+    const docId = `${campaignId}_${workitemId}`;
+    let ticket = null;
+    if (firestore) {
+      const doc = await firestore.collection(TICKETS_COLLECTION).doc(docId).get();
+      if (doc.exists) ticket = doc.data();
+    }
+
+    sendJson(res, 200, { ok: true, ticket });
+  } catch (error) {
+    const status = error.code === "CONFIG" ? 400 : 500;
+    sendJson(res, status, { ok: false, error: error.message });
+  }
+}
+
+async function handleClientQuestions(req, res, url) {
+  try {
+    const selection = readSelection(url.searchParams);
+    const workitemId = String(
+      url.searchParams.get("workitemid") || url.searchParams.get("workitemId") || ""
+    ).trim();
+
+    if (!workitemId) throwConfig("Missing workitem id.");
+
+    const config = await resolveCampaignConfigAsync(selection);
+    const workitemData = await fetchWorkitem(config, workitemId);
+    const messages = extractChecklistMessages(workitemData);
+    const clientMessages = messages.filter(m => m.role !== "agent");
+
+    if (!clientMessages.length) {
+      return sendJson(res, 200, { ok: true, workitemId, questions: [] });
+    }
+
+    const useGemini = config?.ui?.questions?.clientQuestionsUseGemini !== false;
+    let questions;
+    if (useGemini) {
+      questions = await detectClientQuestionsWithGemini(clientMessages, config);
+    } else {
+      questions = detectClientQuestionsHeuristically(clientMessages);
+    }
+
+    sendJson(res, 200, { ok: true, workitemId, questions, updatedAt: Date.now() });
+  } catch (error) {
+    const status = error.code === "CONFIG" ? 400 : 502;
+    sendJson(res, status, {
+      error: status === 400 ? error.message : "Failed to detect client questions",
       details: status === 400 ? undefined : error.message
     });
+  }
+}
+
+function detectClientQuestionsHeuristically(messages) {
+  const QUESTION_WORDS = /\b(qué|que|cómo|como|cuándo|cuando|dónde|donde|cuánto|cuanto|cuál|cual|por qué|por que|puede|podría|podria|tienen|hay|existe|funciona|es posible|me puede|me podría|what|how|when|where|why|can|could|would|is there|do you)\b/i;
+  const seen = new Set();
+  const questions = [];
+  messages.forEach(msg => {
+    const sentences = msg.text.split(/(?<=[.!?])\s+|(?=\?)/);
+    sentences.forEach(s => {
+      const clean = s.trim().replace(/\?+$/, "").trim();
+      if (!clean || clean.length < 8) return;
+      const isQ = msg.text.includes("?") || QUESTION_WORDS.test(clean);
+      if (isQ && !seen.has(clean)) {
+        seen.add(clean);
+        questions.push(clean + "?");
+      }
+    });
+  });
+  return questions.slice(0, 8);
+}
+
+async function detectClientQuestionsWithGemini(messages, config) {
+  const apiKey = config.questionsGeminiApiKey || config.geminiApiKey;
+  if (!apiKey) throwConfig(`Campaign "${config.id}" is missing a Gemini API key.`);
+
+  const isSpanish = normalizeLanguage(config?.ui?.shared?.language || "en") === "es";
+  const model = config.questionsGeminiModel || config.geminiModel || "gemini-2.5-flash";
+  const endpoint = buildGeminiEndpoint(
+    config.questionsGeminiApiUrl || config.geminiApiUrl || "https://generativelanguage.googleapis.com",
+    model
+  );
+
+  const instruction = [
+    "You analyze a call transcript and extract questions or doubts expressed by the client.",
+    "Return strict JSON only: an array of strings, each being a clear question.",
+    isSpanish
+      ? "Write all questions in Spanish. Maximum 8 questions."
+      : "Write all questions in English. Maximum 8 questions.",
+    "Only include genuine questions or doubts from the client messages.",
+    "If no questions are found, return an empty array [].",
+    "Do not include agent messages.",
+    "Make each question concise and self-contained (under 15 words)."
+  ].join(" ");
+
+  const body = {
+    systemInstruction: { parts: [{ text: instruction }] },
+    contents: [{
+      parts: [{
+        text: JSON.stringify({
+          task: "Extract client questions from the transcript.",
+          messages: messages.map(m => ({ role: m.role, text: m.text }))
+        })
+      }]
+    }],
+    generationConfig: { responseMimeType: "application/json", temperature: 0.2 }
+  };
+
+  const upstream = await fetch(`${endpoint}?key=${apiKey}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+
+  const raw = await upstream.json();
+  const text = raw?.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
+  try {
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed.filter(q => typeof q === "string" && q.trim()).slice(0, 8) : [];
+  } catch (_) {
+    return [];
   }
 }
 
@@ -934,6 +1172,56 @@ async function handleAgentNextStep(req, res, url) {
       error: status === 400 ? error.message : "Failed to generate next step",
       details: status === 400 ? undefined : error.message
     });
+  }
+}
+
+async function handleTts(req, res, url) {
+  try {
+    const selection = readSelection(url.searchParams);
+    const workitemId = String(
+      url.searchParams.get("workitemid")
+      || url.searchParams.get("workitemId")
+      || ""
+    ).trim();
+
+    if (!workitemId) {
+      sendJson(res, 400, { error: "Missing workitemid" });
+      return;
+    }
+
+    const config = applyTokenOverride(await resolveCampaignConfigAsync(selection), req);
+    const body = await readJson(req);
+    const text = String(body.text || "").trim();
+    const voiceName = String(body.voiceName || "").trim();
+
+    if (!text) {
+      sendJson(res, 400, { error: "Missing text" });
+      return;
+    }
+
+    const ttsUrl = `https://${sanitizeDomain(config.domain)}/users/api/calls/${encodeURIComponent(workitemId)}/tts`;
+    const headers = { "Authorization": config.token, "Content-Type": "application/json" };
+    if (config.cookie) headers["Cookie"] = config.cookie;
+
+    const ttsBody = { text };
+    if (voiceName) ttsBody.voiceName = voiceName;
+    const upstream = await fetch(ttsUrl, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(ttsBody)
+    });
+
+    if (!upstream.ok) {
+      const detail = await upstream.text().catch(() => "");
+      console.error(`[tts] Thrio ${upstream.status} | detail=${detail.slice(0,200)}`);
+      sendJson(res, upstream.status, { error: `TTS upstream error ${upstream.status}`, detail });
+      return;
+    }
+
+    sendJson(res, 200, { ok: true });
+  } catch (error) {
+    const status = error.code === "CONFIG" ? 400 : 502;
+    sendJson(res, status, { error: status === 400 ? error.message : "TTS request failed", details: error.message });
   }
 }
 
@@ -1356,11 +1644,11 @@ async function handlePrediction(req, res) {
   }
 
   try {
-    const config = await resolveCampaignConfigAsync({
+    const config = applyTokenOverride(await resolveCampaignConfigAsync({
       campaignId: body.campaignId || body.campaign || "",
       domain: body.domain || "",
       kbIds: body.kb_ids || body.kbIds || []
-    });
+    }), req);
 
     const upstream = await fetchPredictionUpstream(config, {
       message: body.message || "",
@@ -1382,8 +1670,120 @@ async function handlePrediction(req, res) {
 }
 
 // ── Summary Agentic ───────────────────────────────────────────────────────────
-// In-memory cache: key = "campaignId:phone" → { data, expiresAt }
-const summaryAgenticCache = new Map();
+const SUMMARY_CACHE_COLLECTION = `${FIRESTORE_PREFIX}_summary_cache`;
+
+function normalizeCacheId(value) {
+  // Strip all non-alphanumeric chars so +34672420697, 34672420697, " 34672420697" all map to the same key
+  return String(value || "").replace(/[^a-zA-Z0-9]/g, "");
+}
+
+async function getCachedSummary(cacheKey) {
+  if (!firestore) return null;
+  try {
+    const doc = await firestore.collection(SUMMARY_CACHE_COLLECTION).doc(cacheKey).get();
+    if (!doc.exists) return null;
+    const entry = doc.data();
+    if (Date.now() > entry.expiresAt) return null;
+    return entry.data;
+  } catch (err) {
+    console.error("[summary-cache] read error:", err.message);
+    return null;
+  }
+}
+
+async function setCachedSummary(cacheKey, data, ttlMs) {
+  if (!firestore || ttlMs <= 0) return;
+  try {
+    await firestore.collection(SUMMARY_CACHE_COLLECTION).doc(cacheKey).set({
+      data,
+      expiresAt: Date.now() + ttlMs,
+      updatedAt: Date.now()
+    });
+  } catch (err) {
+    console.error("[summary-cache] write error:", err.message);
+  }
+}
+
+// ── Core summary generation (shared by /summary and /warm) ───────────────────
+async function generateSummaryData(config, identifiers, extraParams) {
+  const saConfig = config.summaryagentic || {};
+  const { phone = "", customerId = "" } = identifiers;
+  const enabledSources = (saConfig.dataSources || []).filter((s) => s.enabled && s.url);
+
+  // Fetch custom data sources + HubSpot in parallel
+  const hubspotCfg = saConfig.hubspot || {};
+  const hubspotToken = config.summaryagenticHubspotToken || "";
+  const hubspotEnabled = hubspotCfg.enabled && hubspotToken && hubspotCfg.objects?.length;
+
+  const [sourceResults, hubspotResult] = await Promise.all([
+    Promise.allSettled(enabledSources.map((source) => fetchSummaryDataSource(source, identifiers))),
+    hubspotEnabled
+      ? fetchHubspotData(hubspotToken, hubspotCfg.objects, identifiers).catch((err) => ({ __error: err.message }))
+      : Promise.resolve(null)
+  ]);
+
+  const sourceData = enabledSources.map((source, i) => {
+    const result = sourceResults[i];
+    if (result.status === "fulfilled") {
+      const rawData = result.value;
+      const filtered = source.selectedFields?.length
+        ? filterBySelectedFields(rawData, source.selectedFields)
+        : rawData;
+      return { id: source.id, name: source.name, data: filtered, error: null };
+    }
+    return { id: source.id, name: source.name, data: null, error: result.reason?.message || "Failed" };
+  });
+
+  if (hubspotEnabled) {
+    if (hubspotResult?.__error) {
+      console.error("[summaryagentic] HubSpot fetch error:", hubspotResult.__error);
+      sourceData.push({ id: "hubspot", name: "HubSpot", data: null, error: hubspotResult.__error });
+    } else if (Array.isArray(hubspotResult)) {
+      sourceData.push(...hubspotResult);
+    }
+  }
+
+  const aiProvider = saConfig.aiProvider || "claude";
+  const aiApiKey = config.summaryagenticAiApiKey || "";
+  const aiModel = saConfig.aiModel || defaultAiModel(aiProvider);
+  const aiPrompt = saConfig.aiPrompt || defaultSummaryPrompt();
+
+  if (!aiApiKey) throwConfig(`Campaign "${config.id}" is missing the AI API key for Summary Agentic.`);
+
+  console.log("[summaryagentic] building context, sourceData count:", sourceData.length);
+  const contextText = buildSummaryContext(identifiers, sourceData, enabledSources);
+  console.log("[summaryagentic] context chars:", contextText.length);
+
+  let rawText;
+  const activeLayout = saConfig.activeLayout;
+  console.log("[summaryagentic] calling AI, provider:", aiProvider, "model:", aiModel, "activeLayout:", !!activeLayout?.sections?.length);
+  if (activeLayout?.sections?.length) {
+    rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, buildLayoutFillPrompt(activeLayout.sections), contextText);
+  } else {
+    rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, aiPrompt, contextText);
+  }
+  console.log("[summaryagentic] AI response chars:", rawText.length, "tail:", rawText.slice(-100));
+  const sections = parseSummarySections(rawText);
+  console.log("[summaryagentic] parsed sections:", sections ? sections.length : null);
+
+  const responseData = {
+    ok: true,
+    campaign: { id: config.id, name: config.name },
+    identifiers,
+    sections,
+    summary: rawText,
+    sources: sourceData.map((s) => ({ id: s.id, name: s.name, ok: !s.error, error: s.error })),
+    generatedAt: Date.now()
+  };
+
+  // Store in Firestore cache
+  const extraKey = Object.entries(extraParams || {}).sort().map(([k,v]) => `${k}=${v}`).join("&");
+  const cacheKey = `${config.id}:${normalizeCacheId(phone || customerId)}${extraKey ? "_" + extraKey.replace(/[^a-zA-Z0-9_-]/g, "_") : ""}`;
+  const cacheTtl = (saConfig.cacheSeconds || 60) * 1000;
+  await setCachedSummary(cacheKey, responseData, cacheTtl);
+
+  return { responseData, cacheKey };
+}
 
 async function handleSummaryAgenticSummary(req, res, url) {
   try {
@@ -1409,98 +1809,17 @@ async function handleSummaryAgenticSummary(req, res, url) {
       throwConfig(`Summary Agentic is not enabled for campaign "${config.id}".`);
     }
 
-    // Check cache — include extra params in cache key so different param combos don't collide
+    // Check Firestore cache
     const extraKey = Object.entries(extraParams).sort().map(([k,v]) => `${k}=${v}`).join("&");
-    const cacheKey = `${config.id}:${phone || customerId}${extraKey ? ":" + extraKey : ""}`;
-    const cached = summaryAgenticCache.get(cacheKey);
-    if (cached && Date.now() < cached.expiresAt) {
-      sendJson(res, 200, { ...cached.data, fromCache: true });
+    const cacheKey = `${config.id}:${normalizeCacheId(phone || customerId)}${extraKey ? "_" + extraKey.replace(/[^a-zA-Z0-9_-]/g, "_") : ""}`;
+    const cached = await getCachedSummary(cacheKey);
+    if (cached) {
+      sendJson(res, 200, { ...cached, fromCache: true });
       return;
     }
 
     const identifiers = { phone, customerId, ...extraParams };
-    const enabledSources = (saConfig.dataSources || []).filter((s) => s.enabled && s.url);
-
-    // Fetch all data sources in parallel
-    const sourceResults = await Promise.allSettled(
-      enabledSources.map((source) => fetchSummaryDataSource(source, identifiers))
-    );
-
-    const sourceData = enabledSources.map((source, i) => {
-      const result = sourceResults[i];
-      if (result.status === "fulfilled") {
-        const rawData = result.value;
-        const filtered = source.selectedFields?.length
-          ? filterBySelectedFields(rawData, source.selectedFields)
-          : rawData;
-        return { id: source.id, name: source.name, data: filtered, error: null };
-      }
-      return { id: source.id, name: source.name, data: null, error: result.reason?.message || "Failed" };
-    });
-
-    // HubSpot integration
-    const hubspotCfg = saConfig.hubspot || {};
-    const hubspotToken = config.summaryagenticHubspotToken || "";
-    console.log("[summaryagentic] hubspot enabled:", hubspotCfg.enabled, "token:", hubspotToken ? "set" : "empty", "objects:", hubspotCfg.objects);
-    if (hubspotCfg.enabled && hubspotToken && hubspotCfg.objects?.length) {
-      try {
-        const hsSources = await fetchHubspotData(hubspotToken, hubspotCfg.objects, identifiers);
-        sourceData.push(...hsSources);
-      } catch (err) {
-        console.error("[summaryagentic] HubSpot fetch error:", err.message);
-        sourceData.push({ id: "hubspot", name: "HubSpot", data: null, error: err.message });
-      }
-    }
-
-    const aiProvider = saConfig.aiProvider || "claude";
-    const aiApiKey = config.summaryagenticAiApiKey || "";
-    const aiModel = saConfig.aiModel || defaultAiModel(aiProvider);
-    const aiPrompt = saConfig.aiPrompt || defaultSummaryPrompt();
-
-    if (!aiApiKey) {
-      throwConfig(`Campaign "${config.id}" is missing the AI API key for Summary Agentic.`);
-    }
-
-    console.log("[summaryagentic] building context, sourceData count:", sourceData.length);
-    let contextText;
-    try {
-      contextText = buildSummaryContext(identifiers, sourceData, enabledSources);
-    } catch (ctxErr) {
-      console.error("[summaryagentic] buildSummaryContext error:", ctxErr.message, ctxErr.stack);
-      throw ctxErr;
-    }
-    console.log("[summaryagentic] context chars:", contextText.length);
-
-    let sections;
-    let rawText;
-    const activeLayout = saConfig.activeLayout;
-    console.log("[summaryagentic] calling AI, provider:", aiProvider, "model:", aiModel, "activeLayout:", !!activeLayout?.sections?.length);
-    if (activeLayout?.sections?.length) {
-      const layoutPrompt = buildLayoutFillPrompt(activeLayout.sections);
-      rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, layoutPrompt, contextText);
-    } else {
-      rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, aiPrompt, contextText);
-    }
-    console.log("[summaryagentic] AI response chars:", rawText.length, "tail:", rawText.slice(-100));
-    sections = parseSummarySections(rawText);
-    console.log("[summaryagentic] parsed sections:", sections ? sections.length : null);
-
-    const responseData = {
-      ok: true,
-      campaign: { id: config.id, name: config.name },
-      identifiers,
-      sections,                    // structured dynamic sections
-      summary: rawText,            // raw text fallback
-      sources: sourceData.map((s) => ({ id: s.id, name: s.name, ok: !s.error, error: s.error })),
-      generatedAt: Date.now()
-    };
-
-    // Store in cache
-    const cacheTtl = (saConfig.cacheSeconds || 60) * 1000;
-    if (cacheTtl > 0) {
-      summaryAgenticCache.set(cacheKey, { data: responseData, expiresAt: Date.now() + cacheTtl });
-    }
-
+    const { responseData } = await generateSummaryData(config, identifiers, extraParams);
     sendJson(res, 200, responseData);
   } catch (error) {
     const status = error.code === "CONFIG" ? 400 : 502;
@@ -1508,6 +1827,50 @@ async function handleSummaryAgenticSummary(req, res, url) {
       error: status === 400 ? error.message : "Failed to generate summary",
       details: status === 400 ? undefined : error.message
     });
+  }
+}
+
+// ── Warm endpoint: pre-generate summary before agent opens widget ─────────────
+async function handleSummaryAgenticWarm(req, res) {
+  try {
+    const body = await readJson(req);
+    const campaignId = String(body.campaign || body.campaignId || "").trim();
+    const phone = String(body.phone || "").trim();
+    const customerId = String(body.customer_id || body.customerId || "").trim();
+    const token = String(body.token || "").trim();
+
+    if (!campaignId) return sendJson(res, 400, { error: "Missing campaign" });
+    if (!phone && !customerId) return sendJson(res, 400, { error: "Missing phone or customer_id" });
+
+    const config = await resolveCampaignConfigAsync({ campaignId });
+    const saConfig = config.summaryagentic || {};
+
+    if (!saConfig.enabled) return sendJson(res, 400, { error: "Summary Agentic not enabled" });
+
+    // Validate warm token
+    const warmToken = config.summaryagenticWarmToken || "";
+    if (!warmToken || token !== warmToken) {
+      return sendJson(res, 401, { error: "Invalid warm token" });
+    }
+
+    // Check if already cached — nothing to do
+    const cacheKey = `${config.id}:${normalizeCacheId(phone || customerId)}`;
+    const cached = await getCachedSummary(cacheKey);
+    if (cached) {
+      return sendJson(res, 200, { ok: true, status: "already_cached" });
+    }
+
+    // Generate and cache — wait for completion so Cloud Function doesn't kill the task
+    const identifiers = { phone, customerId };
+    try {
+      await generateSummaryData(config, identifiers, {});
+      sendJson(res, 200, { ok: true, status: "warmed" });
+    } catch (err) {
+      console.error("[summaryagentic:warm] generation error:", err.message);
+      sendJson(res, 500, { ok: false, error: err.message });
+    }
+  } catch (error) {
+    sendJson(res, 500, { error: error.message });
   }
 }
 
@@ -2921,10 +3284,13 @@ async function handleAdmin(req, res, url) {
   // ──────────────────────────────────────────────────────────────────────
 
   if (req.method === "GET" && url.pathname === "/api/admin/campaigns") {
-    sendJson(res, 200, {
-      campaigns: await readCampaigns(),
-      adminConfigured: Boolean(ADMIN_PASSWORD)
-    });
+    try {
+      const campaigns = await readCampaigns();
+      sendJson(res, 200, { campaigns, adminConfigured: Boolean(ADMIN_PASSWORD) });
+    } catch (error) {
+      console.error("[admin/campaigns] readCampaigns error:", error.message, error.stack);
+      sendJson(res, 500, { error: "Failed to load campaigns", details: error.message });
+    }
     return;
   }
 
@@ -2990,6 +3356,39 @@ async function handleAdmin(req, res, url) {
     const filtered = campaigns.filter((item) => item.id !== id);
     await writeCampaigns(filtered);
     sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/admin/wieland/copy-contacts") {
+    if (!firestore) {
+      sendJson(res, 400, { error: "Firestore not available." });
+      return;
+    }
+    let body;
+    try { body = await readJson(req); } catch {
+      sendJson(res, 400, { error: "Invalid JSON." }); return;
+    }
+    const fromPrefix = String(body.fromPrefix || "nextiq").trim();
+    const toPrefix = String(body.toPrefix || FIRESTORE_PREFIX).trim();
+    if (!fromPrefix || !toPrefix || fromPrefix === toPrefix) {
+      sendJson(res, 400, { error: "fromPrefix and toPrefix are required and must differ." });
+      return;
+    }
+    const fromCollection = `${fromPrefix}_wieland_contacts`;
+    const toCollection = `${toPrefix}_wieland_contacts`;
+    const snapshot = await firestore.collection(fromCollection).get();
+    if (snapshot.empty) {
+      sendJson(res, 200, { ok: true, copied: 0, message: `Source collection "${fromCollection}" is empty.` });
+      return;
+    }
+    const batch = firestore.batch();
+    let count = 0;
+    for (const doc of snapshot.docs) {
+      batch.set(firestore.collection(toCollection).doc(doc.id), doc.data(), { merge: true });
+      count++;
+    }
+    await batch.commit();
+    sendJson(res, 200, { ok: true, copied: count, from: fromCollection, to: toCollection });
     return;
   }
 
@@ -3136,6 +3535,24 @@ function readSelection(searchParams) {
   };
 }
 
+// Extrae un token override del header x-thrio-token o query param token.
+// Si está presente, se usa en lugar del token de la campaña para llamadas a Thrio.
+function getThrioTokenOverride(req) {
+  const fromHeader = String(req.headers["x-thrio-token"] || "").trim();
+  if (fromHeader) return fromHeader;
+  try {
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    return String(url.searchParams.get("token") || "").trim();
+  } catch { return ""; }
+}
+
+// Aplica el token override al config si viene en el request
+function applyTokenOverride(config, req) {
+  const override = getThrioTokenOverride(req);
+  if (!override) return config;
+  return { ...config, token: override };
+}
+
 async function readCampaigns() {
   if (firestore) {
     const snapshot = await firestore.collection(FIRESTORE_COLLECTION).get();
@@ -3268,6 +3685,7 @@ function normalizeCampaign(input) {
       ?? input.acd?.disabledStatusCode,
       3
     ),
+    transcriptRefreshSeconds: Math.max(1, parseInt(input.transcriptRefreshSeconds || input.transcript_refresh_seconds || 10) || 10),
     allowedKbIds: normalizeKbIds(input.allowedKbIds || input.allowed_kb_ids || input.kbIds || ""),
     wieland: {
       nccCampaignId: String(input.wieland?.nccCampaignId || input.wielandNccCampaignId || "").trim(),
@@ -3282,7 +3700,9 @@ function normalizeCampaign(input) {
     wielandNccCredential: String(input.wielandNccCredential || "").trim(),
     summaryagenticAiApiKey: String(input.summaryagenticAiApiKey || "").trim(),
     summaryagenticHubspotToken: String(input.summaryagenticHubspotToken || "").trim(),
+    summaryagenticWarmToken: String(input.summaryagenticWarmToken || "").trim(),
     summaryagentic: normalizeSummaryAgenticConfig(input.summaryagentic || {}),
+    apiAccessToken: String(input.apiAccessToken || "").trim(),
     ui: normalizeUiConfig(input.ui || input)
   };
 }
@@ -3504,6 +3924,15 @@ function normalizeUiConfig(input) {
         questionsSource.useGemini ?? questionsSource.use_gemini,
         parseBoolean(source.useGemini ?? source.use_gemini, true)
       ),
+      clientQuestionsUseGemini: parseBoolean(
+        questionsSource.clientQuestionsUseGemini ?? questionsSource.client_questions_use_gemini,
+        true
+      ),
+      clientQuestionsRefreshSeconds: Math.max(5, parseInt(
+        questionsSource.clientQuestionsRefreshSeconds
+        || questionsSource.client_questions_refresh_seconds
+        || 30
+      ) || 30),
       showCardShadow: parseBoolean(
         questionsSource.showCardShadow ?? questionsSource.show_card_shadow,
         parseBoolean(source.showCardShadow ?? source.show_card_shadow, true)
@@ -3787,7 +4216,7 @@ function normalizeSummaryAgenticConfig(input) {
     aiProvider: VALID_PROVIDERS.includes(src.aiProvider) ? src.aiProvider : "claude",
     aiModel: String(src.aiModel || "").trim(),
     aiPrompt: String(src.aiPrompt || "").trim(),
-    cacheSeconds: Math.max(0, parseInt(src.cacheSeconds ?? 60) || 60),
+    cacheSeconds: Math.max(0, parseInt(src.cacheSeconds ?? 1800) || 1800),
     dataSources: normalizeSummaryDataSources(src.dataSources || []),
     widgetLibrary: Array.isArray(src.widgetLibrary) ? src.widgetLibrary : [],
     activeLayout: Array.isArray(src.activeLayout?.sections) && src.activeLayout.sections.length
@@ -3961,7 +4390,11 @@ async function fetchWorkitem(config, workitemId) {
   });
 
   if (!upstream.ok) {
-    throw new Error(`Workitem API returned ${upstream.status}.`);
+    const detail = await upstream.text().catch(() => "");
+    const tok = String(config.token || "");
+    const tokenHint = tok.slice(0, 12) + "..." + tok.slice(-12);
+    console.error(`[fetchWorkitem] Thrio ${upstream.status} | token=${tokenHint} | len=${tok.length}`);
+    throw new Error(`Workitem API returned ${upstream.status}: ${detail.slice(0, 120)}`);
   }
 
   const payload = await upstream.json();
@@ -4483,6 +4916,7 @@ async function analyzeChecklistWithGemini(messages, questions, config, questions
   }
 
   const endpoint = buildGeminiEndpoint(questionsConfig.apiUrl, questionsConfig.model);
+  const isSpanish = normalizeLanguage(config?.ui?.shared?.language || "en") === "es";
   const instruction = questionsConfig.prompt || [
     "You validate whether each checklist question has already been satisfied by the conversation transcript of a call.",
     "Return strict JSON only.",
@@ -4490,6 +4924,9 @@ async function analyzeChecklistWithGemini(messages, questions, config, questions
     "Each object must include: id, question, fulfilled, color, evidence.",
     "fulfilled must be true or false.",
     "color must be green when fulfilled is true, red when fulfilled is false.",
+    isSpanish
+      ? "IMPORTANT: You MUST translate the 'question' field into Spanish regardless of the original language. The 'evidence' field must also be written in Spanish."
+      : "Write the 'question' and 'evidence' fields in English.",
     "evidence must be a short sentence explaining why.",
     "Use only information explicitly present in the provided transcript messages.",
     "The transcript contains both client and agent messages, with a role field.",
@@ -4506,7 +4943,9 @@ async function analyzeChecklistWithGemini(messages, questions, config, questions
         parts: [
           {
             text: JSON.stringify({
-              task: "Evaluate checklist questions against client transcript messages.",
+              task: isSpanish
+                ? "Evaluate checklist questions against client transcript messages. Translate every 'question' field to Spanish in your response."
+                : "Evaluate checklist questions against client transcript messages.",
               questions: questions.map((question, index) => ({
                 id: `q${index + 1}`,
                 question
@@ -5156,22 +5595,30 @@ function normalizeWielandContactInput(input, campaign) {
 function buildLeadPayloadFromContact(contact, listId, contactToList = {}, options = {}) {
   const fullName = contact.name || `${contact.firstName || ""} ${contact.lastName || ""}`.trim();
   const includeBaseFields = options.includeBaseFields !== false;
+  // nextDialAt must be in the future relative to createdAt to avoid NCC validation errors
+  const nextDialAt = new Date(Date.now() + 60000).toISOString();
   const lead = includeBaseFields
     ? {
         name: fullName,
         firstName: contact.firstName || "",
         lastName: contact.lastName || "",
         phone: contact.phone || "",
-        outboundListId: listId
+        outboundListId: listId,
+        nextDialAt
       }
     : {
-        outboundListId: listId
+        outboundListId: listId,
+        nextDialAt
       };
   for (const [contactField, listColumn] of Object.entries(contactToList || {})) {
     const value = contact?.[contactField];
     if (!listColumn || value === undefined || value === null || value === "") continue;
-    if (lead[listColumn] === undefined || lead[listColumn] === null || lead[listColumn] === "") {
-      lead[listColumn] = value;
+    const columns = Array.isArray(listColumn) ? listColumn : [listColumn];
+    for (const col of columns) {
+      if (!col) continue;
+      if (lead[col] === undefined || lead[col] === null || lead[col] === "") {
+        lead[col] = value;
+      }
     }
   }
   return lead;
@@ -5180,7 +5627,7 @@ function buildLeadPayloadFromContact(contact, listId, contactToList = {}, option
 function generateWielandCSV(contacts, contactToList = {}, nccFieldmapping = null) {
   const headers = Array.isArray(nccFieldmapping?.fileFields) && nccFieldmapping.fileFields.length
     ? nccFieldmapping.fileFields
-    : ["name", "phone", ...Object.values(contactToList || {}).filter(Boolean)];
+    : ["name", "phone", ...Object.values(contactToList || {}).flatMap((v) => Array.isArray(v) ? v : [v]).filter(Boolean)];
   const uniqueHeaders = [...new Set(headers)];
   const esc = (v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
   const rows = [uniqueHeaders.join(",")];
@@ -5195,7 +5642,9 @@ function sanitizeStringMapping(mapping) {
   const clean = {};
   if (!mapping || typeof mapping !== "object" || Array.isArray(mapping)) return clean;
   for (const [key, value] of Object.entries(mapping)) {
-    if (typeof key === "string" && typeof value === "string") clean[key] = value;
+    if (typeof key !== "string") continue;
+    if (typeof value === "string") { clean[key] = value; continue; }
+    if (Array.isArray(value) && value.every((v) => typeof v === "string")) { clean[key] = value; continue; }
   }
   return clean;
 }
@@ -5558,7 +6007,15 @@ async function handleWieland(req, res, url) {
     const contacts = await mergeWielandContacts(raw, localMap);
     calcCallPriority(contacts);
     const eligible = contacts.filter(c => c.call_priority !== 9999);
-    const initialLeads = eligible.length ? [eligible[0]] : [];
+    const selectedContactIds = Array.isArray(body.selectedContactIds) && body.selectedContactIds.length
+      ? new Set(body.selectedContactIds.map(String))
+      : null;
+    const initialLeads = selectedContactIds
+      ? eligible.filter(c => {
+          const key = c.externalId || c.id || c._id || c.contactId || "";
+          return selectedContactIds.has(String(key));
+        })
+      : eligible.length ? [eligible[0]] : [];
     const fieldmappingsResult = await nccFetch(nccConfig, "/fieldmappings");
     const nccFieldmappings = fieldmappingsResult.ok
       ? (Array.isArray(fieldmappingsResult.data) ? fieldmappingsResult.data : (fieldmappingsResult.data?.objects || fieldmappingsResult.data?.results || fieldmappingsResult.data?.data || []))
@@ -5754,7 +6211,9 @@ async function handleWieland(req, res, url) {
       return;
     }
 
+    console.log("[wieland/leads] sending leads:", JSON.stringify(leads.slice(0, 2)));
     const result = await nccFetch(nccConfig, `/outboundlist/${encodeURIComponent(listId)}/leads`, "POST", leads);
+    console.log("[wieland/leads] NCC response:", result.status, JSON.stringify(result.data)?.slice(0, 300));
     let visibleAfterInsert = null;
     if (result.ok) {
       const verifyResult = await nccFetch(nccConfig, `/lead?rows=200&start=0&q=&outboundListId=${encodeURIComponent(listId)}`);
@@ -5931,6 +6390,299 @@ async function handleWieland(req, res, url) {
   }
 
   sendJson(res, 404, { error: "Wieland route not found" });
+}
+// ──────────────────────────────────────────────────────────────────────────
+
+const THRIO_SMS_AUTODISPOSITION_ID = "669ed3189e9f697c726c718b";
+
+function buildThrioDataBaseUrl(config = {}) {
+  const domain = sanitizeDomain(
+    config.domain
+    || getDomainFromUrl(config.apiUrl)
+    || process.env.THRIO_DOMAIN
+    || getDomainFromUrl(DEFAULT_API_URL)
+  );
+  if (!domain) return "";
+  return `https://${domain}/data/api/types`;
+}
+
+function buildThrioCampaignPayload(name, callerId, workflowId) {
+  return {
+    objectType: "campaign",
+    name,
+    callerId,
+    workflowId,
+    addresses: [callerId],
+    localizations: { name: { en: { language: "en", value: name } } },
+    useForSMS: true,
+    autoDispositionId: THRIO_SMS_AUTODISPOSITION_ID,
+    smsFromAddress: "",
+    recordingAnalysisPercentage: 0,
+    recordingPercentage: 0,
+    userRecordings: false,
+    complianceRecordings: false,
+    defaultOutbound: false,
+    useForProgressive: false,
+    useForExtension: false,
+    useForEmail: false,
+    useForPredictive: false,
+    useForOutbound: false,
+    useForFax: false,
+    useForLeadLevelCallerId: false,
+    loadLeadOnlyForThridPartySkill: false,
+    amdUnknownAsVoicemail: false,
+    spoofANICompanyDirectory: false,
+    disableImageOnMMS: false,
+    disableRecordingOnTwoParty: false,
+    applyRecordingConsent: false,
+    agentCallbacksAsPriority: false,
+    priorityCallbacks: false,
+    outboundANI: false,
+    defaultExtension: false,
+    enableRealtimeTranscription: false,
+    enableRealtimeTranscriptionFreeswitch: false,
+    recordingEventsTranscription: false,
+    autoDialTimer: "1",
+    filterOnLeads: "",
+    complianceRecordingsFileNameFormat: "",
+    userRecordingsFileNameFormat: "",
+    emailFromAddress: "",
+    ftpFilenameFormat: "",
+    recordingAnalysisLanguages: "",
+    _adjustedByData: true,
+    _showDialPad: false,
+    _working: true,
+    selected: true,
+    _selected: true,
+    invalidAction: null,
+    answeringMachinePromptId: null,
+    machineDetectionTimeout: null,
+    maxDialRatio: null,
+    abandonPercentage: null,
+    musicId: null,
+    humanFunction: null,
+    noAnswerCallbackInMinutes: null,
+    recordingAnalysisMinDuration: null,
+    chatKeepAliveTimeoutForMobile: null,
+    coolOffPeriodInSec: null,
+    jobBusinessEventId: null,
+    dlpInfoTypes: null,
+    thirdPartySkillFieldName: null,
+    recordingAnalysisServiceId: null,
+    humanDispositionId: null,
+    smsFailedFucntionId: null,
+    thirdPartySkillQueueId: null,
+    answeringMachineDispositionId: null,
+    percentageAllCallbackLeads: null,
+    dialRatio: null,
+    calabrioPenaltyBox: null,
+    answeringMachineAction: null,
+    abandonDispositionId: null,
+    busyCallbackInMinutes: null,
+    complianceRecordingsFileServerId: null,
+    generativeAIServiceId: null,
+    firstPartySkillFieldName: null,
+    jobFunctionId: null,
+    initialStateId: null,
+    chatKeepAliveTimeout: null,
+    recordingAnalysisEndTime: null,
+    emailFailedFucntionId: null,
+    abandonCallbackInMinutes: null,
+    invalidDispositionId: null,
+    emailaccountId: null,
+    smsPerMinute: null,
+    busyDispositionId: null,
+    leadsDaysPartition: null,
+    delayMaxAttemptsTo: null,
+    emailTemplateId: null,
+    machineDetectionSpeechEndThresholdInMillis: null,
+    recordingNotificationFrequency: null,
+    busyAction: null,
+    predictiveQuaterback: null,
+    numberOfAgentsToKeepForInbound: null,
+    autoDispositionDelay: null,
+    maxAttemptsPerAddress: null,
+    dailyAttemptsToManualCalls: null,
+    calabrioContactTraces: null,
+    groupId: null,
+    thirdPartySkillCallbackTime: null,
+    redactLikelihood: null,
+    userRecordingsFileServerId: null,
+    primaryPhoneField: null,
+    campaignGoalsId: null,
+    nlpServiceId: null,
+    invalidFunction: null,
+    finalWorkitemStateId: null,
+    noAnswerDispositionId: null,
+    thirdPartySkillMinAvailableUsers: null,
+    percentageThridPartyLeads: null,
+    percentageNewLeads: null,
+    answeringMachineCallbackInMinutes: null,
+    noAnswerTimeout: null,
+    calabrioRecordings: null,
+    abandonFunction: null,
+    smsTemplateId: null,
+    maxLeadsInMemory: null,
+    recordingAnalysisMaxDuration: null,
+    maxAttempts: null,
+    finalUserStateId: null,
+    humanAction: null,
+    abandonAction: null,
+    predictiveRestcallId: null,
+    fileServerId: null,
+    redactionType: null,
+    dailyMaxAttempts: null,
+    minLeadsInMemory: null,
+    outboundCallFunctionId: null,
+    noAnswerAction: null,
+    states: null,
+    emailPerMinute: null,
+    holdMusicUrl: null,
+    invalidCallbackInMinutes: null,
+    enhancedAMD: null,
+    leadPartitionField: null,
+    leadOrderByField: null,
+    faxDispositionId: null,
+    recordingPromptId: null,
+    machineDetectionSilenceTimeout: null,
+    fieldMappingsId: null,
+    noAnswerFunction: null,
+    machineDetectionSpeechThresholdInMillis: null,
+    emailSuccessFucntionId: null,
+    busyFunction: null,
+    percentageAgentsCallbackLeads: null,
+    coolPeriodBetweenCallsInSeconds: null,
+    smsSuccessFucntionId: null,
+    recordingAnalysisStartTime: null,
+    whatsAppTemplateId: null,
+    knowledgeBaseServiceId: null,
+    surveyNetworkRegionId: null,
+    percentageAllCallbackLeads: null,
+    enableAutoDialTimer: false
+  };
+}
+
+async function resolveThrioDataConfig(campaignId) {
+  if (campaignId) {
+    const campaigns = await readCampaigns();
+    const match = campaigns.find((c) => c.id === campaignId);
+    if (!match) {
+      const error = new Error(`Campaign "${campaignId}" not found.`);
+      error.status = 404;
+      throw error;
+    }
+    return {
+      token: match.token,
+      dataBaseUrl: buildThrioDataBaseUrl(match)
+    };
+  }
+
+  return {
+    token: String(process.env.THRIO_AUTH_TOKEN || "").trim(),
+    dataBaseUrl: buildThrioDataBaseUrl()
+  };
+}
+
+async function handleThrioData(req, res, url) {
+  const campaignId = url.searchParams.get("campaign") || "";
+  let thrioConfig;
+  try {
+    thrioConfig = await resolveThrioDataConfig(campaignId);
+  } catch (error) {
+    sendJson(res, error.status || 500, { error: error.message });
+    return;
+  }
+
+  if (!thrioConfig.token || !thrioConfig.dataBaseUrl) {
+    sendJson(res, 503, { error: "No hay token configurado. Selecciona una campaña válida." });
+    return;
+  }
+
+  const thrioHeaders = { "Authorization": thrioConfig.token, "Content-Type": "application/json" };
+
+  if (req.method === "GET" && url.pathname === "/api/thrio-data/campaigns") {
+    try {
+      const upstream = await fetch(`${thrioConfig.dataBaseUrl}/campaign`, { headers: thrioHeaders });
+      const data = await upstream.json();
+      sendJson(res, upstream.status, data);
+    } catch (e) {
+      sendJson(res, 502, { error: `Upstream error: ${e.message}` });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/thrio-data/pstnnumbers") {
+    try {
+      const upstream = await fetch(`${thrioConfig.dataBaseUrl}/pstnnumber/unused?filter=campaign:addresses`, { headers: thrioHeaders });
+      const data = await upstream.json();
+      sendJson(res, upstream.status, data);
+    } catch (e) {
+      sendJson(res, 502, { error: `Upstream error: ${e.message}` });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/thrio-data/workflows") {
+    try {
+      const upstream = await fetch(`${thrioConfig.dataBaseUrl}/workflow?filter=campaign:workflowId`, { headers: thrioHeaders });
+      const data = await upstream.json();
+      sendJson(res, upstream.status, data);
+    } catch (e) {
+      sendJson(res, 502, { error: `Upstream error: ${e.message}` });
+    }
+    return;
+  }
+
+  const campaignDeleteMatch = url.pathname.match(/^\/api\/thrio-data\/campaigns\/([^/]+)$/);
+  if (req.method === "DELETE" && campaignDeleteMatch) {
+    const campaignThrioId = decodeURIComponent(campaignDeleteMatch[1] || "").trim();
+    if (!campaignThrioId) {
+      sendJson(res, 400, { error: "Campaign ID is required." });
+      return;
+    }
+
+    try {
+      const upstream = await fetch(`${thrioConfig.dataBaseUrl}/campaign/${encodeURIComponent(campaignThrioId)}`, {
+        method: "DELETE",
+        headers: thrioHeaders
+      });
+      const data = await upstream.json().catch(() => ({}));
+      sendJson(res, upstream.status, Object.keys(data).length ? data : { ok: upstream.ok });
+    } catch (e) {
+      sendJson(res, 502, { error: `Upstream error: ${e.message}` });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/thrio-data/campaigns") {
+    let body;
+    try { body = await readJson(req); } catch { sendJson(res, 400, { error: "JSON inválido." }); return; }
+
+    const name = String(body.name || "").trim();
+    const callerId = String(body.callerId || "").trim();
+    const workflowId = String(body.workflowId || "").trim();
+
+    if (!name || !callerId || !workflowId) {
+      sendJson(res, 400, { error: "name, callerId y workflowId son requeridos." });
+      return;
+    }
+
+    try {
+      const payload = buildThrioCampaignPayload(name, callerId, workflowId);
+      const upstream = await fetch(`${thrioConfig.dataBaseUrl}/campaign`, {
+        method: "POST",
+        headers: thrioHeaders,
+        body: JSON.stringify(payload)
+      });
+      const data = await upstream.json();
+      sendJson(res, upstream.status, data);
+    } catch (e) {
+      sendJson(res, 502, { error: `Upstream error: ${e.message}` });
+    }
+    return;
+  }
+
+  sendJson(res, 404, { error: "Thrio data route not found." });
 }
 // ──────────────────────────────────────────────────────────────────────────
 
