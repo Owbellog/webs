@@ -5650,6 +5650,37 @@ function generateWielandCSV(contacts, contactToList = {}, nccFieldmapping = null
   return rows.join("\n");
 }
 
+function normalizeOutboundListUploadStatus(list = {}) {
+  const pick = (...keys) => {
+    for (const key of keys) {
+      if (list[key] !== undefined && list[key] !== null && list[key] !== "") return list[key];
+    }
+    return "";
+  };
+  return {
+    status: String(pick("status", "uploadStatus", "loadStatus") || "").trim(),
+    totalInFile: Number(pick("totalInFile", "total_in_file", "total") || 0),
+    totalFailed: Number(pick("totalFailed", "total_failed", "failed") || 0),
+    totalDuplicates: Number(pick("totalDuplicates", "total_duplicates", "duplicates") || 0),
+    totalInserted: Number(pick("totalInserted", "total_inserted", "inserted", "totalConverted") || 0),
+    totalScrubbed: Number(pick("totalScrubbed", "total_scrubbed", "scrubbed") || 0),
+    duration: pick("duration", "uploadDuration", "loadDuration") || "",
+    createdAt: pick("createdAt", "created_at", "created") || ""
+  };
+}
+
+async function fetchOutboundListAfterCreate(nccConfig, listId) {
+  let lastResult = null;
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    lastResult = await nccFetch(nccConfig, `/outboundlist/${encodeURIComponent(listId)}`);
+    if (!lastResult.ok) return lastResult;
+    const status = String(lastResult.data?.status || "").toUpperCase();
+    if (status && status !== "UPLOADING") return lastResult;
+    if (attempt < 5) await sleep(600 * attempt);
+  }
+  return lastResult;
+}
+
 function sanitizeStringMapping(mapping) {
   const clean = {};
   if (!mapping || typeof mapping !== "object" || Array.isArray(mapping)) return clean;
@@ -5964,7 +5995,8 @@ async function handleWieland(req, res, url) {
           name: expanded.name || expanded.localizations?.name?.en?.value || item?.outboundlistId || "",
           active: expanded.active,
           status: expanded.status,
-          count: expanded.totalConverted ?? expanded.totalInFile ?? ""
+          count: expanded.totalConverted ?? expanded.totalInFile ?? "",
+          uploadStatus: normalizeOutboundListUploadStatus(expanded)
         };
       });
       sendJson(res, 200, { lists });
@@ -5973,7 +6005,10 @@ async function handleWieland(req, res, url) {
 
     const qs = nccConfig.campaignId ? `?campaignId=${encodeURIComponent(nccConfig.campaignId)}` : "";
     const result = await nccFetch(nccConfig, `/outboundlist${qs}`);
-    const lists = result.ok ? (Array.isArray(result.data) ? result.data : (result.data?.objects || result.data?.results || result.data?.data || [])) : [];
+    const lists = result.ok
+      ? (Array.isArray(result.data) ? result.data : (result.data?.objects || result.data?.results || result.data?.data || []))
+        .map((item) => ({ ...item, uploadStatus: normalizeOutboundListUploadStatus(item) }))
+      : [];
     sendJson(res, result.ok ? 200 : result.status, result.ok ? { lists } : { error: "NCC API error", details: result.data });
     return;
   }
@@ -5981,7 +6016,13 @@ async function handleWieland(req, res, url) {
   const listGetMatch = url.pathname.match(/^\/api\/wieland\/lists\/([^/]+)$/);
   if (req.method === "GET" && listGetMatch && !url.pathname.endsWith("/leads")) {
     const result = await nccFetch(nccConfig, `/outboundlist/${listGetMatch[1]}`);
-    sendJson(res, result.ok ? 200 : result.status, result.ok ? { list: result.data } : { error: "NCC API error" });
+    sendJson(
+      res,
+      result.ok ? 200 : result.status,
+      result.ok
+        ? { list: result.data, uploadStatus: normalizeOutboundListUploadStatus(result.data) }
+        : { error: "NCC API error" }
+    );
     return;
   }
 
@@ -6143,6 +6184,11 @@ async function handleWieland(req, res, url) {
 
     const listData = await createRes.json();
     const listId = listData.id || listData._id || listData.outboundlistId;
+    const createdListResult = listId
+      ? await fetchOutboundListAfterCreate(nccConfig, listId)
+      : null;
+    const createdList = createdListResult?.ok ? createdListResult.data : listData;
+    const uploadStatus = normalizeOutboundListUploadStatus(createdList);
 
     // Assign to campaign
     let attachResult = null;
@@ -6160,9 +6206,15 @@ async function handleWieland(req, res, url) {
 
     sendJson(res, 200, {
       ok: true,
-      list: listData,
+      created: true,
+      list: createdList,
+      uploadStatus,
       contactsInCsv: initialLeads.length,
       totalEligibleContacts: eligible.length,
+      createStatus: {
+        nccReturnedId: Boolean(listId),
+        refreshedFromNcc: Boolean(createdListResult?.ok)
+      },
       attach: attachResult
         ? (attachResult.ok
           ? { ok: true, data: attachResult.data }

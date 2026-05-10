@@ -439,6 +439,8 @@ function renderLists() {
     const name = list.name || list.localizations?.name?.en?.value || listId;
     const status = list.status || list.state || "";
     const isActive = Boolean(list.active);
+    const uploadStatus = list.uploadStatus || {};
+    const uploadBlock = renderUploadStatus(uploadStatus);
     return `<div class="w-list-card" id="list-${escHtml(listId)}">
       <div class="w-list-header" data-action="toggle-list" data-list-id="${escHtml(listId)}">
         <span class="w-list-name">${escHtml(name)}</span>
@@ -447,6 +449,7 @@ function renderLists() {
         <span class="w-list-chevron">▼</span>
       </div>
       <div class="w-list-body">
+        ${uploadBlock}
         <div class="w-list-toolbar">
           <button class="w-btn w-btn-secondary w-btn-sm" data-action="toggle-list-active" data-list-id="${escHtml(listId)}" data-active="${isActive}">${isActive ? "Deactivate list" : "Activate list"}</button>
           <button class="w-btn w-btn-secondary w-btn-sm" data-action="assign-contacts" data-list-id="${escHtml(listId)}">Assign contacts</button>
@@ -460,6 +463,39 @@ function renderLists() {
       </div>
     </div>`;
   }).join("");
+}
+
+function renderUploadStatus(uploadStatus = {}) {
+  const hasAny = Boolean(uploadStatus.status || uploadStatus.duration)
+    || ["totalInFile", "totalFailed", "totalDuplicates", "totalInserted", "totalScrubbed"]
+      .some((key) => Number(uploadStatus[key] || 0) > 0);
+  if (!hasAny) return "";
+  const failed = Number(uploadStatus.totalFailed || 0);
+  const inserted = Number(uploadStatus.totalInserted || 0);
+  const status = uploadStatus.status || "Unknown";
+  const color = failed > 0 ? "#991b1b" : inserted > 0 ? "#166534" : "var(--muted)";
+  return `<div style="padding:12px 20px;border-bottom:1px solid var(--line-soft);background:#f8fafc;">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+      <strong style="color:var(--brand);font-size:0.9rem;">Upload status</strong>
+      <span style="color:${color};font-weight:800;font-size:0.86rem;">${escHtml(status)}</span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(5,minmax(90px,1fr));gap:8px;margin-top:10px;font-size:0.82rem;color:var(--muted);">
+      <span>In file: <strong>${escHtml(uploadStatus.totalInFile ?? 0)}</strong></span>
+      <span>Inserted: <strong>${escHtml(uploadStatus.totalInserted ?? 0)}</strong></span>
+      <span>Failed: <strong>${escHtml(uploadStatus.totalFailed ?? 0)}</strong></span>
+      <span>Duplicates: <strong>${escHtml(uploadStatus.totalDuplicates ?? 0)}</strong></span>
+      <span>Scrubbed: <strong>${escHtml(uploadStatus.totalScrubbed ?? 0)}</strong></span>
+    </div>
+    ${uploadStatus.duration ? `<div style="margin-top:6px;font-size:0.8rem;color:var(--muted);">Duration: ${escHtml(uploadStatus.duration)}</div>` : ""}
+  </div>`;
+}
+
+function formatCreateListToast(data) {
+  const upload = data.uploadStatus || {};
+  if (upload.status || upload.totalInFile !== undefined) {
+    return `List created. ${upload.totalInserted || 0}/${upload.totalInFile || data.contactsInCsv || 0} inserted, ${upload.totalFailed || 0} failed.`;
+  }
+  return `List created with ${data.contactsInCsv || 0} contacts.`;
 }
 
 async function loadListLeads(listId) {
@@ -792,7 +828,7 @@ async function createList() {
       leads: source === "file" ? listUploadRows : []
     });
     listModal.classList.add("hidden");
-    showToast(`List created with ${data.contactsInCsv || 0} contacts.`);
+    showToast(formatCreateListToast(data), Number(data.uploadStatus?.totalFailed || 0) > 0 ? "error" : "");
     await loadLists();
   } catch (err) {
     showModalAlert(listModalAlert, err.message);
