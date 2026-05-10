@@ -538,6 +538,57 @@
         font-weight: 800;
         color: var(--brand);
       }
+      .w-sms-toggle-card {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        min-height: 66px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px 22px;
+        background: #fff;
+        color: var(--brand);
+        font-weight: 800;
+        cursor: pointer;
+      }
+      .w-switch {
+        position: relative;
+        width: 54px;
+        height: 30px;
+        flex: 0 0 auto;
+      }
+      .w-switch input {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        cursor: pointer;
+      }
+      .w-switch-track {
+        position: absolute;
+        inset: 0;
+        border-radius: 999px;
+        background: #cbd3df;
+        transition: background 0.18s ease;
+      }
+      .w-switch-track::after {
+        content: "";
+        position: absolute;
+        width: 24px;
+        height: 24px;
+        top: 3px;
+        left: 3px;
+        border-radius: 50%;
+        background: #fff;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.22);
+        transition: transform 0.18s ease;
+      }
+      .w-switch input:checked + .w-switch-track {
+        background: #71869d;
+      }
+      .w-switch input:checked + .w-switch-track::after {
+        transform: translateX(24px);
+      }
       .w-source-options {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -786,9 +837,12 @@
             <input id="listDescription" type="text" placeholder="Overtime call for casting plant A" />
           </div>
           <div class="w-field">
-            <label class="w-toggle-card">
+            <label class="w-sms-toggle-card">
               <span>Use for SMS</span>
-              <input id="listIsSms" type="checkbox" />
+              <span class="w-switch">
+                <input id="listIsSms" type="checkbox" />
+                <span class="w-switch-track"></span>
+              </span>
             </label>
           </div>
           <div class="w-field" id="listSourceWrap">
