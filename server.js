@@ -6055,10 +6055,11 @@ async function handleWieland(req, res, url) {
 
     // Multipart upload
     const listDescription = String(body.description || "").trim();
+    const isSMS = body.isSMS === true;
     const listPayload = {
       objectType: "outboundlist",
       campaignId: nccConfig.campaignId,
-      isSMS: false,
+      isSMS,
       isEmail: false,
       name: listName,
       file: uploadFileName,
@@ -6072,7 +6073,7 @@ async function handleWieland(req, res, url) {
         ...(listDescription ? { description: { en: { language: "en", value: listDescription } } } : {})
       },
       outboundListLoadForm: {
-        isSMS: false,
+        isSMS,
         file: uploadFileName,
         keepOptinOnly: false,
         localizations: {

@@ -599,6 +599,7 @@ document.getElementById("newListBtn").addEventListener("click", () => {
   clearModalAlert(listModalAlert);
   document.getElementById("listName").value = "";
   document.getElementById("listDescription").value = "";
+  document.getElementById("listIsSms").checked = false;
   showListStep(1);
   renderListContactPicker();
   listModal.classList.remove("hidden");
@@ -664,6 +665,7 @@ async function createList() {
   const btn = document.getElementById("listModalSave");
   const name = document.getElementById("listName").value.trim();
   const description = document.getElementById("listDescription").value.trim();
+  const isSMS = document.getElementById("listIsSms").checked;
   if (!name) { showModalAlert(listModalAlert, "List name is required."); return; }
 
   const selectedContactIds = Array.from(
@@ -674,7 +676,7 @@ async function createList() {
   btn.textContent = "Creating…";
   clearModalAlert(listModalAlert);
   try {
-    const data = await apiPost("/api/wieland/lists", { name, description, selectedContactIds });
+    const data = await apiPost("/api/wieland/lists", { name, description, isSMS, selectedContactIds });
     listModal.classList.add("hidden");
     showToast(`List created with ${data.contactsInCsv || 0} contacts.`);
     await loadLists();
