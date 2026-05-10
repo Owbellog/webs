@@ -75,10 +75,65 @@ let currentFilter = "all";
 let contactSearchValue = "";
 let currentContactToListMap = {};
 let currentWidgetToContactMap = {};
+let visibleTabs = { contacts: true, lists: true, campaign: true, mapping: true };
 let loaded = { contacts: false, lists: false, campaign: false, mapping: false };
 
 // ── Init check ────────────────────────────────────────────────────────────────
-function initCheck() {
+function normalizeVisibleTabs(config = {}) {
+  return {
+    contacts: config.contacts !== false,
+    lists: config.lists !== false,
+    campaign: config.campaign !== false,
+    mapping: config.mapping !== false
+  };
+}
+
+async function loadCampaignUiConfig() {
+  try {
+    const data = await api("/api/config");
+    visibleTabs = normalizeVisibleTabs(data?.campaign?.wieland?.visibleTabs || {});
+  } catch (err) {
+    console.warn("Unable to load Wieland UI config:", err);
+    visibleTabs = normalizeVisibleTabs();
+  }
+}
+
+function applyTabVisibility() {
+  const order = ["contacts", "lists", "campaign", "mapping"];
+  tabs.forEach(tab => {
+    tab.hidden = visibleTabs[tab.dataset.tab] === false;
+    tab.classList.remove("active");
+  });
+  panels.forEach(panel => panel.classList.remove("active"));
+
+  const firstVisible = order.find(name => visibleTabs[name] !== false);
+  if (!firstVisible) {
+    document.getElementById("mainBody").hidden = true;
+    const el = document.getElementById("initMessage");
+    el.textContent = "No Wieland tabs are enabled for this campaign.";
+    el.hidden = false;
+    return null;
+  }
+  return firstVisible;
+}
+
+function loadTabData(name) {
+  if (loaded[name]) return;
+  loaded[name] = true;
+  if (name === "contacts") loadContacts();
+  if (name === "lists") loadLists();
+  if (name === "campaign") loadCampaignStatus();
+  if (name === "mapping") loadFieldMapping();
+}
+
+function activateTab(name) {
+  if (visibleTabs[name] === false) return;
+  tabs.forEach(t => t.classList.toggle("active", t.dataset.tab === name));
+  panels.forEach(p => p.classList.toggle("active", p.id === `panel-${name}`));
+  loadTabData(name);
+}
+
+async function initCheck() {
   if (!campaignId) {
     const el = document.getElementById("initMessage");
     el.textContent = "Missing ?campaign= parameter. Access this page from the Admin panel.";
@@ -86,11 +141,12 @@ function initCheck() {
     return false;
   }
   document.getElementById("campaignLabel").textContent = `— ${campaignId}`;
+  await loadCampaignUiConfig();
   document.getElementById("initMessage").hidden = true;
   document.getElementById("mainBody").hidden = false;
   loadContactFieldHints();
-  loaded.contacts = true;
-  loadContacts();
+  const firstVisible = applyTabVisibility();
+  if (firstVisible) activateTab(firstVisible);
   return true;
 }
 
@@ -100,14 +156,7 @@ const panels = document.querySelectorAll(".w-panel");
 
 tabs.forEach(tab => {
   tab.addEventListener("click", () => {
-    tabs.forEach(t => t.classList.remove("active"));
-    panels.forEach(p => p.classList.remove("active"));
-    tab.classList.add("active");
-    document.getElementById(`panel-${tab.dataset.tab}`).classList.add("active");
-    const name = tab.dataset.tab;
-    if (name === "lists" && !loaded.lists) { loaded.lists = true; loadLists(); }
-    if (name === "campaign" && !loaded.campaign) { loaded.campaign = true; loadCampaignStatus(); }
-    if (name === "mapping" && !loaded.mapping) { loaded.mapping = true; loadFieldMapping(); }
+    activateTab(tab.dataset.tab);
   });
 });
 

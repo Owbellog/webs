@@ -114,6 +114,10 @@ const fields = {
   wielandNccFieldmappingId: document.getElementById("wielandNccFieldmappingId"),
   wielandNccAuthType: document.getElementById("wielandNccAuthType"),
   wielandNccCredential: document.getElementById("wielandNccCredential"),
+  wielandTabContacts: document.getElementById("wielandTabContacts"),
+  wielandTabLists: document.getElementById("wielandTabLists"),
+  wielandTabCampaign: document.getElementById("wielandTabCampaign"),
+  wielandTabMapping: document.getElementById("wielandTabMapping"),
   token: document.getElementById("campaignToken"),
   cookie: document.getElementById("campaignCookie"),
   allowedKbIds: document.getElementById("chatKbIds"),
@@ -361,6 +365,32 @@ function readWielandContactToListMap() {
     result[key] = parts.length === 1 ? parts[0] : parts;
   });
   return result;
+}
+
+function normalizeWielandVisibleTabs(visibleTabs = {}) {
+  return {
+    contacts: visibleTabs.contacts !== false,
+    lists: visibleTabs.lists !== false,
+    campaign: visibleTabs.campaign !== false,
+    mapping: visibleTabs.mapping !== false
+  };
+}
+
+function setWielandVisibleTabs(visibleTabs = {}) {
+  const normalized = normalizeWielandVisibleTabs(visibleTabs);
+  fields.wielandTabContacts.checked = normalized.contacts;
+  fields.wielandTabLists.checked = normalized.lists;
+  fields.wielandTabCampaign.checked = normalized.campaign;
+  fields.wielandTabMapping.checked = normalized.mapping;
+}
+
+function readWielandVisibleTabs() {
+  return {
+    contacts: fields.wielandTabContacts.checked,
+    lists: fields.wielandTabLists.checked,
+    campaign: fields.wielandTabCampaign.checked,
+    mapping: fields.wielandTabMapping.checked
+  };
 }
 
 // ── Summary Agentic data-source management ───────────────────────────────────
@@ -1652,6 +1682,7 @@ function fillForm(campaign) {
   fields.wielandNccFieldmappingId.value = campaign.wieland?.nccFieldmappingId || "";
   fields.wielandNccAuthType.value = campaign.wieland?.nccAuthType || "token";
   fields.wielandNccCredential.value = campaign.wielandNccCredential || "";
+  setWielandVisibleTabs(campaign.wieland?.visibleTabs || {});
   updateWielandCredentialField(fields.wielandNccAuthType.value);
   renderWielandMappingEditors(campaign.wieland?.widgetToContactMap || {}, campaign.wieland?.contactToListMap || {});
   const wielandLink = document.getElementById("wielandOpenLink");
@@ -1818,6 +1849,7 @@ function readForm() {
       uploadFileName: fields.wielandUploadFileName.value.trim(),
       nccFieldmappingId: fields.wielandNccFieldmappingId.value.trim(),
       nccAuthType: fields.wielandNccAuthType.value || "token",
+      visibleTabs: readWielandVisibleTabs(),
       widgetToContactMap: readWielandWidgetMap(),
       contactToListMap: readWielandContactToListMap()
     },
@@ -2049,6 +2081,7 @@ function applyDefaultUiValues() {
   fields.wielandNccFieldmappingId.value = "";
   fields.wielandNccAuthType.value = "token";
   fields.wielandNccCredential.value = "";
+  setWielandVisibleTabs();
   updateWielandCredentialField("token");
   document.getElementById("wielandOpenLink").hidden = true;
   resetWielandFieldmappingInfo();

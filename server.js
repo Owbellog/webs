@@ -846,6 +846,7 @@ async function handleConfig(req, res, url) {
   try {
     const selection = readSelection(url.searchParams);
     const config = await resolveCampaignConfigAsync(selection);
+    const visibleTabs = normalizeWielandVisibleTabs(config.wieland?.visibleTabs || {});
 
     sendJson(res, 200, {
       configured: true,
@@ -856,6 +857,7 @@ async function handleConfig(req, res, url) {
         apiUrl: config.apiUrl,
         workitemApiUrl: config.workitemApiUrl,
         allowedKbIds: config.allowedKbIds,
+        wieland: { visibleTabs },
         ui: config.ui
       },
       request: {
@@ -3612,6 +3614,15 @@ async function writeCampaigns(campaigns) {
   fs.writeFileSync(CAMPAIGNS_FILE, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
 }
 
+function normalizeWielandVisibleTabs(visibleTabs = {}) {
+  return {
+    contacts: visibleTabs.contacts !== false,
+    lists: visibleTabs.lists !== false,
+    campaign: visibleTabs.campaign !== false,
+    mapping: visibleTabs.mapping !== false
+  };
+}
+
 function normalizeCampaign(input) {
   const id = slugify(input.id || input.name || input.domain);
   if (!id) {
@@ -3692,6 +3703,7 @@ function normalizeCampaign(input) {
       slotsNeeded: Math.max(1, parseInt(input.wieland?.slotsNeeded ?? input.wielandSlotsNeeded ?? 0) || 8),
       uploadFileName: String(input.wieland?.uploadFileName || input.wielandUploadFileName || "").trim(),
       nccFieldmappingId: String(input.wieland?.nccFieldmappingId || input.wielandNccFieldmappingId || "").trim(),
+      visibleTabs: normalizeWielandVisibleTabs(input.wieland?.visibleTabs || input.wielandVisibleTabs || {}),
       widgetToContactMap: sanitizeStringMapping(input.wieland?.widgetToContactMap || input.wielandWidgetToContactMap || {}),
       contactToListMap: sanitizeStringMapping(input.wieland?.contactToListMap || input.wielandContactToListMap || {}),
       nccAuthType: (["token", "key", "none"].includes(input.wieland?.nccAuthType) ? input.wieland.nccAuthType : null)
