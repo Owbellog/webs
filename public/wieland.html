@@ -525,6 +525,35 @@
       .w-check-item:last-child { border-bottom: none; }
       .w-check-item:hover { background: #f8f9fb; }
       .w-check-item label { cursor: pointer; flex: 1; }
+      .w-toggle-card {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 12px 14px;
+        background: #fff;
+        cursor: pointer;
+        font-weight: 800;
+        color: var(--brand);
+      }
+      .w-source-options {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .w-file-box {
+        border: 1px dashed var(--line);
+        border-radius: 10px;
+        padding: 16px;
+        background: #f8fafc;
+      }
+      .w-file-summary {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 0.86rem;
+      }
     </style>
   </head>
   <body>
@@ -746,25 +775,8 @@
         <div class="w-modal-title">Create New List</div>
         <div class="w-alert" id="listModalAlert"></div>
 
-        <!-- Step 1: select contacts -->
+        <!-- Step 1: list options -->
         <div id="listStep1">
-          <p style="font-size:0.86rem;color:var(--muted);margin-bottom:10px;">
-            Select the contacts to include in this list. Sorted by call_priority (seniority descending).
-          </p>
-          <div style="display:flex;gap:8px;margin-bottom:8px;">
-            <button class="w-btn w-btn-secondary" id="listSelectAll" type="button">Select all</button>
-            <button class="w-btn w-btn-secondary" id="listClearAll" type="button">Clear all</button>
-            <span id="listContactCount" style="margin-left:auto;font-size:0.85rem;color:var(--muted);align-self:center;"></span>
-          </div>
-          <div class="w-check-list" id="listContactList"></div>
-          <div class="w-modal-actions">
-            <button class="w-btn w-btn-secondary" id="listModalCancel">Cancel</button>
-            <button class="w-btn w-btn-primary" id="listStepNext">Next →</button>
-          </div>
-        </div>
-
-        <!-- Step 2: name & description -->
-        <div id="listStep2" hidden>
           <div class="w-field">
             <label for="listName">List name</label>
             <input id="listName" type="text" placeholder="OT_CastingA_Week23" required />
@@ -774,10 +786,52 @@
             <input id="listDescription" type="text" placeholder="Overtime call for casting plant A" />
           </div>
           <div class="w-field">
-            <label class="w-check-item" style="border:1px solid var(--line);border-radius:10px;padding:10px 12px;">
+            <label class="w-toggle-card">
+              <span>Use for SMS</span>
               <input id="listIsSms" type="checkbox" />
-              SMS list
             </label>
+          </div>
+          <div class="w-field" id="listSourceWrap">
+            <label>Load contacts from</label>
+            <div class="w-source-options">
+              <label class="w-toggle-card">
+                <span>Contacts</span>
+                <input id="listSourceContacts" name="listSource" type="radio" value="contacts" checked />
+              </label>
+              <label class="w-toggle-card">
+                <span>Excel / CSV</span>
+                <input id="listSourceFile" name="listSource" type="radio" value="file" />
+              </label>
+            </div>
+          </div>
+          <div class="w-modal-actions">
+            <button class="w-btn w-btn-secondary" id="listModalCancel">Cancel</button>
+            <button class="w-btn w-btn-primary" id="listStepNext">Next →</button>
+          </div>
+        </div>
+
+        <!-- Step 2: contacts or file -->
+        <div id="listStep2" hidden>
+          <div id="listContactPicker">
+            <p style="font-size:0.86rem;color:var(--muted);margin-bottom:10px;">
+              Select the contacts to include in this list. Sorted by call_priority (seniority descending).
+            </p>
+            <div style="display:flex;gap:8px;margin-bottom:8px;">
+              <button class="w-btn w-btn-secondary" id="listSelectAll" type="button">Select all</button>
+              <button class="w-btn w-btn-secondary" id="listClearAll" type="button">Clear all</button>
+              <span id="listContactCount" style="margin-left:auto;font-size:0.85rem;color:var(--muted);align-self:center;"></span>
+            </div>
+            <div class="w-check-list" id="listContactList"></div>
+          </div>
+          <div id="listFilePicker" hidden>
+            <div class="w-file-box">
+              <strong>Upload Excel / CSV</strong>
+              <p style="font-size:0.86rem;color:var(--muted);margin:6px 0 12px;">
+                Formats: .xlsx, .xls, .csv. Use contact field columns such as firstName, lastName, phone, mobile, email, externalId.
+              </p>
+              <input id="listFileInput" type="file" accept=".xlsx,.xls,.csv" />
+              <div class="w-file-summary" id="listFileSummary">No file selected.</div>
+            </div>
           </div>
           <div class="w-modal-actions">
             <button class="w-btn w-btn-secondary" id="listStepBack">← Back</button>
@@ -811,6 +865,7 @@
     <!-- Toast -->
     <div class="w-toast" id="wToast"></div>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.mini.min.js"></script>
     <script src="./wieland.js"></script>
   </body>
 </html>

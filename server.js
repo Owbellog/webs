@@ -6022,7 +6022,12 @@ async function handleWieland(req, res, url) {
     const selectedContactIds = Array.isArray(body.selectedContactIds) && body.selectedContactIds.length
       ? new Set(body.selectedContactIds.map(String))
       : null;
-    const initialLeads = selectedContactIds
+    const uploadedLeads = Array.isArray(body.leads)
+      ? body.leads.filter((lead) => lead && typeof lead === "object" && Object.values(lead).some((value) => String(value || "").trim()))
+      : [];
+    const initialLeads = uploadedLeads.length
+      ? uploadedLeads
+      : selectedContactIds
       ? eligible.filter(c => {
           const key = c.externalId || c.id || c._id || c.contactId || "";
           return selectedContactIds.has(String(key));

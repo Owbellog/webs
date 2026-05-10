@@ -589,10 +589,34 @@ document.getElementById("listsContainer").addEventListener("click", async (e) =>
 // ── New list modal ────────────────────────────────────────────────────────────
 const listModal = document.getElementById("listModal");
 const listModalAlert = document.getElementById("listModalAlert");
+let listUploadRows = [];
 
 function showListStep(step) {
   document.getElementById("listStep1").hidden = step !== 1;
   document.getElementById("listStep2").hidden = step !== 2;
+  updateListSourceUi();
+}
+
+function getListSource() {
+  return document.querySelector("input[name='listSource']:checked")?.value || "file";
+}
+
+function updateListSourceUi() {
+  const canUseContacts = visibleTabs.contacts !== false;
+  const sourceWrap = document.getElementById("listSourceWrap");
+  const contactsRadio = document.getElementById("listSourceContacts");
+  const fileRadio = document.getElementById("listSourceFile");
+  if (!canUseContacts) {
+    sourceWrap.hidden = true;
+    contactsRadio.checked = false;
+    fileRadio.checked = true;
+  } else {
+    sourceWrap.hidden = false;
+  }
+
+  const useContacts = canUseContacts && getListSource() === "contacts";
+  document.getElementById("listContactPicker").hidden = !useContacts;
+  document.getElementById("listFilePicker").hidden = useContacts;
 }
 
 document.getElementById("newListBtn").addEventListener("click", () => {
@@ -600,8 +624,15 @@ document.getElementById("newListBtn").addEventListener("click", () => {
   document.getElementById("listName").value = "";
   document.getElementById("listDescription").value = "";
   document.getElementById("listIsSms").checked = false;
+  document.getElementById("listFileInput").value = "";
+  document.getElementById("listFileSummary").textContent = "No file selected.";
+  listUploadRows = [];
+  if (visibleTabs.contacts !== false) {
+    document.getElementById("listSourceContacts").checked = true;
+  } else {
+    document.getElementById("listSourceFile").checked = true;
+  }
   showListStep(1);
-  renderListContactPicker();
   listModal.classList.remove("hidden");
 });
 
@@ -616,10 +647,37 @@ document.getElementById("listClearAll").addEventListener("click", () => {
   updateListContactCount();
 });
 
-document.getElementById("listStepNext").addEventListener("click", () => {
-  const checked = document.querySelectorAll("#listContactList input:checked").length;
-  if (!checked) { showModalAlert(listModalAlert, "Select at least one contact."); return; }
+document.querySelectorAll("input[name='listSource']").forEach((input) => {
+  input.addEventListener("change", updateListSourceUi);
+});
+
+document.getElementById("listFileInput").addEventListener("change", async (event) => {
+  const file = event.target.files?.[0];
+  listUploadRows = [];
+  document.getElementById("listFileSummary").textContent = "Reading file…";
+  if (!file) {
+    document.getElementById("listFileSummary").textContent = "No file selected.";
+    return;
+  }
+  try {
+    listUploadRows = await readListUploadFile(file);
+    document.getElementById("listFileSummary").textContent = `${file.name} — ${listUploadRows.length} rows ready.`;
+  } catch (err) {
+    document.getElementById("listFileSummary").textContent = `Error: ${err.message}`;
+  }
+});
+
+document.getElementById("listStepNext").addEventListener("click", async () => {
+  const name = document.getElementById("listName").value.trim();
+  if (!name) { showModalAlert(listModalAlert, "List name is required."); return; }
   clearModalAlert(listModalAlert);
+  if (getListSource() === "contacts") {
+    if (!loaded.contacts) {
+      loaded.contacts = true;
+      await loadContacts();
+    }
+    renderListContactPicker();
+  }
   showListStep(2);
 });
 
@@ -661,6 +719,47 @@ function renderListContactPicker() {
   updateListContactCount();
 }
 
+function parseSimpleCsv(text) {
+  const lines = String(text || "").trim().split(/\r?\n/);
+  if (lines.length < 2) return [];
+  const headers = lines[0].split(",").map((h) => h.replace(/^"|"$/g, "").trim());
+  return lines.slice(1).map((line) => {
+    const values = line.split(",").map((v) => v.replace(/^"|"$/g, "").trim());
+    const row = {};
+    headers.forEach((header, index) => { row[header] = values[index] || ""; });
+    return row;
+  }).filter((row) => Object.values(row).some(Boolean));
+}
+
+function readListUploadFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    const isCsv = file.name.toLowerCase().endsWith(".csv");
+    reader.onload = (event) => {
+      try {
+        if (!isCsv && typeof XLSX === "undefined") {
+          reject(new Error("Excel parser is not available. Use CSV or reload the page."));
+          return;
+        }
+        if (typeof XLSX !== "undefined") {
+          const workbook = isCsv
+            ? XLSX.read(event.target.result, { type: "string" })
+            : XLSX.read(event.target.result, { type: "array" });
+          const sheet = workbook.Sheets[workbook.SheetNames[0]];
+          resolve(XLSX.utils.sheet_to_json(sheet, { defval: "" }));
+          return;
+        }
+        resolve(parseSimpleCsv(event.target.result));
+      } catch (err) {
+        reject(err);
+      }
+    };
+    reader.onerror = () => reject(new Error("File could not be read."));
+    if (isCsv) reader.readAsText(file, "utf-8");
+    else reader.readAsArrayBuffer(file);
+  });
+}
+
 async function createList() {
   const btn = document.getElementById("listModalSave");
   const name = document.getElementById("listName").value.trim();
@@ -668,15 +767,30 @@ async function createList() {
   const isSMS = document.getElementById("listIsSms").checked;
   if (!name) { showModalAlert(listModalAlert, "List name is required."); return; }
 
-  const selectedContactIds = Array.from(
-    document.querySelectorAll("#listContactList input:checked")
-  ).map(i => i.value);
+  const source = getListSource();
+  const selectedContactIds = source === "contacts"
+    ? Array.from(document.querySelectorAll("#listContactList input:checked")).map(i => i.value)
+    : [];
+  if (source === "contacts" && !selectedContactIds.length) {
+    showModalAlert(listModalAlert, "Select at least one contact.");
+    return;
+  }
+  if (source === "file" && !listUploadRows.length) {
+    showModalAlert(listModalAlert, "Upload an Excel or CSV file with at least one row.");
+    return;
+  }
 
   btn.disabled = true;
   btn.textContent = "Creating…";
   clearModalAlert(listModalAlert);
   try {
-    const data = await apiPost("/api/wieland/lists", { name, description, isSMS, selectedContactIds });
+    const data = await apiPost("/api/wieland/lists", {
+      name,
+      description,
+      isSMS,
+      selectedContactIds,
+      leads: source === "file" ? listUploadRows : []
+    });
     listModal.classList.add("hidden");
     showToast(`List created with ${data.contactsInCsv || 0} contacts.`);
     await loadLists();
