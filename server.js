@@ -5701,6 +5701,8 @@ function buildWielandUploadLogBase({
   eligible,
   listPayload,
   source,
+  uploadFileContentType = "text/csv",
+  uploadFileSource = "generated-csv",
   uploadedHeaders = []
 }) {
   const endpointBase = "data/api/types";
@@ -5726,7 +5728,8 @@ function buildWielandUploadLogBase({
           object: listPayload,
           file: {
             fileName: uploadFileName,
-            contentType: "text/csv",
+            contentType: uploadFileContentType,
+            source: uploadFileSource,
             previewField: "csvPreview"
           }
         }
@@ -6236,6 +6239,12 @@ async function handleWieland(req, res, url) {
     const csvLines = csvContent.split("\n");
     const csvHeaders = csvLines[0] ? csvLines[0].split(",") : [];
     const uploadedFileName = String(body.fileName || "").trim();
+    const uploadedFileBase64 = String(body.fileBase64 || "").trim();
+    const uploadedFileBuffer = uploadedLeads.length && uploadedFileBase64
+      ? Buffer.from(uploadedFileBase64, "base64")
+      : null;
+    const uploadFileContentType = String(body.fileContentType || "").trim()
+      || (uploadedFileName.toLowerCase().endsWith(".csv") ? "text/csv" : "application/octet-stream");
     const uploadFileName = String(
       uploadedLeads.length
         ? (uploadedFileName || selectedFieldmapping?.fileName || "contacts.csv")
@@ -6274,12 +6283,18 @@ async function handleWieland(req, res, url) {
       eligible,
       listPayload,
       source: uploadedLeads.length ? "file" : "contacts",
+      uploadFileContentType: uploadedFileBuffer ? uploadFileContentType : "text/csv",
+      uploadFileSource: uploadedFileBuffer ? "original-upload" : "generated-csv",
       uploadedHeaders
     });
 
     const formData = new FormData();
     formData.append("object", JSON.stringify(listPayload));
-    formData.append("file", new Blob([csvContent], { type: "text/csv" }), uploadFileName);
+    formData.append(
+      "file",
+      new Blob([uploadedFileBuffer || csvContent], { type: uploadedFileBuffer ? uploadFileContentType : "text/csv" }),
+      uploadFileName
+    );
 
     const baseUrl = (nccConfig.nccBaseUrl || "https://mancity.thrio.io/data/api/types").replace(/\/$/, "");
     let createRes;

@@ -654,6 +654,8 @@ const listModalAlert = document.getElementById("listModalAlert");
 let listUploadRows = [];
 let listUploadHeaders = [];
 let listUploadFileName = "";
+let listUploadFileBase64 = "";
+let listUploadFileContentType = "";
 
 function showListStep(step) {
   document.getElementById("listStep1").hidden = step !== 1;
@@ -693,6 +695,8 @@ document.getElementById("newListBtn").addEventListener("click", () => {
   listUploadRows = [];
   listUploadHeaders = [];
   listUploadFileName = "";
+  listUploadFileBase64 = "";
+  listUploadFileContentType = "";
   if (visibleTabs.contacts !== false) {
     document.getElementById("listSourceContacts").checked = true;
   } else {
@@ -722,6 +726,8 @@ document.getElementById("listFileInput").addEventListener("change", async (event
   listUploadRows = [];
   listUploadHeaders = [];
   listUploadFileName = "";
+  listUploadFileBase64 = "";
+  listUploadFileContentType = "";
   document.getElementById("listFileSummary").textContent = "Reading file…";
   if (!file) {
     document.getElementById("listFileSummary").textContent = "No file selected.";
@@ -732,6 +738,8 @@ document.getElementById("listFileInput").addEventListener("change", async (event
     listUploadRows = parsed.rows;
     listUploadHeaders = parsed.headers;
     listUploadFileName = file.name;
+    listUploadFileBase64 = parsed.fileBase64 || "";
+    listUploadFileContentType = parsed.contentType || file.type || "";
     document.getElementById("listFileSummary").textContent = `${file.name} — ${listUploadRows.length} rows ready.`;
   } catch (err) {
     document.getElementById("listFileSummary").textContent = `Error: ${err.message}`;
@@ -803,12 +811,27 @@ function parseSimpleCsv(text) {
   return { rows, headers };
 }
 
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
 function readListUploadFile(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     const isCsv = file.name.toLowerCase().endsWith(".csv");
     reader.onload = (event) => {
       try {
+        const buffer = isCsv
+          ? new TextEncoder().encode(String(event.target.result || "")).buffer
+          : event.target.result;
+        const fileBase64 = arrayBufferToBase64(buffer);
+        const contentType = file.type || (isCsv ? "text/csv" : "application/octet-stream");
         if (!isCsv && typeof XLSX === "undefined") {
           reject(new Error("Excel parser is not available. Use CSV or reload the page."));
           return;
@@ -820,10 +843,10 @@ function readListUploadFile(file) {
           const sheet = workbook.Sheets[workbook.SheetNames[0]];
           const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
           const headers = rows.length ? Object.keys(rows[0]) : [];
-          resolve({ rows, headers });
+          resolve({ rows, headers, fileBase64, contentType });
           return;
         }
-        resolve(parseSimpleCsv(event.target.result));
+        resolve({ ...parseSimpleCsv(event.target.result), fileBase64, contentType });
       } catch (err) {
         reject(err);
       }
@@ -865,7 +888,9 @@ async function createList() {
       selectedContactIds,
       leads: source === "file" ? listUploadRows : [],
       headers: source === "file" ? listUploadHeaders : [],
-      fileName: source === "file" ? listUploadFileName : ""
+      fileName: source === "file" ? listUploadFileName : "",
+      fileBase64: source === "file" ? listUploadFileBase64 : "",
+      fileContentType: source === "file" ? listUploadFileContentType : ""
     });
     listModal.classList.add("hidden");
     showToast(formatCreateListToast(data), Number(data.uploadStatus?.totalFailed || 0) > 0 ? "error" : "");
