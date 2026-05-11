@@ -76,6 +76,7 @@ let contactSearchValue = "";
 let currentContactToListMap = {};
 let currentWidgetToContactMap = {};
 let visibleTabs = { contacts: true, lists: true, campaign: true, mapping: true };
+let visibleListButtons = { activate: true, assign: true, update: true, refresh: true, log: true, delete: true };
 let loaded = { contacts: false, lists: false, campaign: false, mapping: false };
 
 // ── Init check ────────────────────────────────────────────────────────────────
@@ -88,13 +89,26 @@ function normalizeVisibleTabs(config = {}) {
   };
 }
 
+function normalizeVisibleListButtons(config = {}) {
+  return {
+    activate: config.activate !== false,
+    assign: config.assign !== false,
+    update: config.update !== false,
+    refresh: config.refresh !== false,
+    log: config.log !== false,
+    delete: config.delete !== false
+  };
+}
+
 async function loadCampaignUiConfig() {
   try {
     const data = await api("/api/config");
     visibleTabs = normalizeVisibleTabs(data?.campaign?.wieland?.visibleTabs || {});
+    visibleListButtons = normalizeVisibleListButtons(data?.campaign?.wieland?.listButtons || {});
   } catch (err) {
     console.warn("Unable to load Wieland UI config:", err);
     visibleTabs = normalizeVisibleTabs();
+    visibleListButtons = normalizeVisibleListButtons();
   }
 }
 
@@ -441,6 +455,14 @@ function renderLists() {
     const isActive = Boolean(list.active);
     const uploadStatus = list.uploadStatus || {};
     const uploadBlock = renderUploadStatus(uploadStatus);
+    const buttons = [
+      visibleListButtons.activate ? `<button class="w-btn w-btn-secondary w-btn-sm" data-action="toggle-list-active" data-list-id="${escHtml(listId)}" data-active="${isActive}">${isActive ? "Deactivate list" : "Activate list"}</button>` : "",
+      visibleListButtons.assign ? `<button class="w-btn w-btn-secondary w-btn-sm" data-action="assign-contacts" data-list-id="${escHtml(listId)}">Assign contacts</button>` : "",
+      visibleListButtons.update ? `<button class="w-btn w-btn-secondary w-btn-sm" data-action="refresh-priority" data-list-id="${escHtml(listId)}">Update list</button>` : "",
+      visibleListButtons.refresh ? `<button class="w-btn w-btn-secondary w-btn-sm" data-action="load-leads" data-list-id="${escHtml(listId)}">Refresh leads</button>` : "",
+      visibleListButtons.log ? `<button class="w-btn w-btn-secondary w-btn-sm" data-action="view-upload-log" data-list-id="${escHtml(listId)}">View upload log</button>` : "",
+      visibleListButtons.delete ? `<button class="w-btn w-btn-danger w-btn-sm" data-action="delete-list" data-list-id="${escHtml(listId)}" data-name="${escHtml(name)}">Delete</button>` : ""
+    ].filter(Boolean).join("");
     return `<div class="w-list-card" id="list-${escHtml(listId)}">
       <div class="w-list-header" data-action="toggle-list" data-list-id="${escHtml(listId)}">
         <span class="w-list-name">${escHtml(name)}</span>
@@ -450,14 +472,7 @@ function renderLists() {
       </div>
       <div class="w-list-body">
         ${uploadBlock}
-        <div class="w-list-toolbar">
-          <button class="w-btn w-btn-secondary w-btn-sm" data-action="toggle-list-active" data-list-id="${escHtml(listId)}" data-active="${isActive}">${isActive ? "Deactivate list" : "Activate list"}</button>
-          <button class="w-btn w-btn-secondary w-btn-sm" data-action="assign-contacts" data-list-id="${escHtml(listId)}">Assign contacts</button>
-          <button class="w-btn w-btn-secondary w-btn-sm" data-action="refresh-priority" data-list-id="${escHtml(listId)}">Update list</button>
-          <button class="w-btn w-btn-secondary w-btn-sm" data-action="load-leads" data-list-id="${escHtml(listId)}">Refresh leads</button>
-          <button class="w-btn w-btn-secondary w-btn-sm" data-action="view-upload-log" data-list-id="${escHtml(listId)}">View upload log</button>
-          <button class="w-btn w-btn-danger w-btn-sm" data-action="delete-list" data-list-id="${escHtml(listId)}" data-name="${escHtml(name)}">Delete</button>
-        </div>
+        ${buttons ? `<div class="w-list-toolbar">${buttons}</div>` : ""}
         <div id="leads-${escHtml(listId)}" style="padding:12px 20px;">
           <span style="color:var(--muted);font-size:0.85rem;">Click "Refresh leads" to load.</span>
         </div>

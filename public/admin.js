@@ -118,6 +118,12 @@ const fields = {
   wielandTabLists: document.getElementById("wielandTabLists"),
   wielandTabCampaign: document.getElementById("wielandTabCampaign"),
   wielandTabMapping: document.getElementById("wielandTabMapping"),
+  wielandListButtonActivate: document.getElementById("wielandListButtonActivate"),
+  wielandListButtonAssign: document.getElementById("wielandListButtonAssign"),
+  wielandListButtonUpdate: document.getElementById("wielandListButtonUpdate"),
+  wielandListButtonRefresh: document.getElementById("wielandListButtonRefresh"),
+  wielandListButtonLog: document.getElementById("wielandListButtonLog"),
+  wielandListButtonDelete: document.getElementById("wielandListButtonDelete"),
   token: document.getElementById("campaignToken"),
   cookie: document.getElementById("campaignCookie"),
   allowedKbIds: document.getElementById("chatKbIds"),
@@ -390,6 +396,38 @@ function readWielandVisibleTabs() {
     lists: fields.wielandTabLists.checked,
     campaign: fields.wielandTabCampaign.checked,
     mapping: fields.wielandTabMapping.checked
+  };
+}
+
+function normalizeWielandListButtons(listButtons = {}) {
+  return {
+    activate: listButtons.activate !== false,
+    assign: listButtons.assign !== false,
+    update: listButtons.update !== false,
+    refresh: listButtons.refresh !== false,
+    log: listButtons.log !== false,
+    delete: listButtons.delete !== false
+  };
+}
+
+function setWielandListButtons(listButtons = {}) {
+  const normalized = normalizeWielandListButtons(listButtons);
+  fields.wielandListButtonActivate.checked = normalized.activate;
+  fields.wielandListButtonAssign.checked = normalized.assign;
+  fields.wielandListButtonUpdate.checked = normalized.update;
+  fields.wielandListButtonRefresh.checked = normalized.refresh;
+  fields.wielandListButtonLog.checked = normalized.log;
+  fields.wielandListButtonDelete.checked = normalized.delete;
+}
+
+function readWielandListButtons() {
+  return {
+    activate: fields.wielandListButtonActivate.checked,
+    assign: fields.wielandListButtonAssign.checked,
+    update: fields.wielandListButtonUpdate.checked,
+    refresh: fields.wielandListButtonRefresh.checked,
+    log: fields.wielandListButtonLog.checked,
+    delete: fields.wielandListButtonDelete.checked
   };
 }
 
@@ -1683,6 +1721,7 @@ function fillForm(campaign) {
   fields.wielandNccAuthType.value = campaign.wieland?.nccAuthType || "token";
   fields.wielandNccCredential.value = campaign.wielandNccCredential || "";
   setWielandVisibleTabs(campaign.wieland?.visibleTabs || {});
+  setWielandListButtons(campaign.wieland?.listButtons || {});
   updateWielandCredentialField(fields.wielandNccAuthType.value);
   renderWielandMappingEditors(campaign.wieland?.widgetToContactMap || {}, campaign.wieland?.contactToListMap || {});
   const wielandLink = document.getElementById("wielandOpenLink");
@@ -1850,6 +1889,7 @@ function readForm() {
       nccFieldmappingId: fields.wielandNccFieldmappingId.value.trim(),
       nccAuthType: fields.wielandNccAuthType.value || "token",
       visibleTabs: readWielandVisibleTabs(),
+      listButtons: readWielandListButtons(),
       widgetToContactMap: readWielandWidgetMap(),
       contactToListMap: readWielandContactToListMap()
     },
@@ -2082,6 +2122,7 @@ function applyDefaultUiValues() {
   fields.wielandNccAuthType.value = "token";
   fields.wielandNccCredential.value = "";
   setWielandVisibleTabs();
+  setWielandListButtons();
   updateWielandCredentialField("token");
   document.getElementById("wielandOpenLink").hidden = true;
   resetWielandFieldmappingInfo();

@@ -849,6 +849,7 @@ async function handleConfig(req, res, url) {
     const selection = readSelection(url.searchParams);
     const config = await resolveCampaignConfigAsync(selection);
     const visibleTabs = normalizeWielandVisibleTabs(config.wieland?.visibleTabs || {});
+    const listButtons = normalizeWielandListButtons(config.wieland?.listButtons || {});
 
     sendJson(res, 200, {
       configured: true,
@@ -859,7 +860,7 @@ async function handleConfig(req, res, url) {
         apiUrl: config.apiUrl,
         workitemApiUrl: config.workitemApiUrl,
         allowedKbIds: config.allowedKbIds,
-        wieland: { visibleTabs },
+        wieland: { visibleTabs, listButtons },
         ui: config.ui
       },
       request: {
@@ -3625,6 +3626,17 @@ function normalizeWielandVisibleTabs(visibleTabs = {}) {
   };
 }
 
+function normalizeWielandListButtons(listButtons = {}) {
+  return {
+    activate: listButtons.activate !== false,
+    assign: listButtons.assign !== false,
+    update: listButtons.update !== false,
+    refresh: listButtons.refresh !== false,
+    log: listButtons.log !== false,
+    delete: listButtons.delete !== false
+  };
+}
+
 function normalizeCampaign(input) {
   const id = slugify(input.id || input.name || input.domain);
   if (!id) {
@@ -3706,6 +3718,7 @@ function normalizeCampaign(input) {
       uploadFileName: String(input.wieland?.uploadFileName || input.wielandUploadFileName || "").trim(),
       nccFieldmappingId: String(input.wieland?.nccFieldmappingId || input.wielandNccFieldmappingId || "").trim(),
       visibleTabs: normalizeWielandVisibleTabs(input.wieland?.visibleTabs || input.wielandVisibleTabs || {}),
+      listButtons: normalizeWielandListButtons(input.wieland?.listButtons || input.wielandListButtons || {}),
       widgetToContactMap: sanitizeStringMapping(input.wieland?.widgetToContactMap || input.wielandWidgetToContactMap || {}),
       contactToListMap: sanitizeStringMapping(input.wieland?.contactToListMap || input.wielandContactToListMap || {}),
       nccAuthType: (["token", "key", "none"].includes(input.wieland?.nccAuthType) ? input.wieland.nccAuthType : null)
