@@ -5721,6 +5721,7 @@ function buildWielandUploadLogBase({
       createOutboundList: {
         method: "POST",
         endpoint: `${endpointBase}/outboundlist`,
+        contentType: "multipart/form-data",
         multipartFields: {
           object: listPayload,
           file: {
