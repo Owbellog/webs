@@ -6219,8 +6219,11 @@ async function handleWieland(req, res, url) {
       : generateWielandCSV(initialLeads, contactToList, selectedFieldmapping);
     const csvLines = csvContent.split("\n");
     const csvHeaders = csvLines[0] ? csvLines[0].split(",") : [];
+    const uploadedFileName = String(body.fileName || "").trim();
     const uploadFileName = String(
-      campaign.wieland?.uploadFileName
+      uploadedLeads.length && uploadedFileName
+      ? uploadedFileName
+      : campaign.wieland?.uploadFileName
       || selectedFieldmapping?.fileName
       || "contacts.csv"
     ).trim() || "contacts.csv";
@@ -6232,30 +6235,16 @@ async function handleWieland(req, res, url) {
       objectType: "outboundlist",
       campaignId: nccConfig.campaignId,
       isSMS,
-      isEmail: false,
       name: listName,
-      file: uploadFileName,
+      duplicateStrategy: null,
       description: listDescription || null,
       isScrub: false,
+      file: uploadFileName,
       keepOptinOnly: false,
       isReassigned: false,
       isWorkflow: false,
       localizations: {
-        name: { en: { language: "en", value: listName } },
-        ...(listDescription ? { description: { en: { language: "en", value: listDescription } } } : {})
-      },
-      outboundListLoadForm: {
-        isSMS,
-        file: uploadFileName,
-        keepOptinOnly: false,
-        localizations: {
-          name: { en: { language: "en", value: listName } },
-          ...(listDescription ? { description: { en: { language: "en", value: listDescription } } } : {})
-        },
-        campaignId: nccConfig.campaignId,
-        isReassigned: false,
-        isWorkflow: false,
-        isScrub: false
+        name: { en: { language: "en", value: listName } }
       }
     };
     const uploadLogBase = buildWielandUploadLogBase({

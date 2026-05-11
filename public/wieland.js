@@ -653,6 +653,7 @@ const listModal = document.getElementById("listModal");
 const listModalAlert = document.getElementById("listModalAlert");
 let listUploadRows = [];
 let listUploadHeaders = [];
+let listUploadFileName = "";
 
 function showListStep(step) {
   document.getElementById("listStep1").hidden = step !== 1;
@@ -691,6 +692,7 @@ document.getElementById("newListBtn").addEventListener("click", () => {
   document.getElementById("listFileSummary").textContent = "No file selected.";
   listUploadRows = [];
   listUploadHeaders = [];
+  listUploadFileName = "";
   if (visibleTabs.contacts !== false) {
     document.getElementById("listSourceContacts").checked = true;
   } else {
@@ -719,6 +721,7 @@ document.getElementById("listFileInput").addEventListener("change", async (event
   const file = event.target.files?.[0];
   listUploadRows = [];
   listUploadHeaders = [];
+  listUploadFileName = "";
   document.getElementById("listFileSummary").textContent = "Reading file…";
   if (!file) {
     document.getElementById("listFileSummary").textContent = "No file selected.";
@@ -728,6 +731,7 @@ document.getElementById("listFileInput").addEventListener("change", async (event
     const parsed = await readListUploadFile(file);
     listUploadRows = parsed.rows;
     listUploadHeaders = parsed.headers;
+    listUploadFileName = file.name;
     document.getElementById("listFileSummary").textContent = `${file.name} — ${listUploadRows.length} rows ready.`;
   } catch (err) {
     document.getElementById("listFileSummary").textContent = `Error: ${err.message}`;
@@ -860,7 +864,8 @@ async function createList() {
       isSMS,
       selectedContactIds,
       leads: source === "file" ? listUploadRows : [],
-      headers: source === "file" ? listUploadHeaders : []
+      headers: source === "file" ? listUploadHeaders : [],
+      fileName: source === "file" ? listUploadFileName : ""
     });
     listModal.classList.add("hidden");
     showToast(formatCreateListToast(data), Number(data.uploadStatus?.totalFailed || 0) > 0 ? "error" : "");
