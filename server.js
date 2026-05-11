@@ -5703,6 +5703,7 @@ function buildWielandUploadLogBase({
   source,
   uploadedHeaders = []
 }) {
+  const endpointBase = "data/api/types";
   return {
     campaignKey,
     listName,
@@ -5716,6 +5717,20 @@ function buildWielandUploadLogBase({
     contactToListSource: Object.keys(configuredContactToList || {}).length ? "campaign.wieland.contactToListMap" : "campaign.expansions.fieldMappingsId.fields",
     contactToList,
     listPayload,
+    requests: {
+      createOutboundList: {
+        method: "POST",
+        endpoint: `${endpointBase}/outboundlist`,
+        multipartFields: {
+          object: listPayload,
+          file: {
+            fileName: uploadFileName,
+            contentType: "text/csv",
+            previewField: "csvPreview"
+          }
+        }
+      }
+    },
     uploadedHeaders,
     csvHeaders: csvLines[0] ? csvLines[0].split(",") : [],
     csvPreview: csvLines.slice(0, 12).join("\n"),
@@ -6301,6 +6316,15 @@ async function handleWieland(req, res, url) {
         phase: "create",
         nccCreateStatus: createRes.status,
         nccCreateResponse: errText,
+        responses: {
+          createOutboundList: {
+            method: "POST",
+            endpoint: "data/api/types/outboundlist",
+            status: createRes.status,
+            contentType: createRes.headers.get("content-type") || "",
+            body: errText
+          }
+        },
         responseContentType: createRes.headers.get("content-type") || ""
       });
       sendJson(res, createRes.status, {
@@ -6344,13 +6368,14 @@ async function handleWieland(req, res, url) {
 
     // Assign to campaign
     let attachResult = null;
+    const attachPayload = listId ? {
+      campaignId: nccConfig.campaignId,
+      outboundlistId: listId,
+      _working: true
+    } : null;
     if (listId) {
       for (let attempt = 1; attempt <= 3; attempt += 1) {
-        attachResult = await nccFetch(nccConfig, "/campaignoutboundlist", "POST", {
-          campaignId: nccConfig.campaignId,
-          outboundlistId: listId,
-          _working: true
-        });
+        attachResult = await nccFetch(nccConfig, "/campaignoutboundlist", "POST", attachPayload);
         if (attachResult.ok) break;
         if (attempt < 3) await sleep(500 * attempt);
       }
@@ -6365,6 +6390,38 @@ async function handleWieland(req, res, url) {
       refreshedListStatus: createdListResult?.status || null,
       refreshedList: createdList,
       uploadStatus,
+      requests: {
+        ...uploadLogBase.requests,
+        refreshCreatedList: listId ? {
+          method: "GET",
+          endpoint: `data/api/types/outboundlist/${listId}`
+        } : null,
+        attachCampaignOutboundList: attachPayload ? {
+          method: "POST",
+          endpoint: "data/api/types/campaignoutboundlist",
+          body: attachPayload
+        } : null
+      },
+      responses: {
+        createOutboundList: {
+          method: "POST",
+          endpoint: "data/api/types/outboundlist",
+          status: createRes.status,
+          body: listData
+        },
+        refreshCreatedList: createdListResult ? {
+          method: "GET",
+          endpoint: listId ? `data/api/types/outboundlist/${listId}` : "data/api/types/outboundlist",
+          status: createdListResult.status,
+          body: createdListResult.ok ? createdList : createdListResult.data
+        } : null,
+        attachCampaignOutboundList: attachResult ? {
+          method: "POST",
+          endpoint: "data/api/types/campaignoutboundlist",
+          status: attachResult.status,
+          body: attachResult.data
+        } : null
+      },
       attach: attachResult
         ? (attachResult.ok
           ? { ok: true, data: attachResult.data }
