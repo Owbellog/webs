@@ -6235,9 +6235,9 @@ async function handleWieland(req, res, url) {
     const csvLines = csvContent.split("\n");
     const csvHeaders = csvLines[0] ? csvLines[0].split(",") : [];
     const uploadFileName = String(
-      campaign.wieland?.uploadFileName
-      || selectedFieldmapping?.fileName
-      || "contacts.csv"
+      uploadedLeads.length
+        ? (selectedFieldmapping?.fileName || "contacts.csv")
+        : (campaign.wieland?.uploadFileName || selectedFieldmapping?.fileName || "contacts.csv")
     ).trim() || "contacts.csv";
 
     // Multipart upload
