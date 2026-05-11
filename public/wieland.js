@@ -652,6 +652,7 @@ document.getElementById("listsContainer").addEventListener("click", async (e) =>
 const listModal = document.getElementById("listModal");
 const listModalAlert = document.getElementById("listModalAlert");
 let listUploadRows = [];
+let listUploadHeaders = [];
 
 function showListStep(step) {
   document.getElementById("listStep1").hidden = step !== 1;
@@ -689,6 +690,7 @@ document.getElementById("newListBtn").addEventListener("click", () => {
   document.getElementById("listFileInput").value = "";
   document.getElementById("listFileSummary").textContent = "No file selected.";
   listUploadRows = [];
+  listUploadHeaders = [];
   if (visibleTabs.contacts !== false) {
     document.getElementById("listSourceContacts").checked = true;
   } else {
@@ -716,13 +718,16 @@ document.querySelectorAll("input[name='listSource']").forEach((input) => {
 document.getElementById("listFileInput").addEventListener("change", async (event) => {
   const file = event.target.files?.[0];
   listUploadRows = [];
+  listUploadHeaders = [];
   document.getElementById("listFileSummary").textContent = "Reading file…";
   if (!file) {
     document.getElementById("listFileSummary").textContent = "No file selected.";
     return;
   }
   try {
-    listUploadRows = await readListUploadFile(file);
+    const parsed = await readListUploadFile(file);
+    listUploadRows = parsed.rows;
+    listUploadHeaders = parsed.headers;
     document.getElementById("listFileSummary").textContent = `${file.name} — ${listUploadRows.length} rows ready.`;
   } catch (err) {
     document.getElementById("listFileSummary").textContent = `Error: ${err.message}`;
@@ -783,14 +788,15 @@ function renderListContactPicker() {
 
 function parseSimpleCsv(text) {
   const lines = String(text || "").trim().split(/\r?\n/);
-  if (lines.length < 2) return [];
+  if (lines.length < 2) return { rows: [], headers: [] };
   const headers = lines[0].split(",").map((h) => h.replace(/^"|"$/g, "").trim());
-  return lines.slice(1).map((line) => {
+  const rows = lines.slice(1).map((line) => {
     const values = line.split(",").map((v) => v.replace(/^"|"$/g, "").trim());
     const row = {};
     headers.forEach((header, index) => { row[header] = values[index] || ""; });
     return row;
   }).filter((row) => Object.values(row).some(Boolean));
+  return { rows, headers };
 }
 
 function readListUploadFile(file) {
@@ -808,7 +814,9 @@ function readListUploadFile(file) {
             ? XLSX.read(event.target.result, { type: "string" })
             : XLSX.read(event.target.result, { type: "array" });
           const sheet = workbook.Sheets[workbook.SheetNames[0]];
-          resolve(XLSX.utils.sheet_to_json(sheet, { defval: "" }));
+          const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+          const headers = rows.length ? Object.keys(rows[0]) : [];
+          resolve({ rows, headers });
           return;
         }
         resolve(parseSimpleCsv(event.target.result));
@@ -851,7 +859,8 @@ async function createList() {
       description,
       isSMS,
       selectedContactIds,
-      leads: source === "file" ? listUploadRows : []
+      leads: source === "file" ? listUploadRows : [],
+      headers: source === "file" ? listUploadHeaders : []
     });
     listModal.classList.add("hidden");
     showToast(formatCreateListToast(data), Number(data.uploadStatus?.totalFailed || 0) > 0 ? "error" : "");

@@ -5652,6 +5652,21 @@ function generateWielandCSV(contacts, contactToList = {}, nccFieldmapping = null
   return rows.join("\n");
 }
 
+function generateCSVFromUploadedRows(rows, uploadedHeaders = []) {
+  const headerSet = new Set((uploadedHeaders || []).map((header) => String(header || "").trim()).filter(Boolean));
+  for (const row of rows || []) {
+    for (const key of Object.keys(row || {})) {
+      if (String(key || "").trim()) headerSet.add(String(key).trim());
+    }
+  }
+  const headers = [...headerSet];
+  const esc = (v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
+  return [
+    headers.join(","),
+    ...(rows || []).map((row) => headers.map((header) => esc(row?.[header] ?? "")).join(","))
+  ].join("\n");
+}
+
 function normalizeOutboundListUploadStatus(list = {}) {
   const pick = (...keys) => {
     for (const key of keys) {
@@ -5685,7 +5700,8 @@ function buildWielandUploadLogBase({
   initialLeads,
   eligible,
   listPayload,
-  source
+  source,
+  uploadedHeaders = []
 }) {
   return {
     campaignKey,
@@ -5700,6 +5716,7 @@ function buildWielandUploadLogBase({
     contactToListSource: Object.keys(configuredContactToList || {}).length ? "campaign.wieland.contactToListMap" : "campaign.expansions.fieldMappingsId.fields",
     contactToList,
     listPayload,
+    uploadedHeaders,
     csvHeaders: csvLines[0] ? csvLines[0].split(",") : [],
     csvPreview: csvLines.slice(0, 12).join("\n"),
     csvRowCount: Math.max(0, csvLines.length - 1),
@@ -6170,6 +6187,9 @@ async function handleWieland(req, res, url) {
     const uploadedLeads = Array.isArray(body.leads)
       ? body.leads.filter((lead) => lead && typeof lead === "object" && Object.values(lead).some((value) => String(value || "").trim()))
       : [];
+    const uploadedHeaders = Array.isArray(body.headers)
+      ? body.headers.map((header) => String(header || "").trim()).filter(Boolean)
+      : [];
     const initialLeads = uploadedLeads.length
       ? uploadedLeads
       : selectedContactIds
@@ -6194,7 +6214,9 @@ async function handleWieland(req, res, url) {
     const contactToList = Object.keys(configuredContactToList).length
       ? configuredContactToList
       : sanitizeStringMapping(selectedFieldmapping?.fields || {});
-    const csvContent = generateWielandCSV(initialLeads, contactToList, selectedFieldmapping);
+    const csvContent = uploadedLeads.length
+      ? generateCSVFromUploadedRows(uploadedLeads, uploadedHeaders)
+      : generateWielandCSV(initialLeads, contactToList, selectedFieldmapping);
     const csvLines = csvContent.split("\n");
     const csvHeaders = csvLines[0] ? csvLines[0].split(",") : [];
     const uploadFileName = String(
@@ -6250,7 +6272,8 @@ async function handleWieland(req, res, url) {
       initialLeads,
       eligible,
       listPayload,
-      source: uploadedLeads.length ? "file" : "contacts"
+      source: uploadedLeads.length ? "file" : "contacts",
+      uploadedHeaders
     });
 
     const formData = new FormData();
