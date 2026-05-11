@@ -10,6 +10,7 @@ const PUBLIC_DIR = path.join(ROOT, "public");
 const CAMPAIGNS_FILE = path.join(ROOT, "campaigns.json");
 const USERS_FILE = path.join(ROOT, "users.json");
 const WIELAND_CONTACTS_FILE = path.join(ROOT, "wieland-contacts.json");
+const WIELAND_UPLOAD_LOGS_FILE = path.join(ROOT, "wieland-upload-logs.json");
 
 loadEnv(path.join(ROOT, ".env"));
 
@@ -22,6 +23,7 @@ const FIRESTORE_PREFIX = sanitizeFirestorePrefix(process.env.FIRESTORE_PREFIX ||
 const FIRESTORE_COLLECTION = process.env.FIRESTORE_COLLECTION || `${FIRESTORE_PREFIX}_campaigns`;
 const USERS_COLLECTION = `${FIRESTORE_PREFIX}_users`;
 const WIELAND_CONTACTS_COLLECTION = `${FIRESTORE_PREFIX}_wieland_contacts`;
+const WIELAND_UPLOAD_LOGS_COLLECTION = `${FIRESTORE_PREFIX}_wieland_upload_logs`;
 const SESSION_EXPIRY_SECONDS = 8 * 60 * 60; // 8 hours
 const SESSION_COOKIE_NAME = "niq_sess";
 const WIELAND_SESSION_COOKIE_NAME = "niq_w_sess";
@@ -5669,6 +5671,95 @@ function normalizeOutboundListUploadStatus(list = {}) {
   };
 }
 
+function buildWielandUploadLogBase({
+  campaignKey,
+  listName,
+  listDescription,
+  listId,
+  isSMS,
+  uploadFileName,
+  selectedFieldmapping,
+  contactToList,
+  configuredContactToList,
+  csvLines,
+  initialLeads,
+  eligible,
+  listPayload,
+  source
+}) {
+  return {
+    campaignKey,
+    listName,
+    listDescription,
+    listId: listId || "",
+    isSMS,
+    source,
+    uploadFileName,
+    selectedFieldmappingId: selectedFieldmapping?._id || selectedFieldmapping?.fieldmappingsId || selectedFieldmapping?.id || "",
+    selectedFieldmappingName: selectedFieldmapping?.name || selectedFieldmapping?.localizations?.name?.en?.value || "",
+    contactToListSource: Object.keys(configuredContactToList || {}).length ? "campaign.wieland.contactToListMap" : "campaign.expansions.fieldMappingsId.fields",
+    contactToList,
+    listPayload,
+    csvHeaders: csvLines[0] ? csvLines[0].split(",") : [],
+    csvPreview: csvLines.slice(0, 12).join("\n"),
+    csvRowCount: Math.max(0, csvLines.length - 1),
+    initialLeadCount: initialLeads.length,
+    eligibleCount: eligible.length,
+    firstInputLead: initialLeads[0] ? {
+      firstName: initialLeads[0].firstName || "",
+      lastName: initialLeads[0].lastName || "",
+      name: initialLeads[0].name || "",
+      phone: initialLeads[0].phone || "",
+      mobile: initialLeads[0].mobile || "",
+      email: initialLeads[0].email || "",
+      externalId: initialLeads[0].externalId || "",
+      fax: initialLeads[0].fax || "",
+      contactId: initialLeads[0].contactId || initialLeads[0]._id || ""
+    } : null
+  };
+}
+
+async function saveWielandUploadLog(log) {
+  try {
+    const clean = stripUndefinedDeep({
+      ...log,
+      createdAt: new Date().toISOString()
+    });
+    if (firestore) {
+      const ref = await firestore.collection(WIELAND_UPLOAD_LOGS_COLLECTION).add(clean);
+      return ref.id;
+    }
+    let logs = [];
+    if (fs.existsSync(WIELAND_UPLOAD_LOGS_FILE)) {
+      try { logs = JSON.parse(fs.readFileSync(WIELAND_UPLOAD_LOGS_FILE, "utf8")); } catch { logs = []; }
+    }
+    const id = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+    logs.push({ id, ...clean });
+    logs = logs.slice(-100);
+    fs.writeFileSync(WIELAND_UPLOAD_LOGS_FILE, `${JSON.stringify(logs, null, 2)}\n`, "utf8");
+    return id;
+  } catch (err) {
+    console.warn("[wieland/upload-log] failed to save log:", err.message);
+    return null;
+  }
+}
+
+async function readWielandUploadLogs(campaignKey, listId = "") {
+  if (firestore) {
+    const snapshot = await firestore.collection(WIELAND_UPLOAD_LOGS_COLLECTION).where("campaignKey", "==", campaignKey).get();
+    return snapshot.docs
+      .map((doc) => ({ id: doc.id, ...doc.data() }))
+      .filter((log) => !listId || log.listId === listId)
+      .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  }
+  if (!fs.existsSync(WIELAND_UPLOAD_LOGS_FILE)) return [];
+  let logs = [];
+  try { logs = JSON.parse(fs.readFileSync(WIELAND_UPLOAD_LOGS_FILE, "utf8")); } catch { logs = []; }
+  return logs
+    .filter((log) => log.campaignKey === campaignKey && (!listId || log.listId === listId))
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+}
+
 async function fetchOutboundListAfterCreate(nccConfig, listId) {
   let lastResult = null;
   for (let attempt = 1; attempt <= 5; attempt += 1) {
@@ -6026,6 +6117,19 @@ async function handleWieland(req, res, url) {
     return;
   }
 
+  const listUploadLogMatch = url.pathname.match(/^\/api\/wieland\/lists\/([^/]+)\/upload-log$/);
+  if (req.method === "GET" && listUploadLogMatch) {
+    const logs = await readWielandUploadLogs(nccConfig.campaignId || campaignParam || "", listUploadLogMatch[1]);
+    sendJson(res, 200, { logs, latest: logs[0] || null });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/wieland/upload-logs") {
+    const logs = await readWielandUploadLogs(nccConfig.campaignId || campaignParam || "");
+    sendJson(res, 200, { logs: logs.slice(0, 50) });
+    return;
+  }
+
   const listPatchMatch = url.pathname.match(/^\/api\/wieland\/lists\/([^/]+)$/);
   if (req.method === "PATCH" && listPatchMatch) {
     let body;
@@ -6132,6 +6236,22 @@ async function handleWieland(req, res, url) {
         isScrub: false
       }
     };
+    const uploadLogBase = buildWielandUploadLogBase({
+      campaignKey,
+      listName,
+      listDescription,
+      listId: "",
+      isSMS,
+      uploadFileName,
+      selectedFieldmapping,
+      contactToList,
+      configuredContactToList,
+      csvLines,
+      initialLeads,
+      eligible,
+      listPayload,
+      source: uploadedLeads.length ? "file" : "contacts"
+    });
 
     const formData = new FormData();
     formData.append("object", JSON.stringify(listPayload));
@@ -6152,9 +6272,18 @@ async function handleWieland(req, res, url) {
 
     if (!createRes.ok) {
       const errText = await createRes.text();
+      const logId = await saveWielandUploadLog({
+        ...uploadLogBase,
+        ok: false,
+        phase: "create",
+        nccCreateStatus: createRes.status,
+        nccCreateResponse: errText,
+        responseContentType: createRes.headers.get("content-type") || ""
+      });
       sendJson(res, createRes.status, {
         error: "Failed to create list",
         details: errText,
+        logId,
         debug: {
           campaignId: nccConfig.campaignId,
           eligibleCount: eligible.length,
@@ -6203,12 +6332,29 @@ async function handleWieland(req, res, url) {
         if (attempt < 3) await sleep(500 * attempt);
       }
     }
+    const logId = await saveWielandUploadLog({
+      ...uploadLogBase,
+      ok: true,
+      phase: "upload",
+      listId: listId || "",
+      nccCreateStatus: createRes.status,
+      nccCreateResponse: listData,
+      refreshedListStatus: createdListResult?.status || null,
+      refreshedList: createdList,
+      uploadStatus,
+      attach: attachResult
+        ? (attachResult.ok
+          ? { ok: true, data: attachResult.data }
+          : { ok: false, status: attachResult.status, data: attachResult.data })
+        : { ok: false, error: "No list id returned from NCC." }
+    });
 
     sendJson(res, 200, {
       ok: true,
       created: true,
       list: createdList,
       uploadStatus,
+      logId,
       contactsInCsv: initialLeads.length,
       totalEligibleContacts: eligible.length,
       createStatus: {

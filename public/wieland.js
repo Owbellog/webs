@@ -455,6 +455,7 @@ function renderLists() {
           <button class="w-btn w-btn-secondary w-btn-sm" data-action="assign-contacts" data-list-id="${escHtml(listId)}">Assign contacts</button>
           <button class="w-btn w-btn-secondary w-btn-sm" data-action="refresh-priority" data-list-id="${escHtml(listId)}">Update list</button>
           <button class="w-btn w-btn-secondary w-btn-sm" data-action="load-leads" data-list-id="${escHtml(listId)}">Refresh leads</button>
+          <button class="w-btn w-btn-secondary w-btn-sm" data-action="view-upload-log" data-list-id="${escHtml(listId)}">View upload log</button>
           <button class="w-btn w-btn-danger w-btn-sm" data-action="delete-list" data-list-id="${escHtml(listId)}" data-name="${escHtml(name)}">Delete</button>
         </div>
         <div id="leads-${escHtml(listId)}" style="padding:12px 20px;">
@@ -524,6 +525,29 @@ async function loadListLeads(listId) {
       <thead><tr><th>External ID</th><th>Name</th><th>Phone</th><th>Status</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
+  } catch (err) {
+    leadsEl.innerHTML = `<span style="color:#991b1b;font-size:0.85rem;">Error: ${escHtml(err.message)}</span>`;
+  }
+}
+
+async function loadUploadLog(listId) {
+  const leadsEl = document.getElementById(`leads-${listId}`);
+  leadsEl.innerHTML = `<span style="color:var(--muted);font-size:0.85rem;">Loading upload log…</span>`;
+  try {
+    const data = await api(`/api/wieland/lists/${encodeURIComponent(listId)}/upload-log`);
+    const log = data.latest;
+    if (!log) {
+      leadsEl.innerHTML = `<span style="color:var(--muted);font-size:0.85rem;">No upload log found for this list.</span>`;
+      return;
+    }
+    const formatted = JSON.stringify(log, null, 2);
+    leadsEl.innerHTML = `<div style="padding:0;">
+      <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:8px;">
+        <strong style="color:var(--brand);font-size:0.9rem;">Latest upload log</strong>
+        <span style="color:var(--muted);font-size:0.8rem;">${escHtml(log.createdAt || "")}</span>
+      </div>
+      <pre style="white-space:pre-wrap;word-break:break-word;background:#0f172a;color:#e5e7eb;border-radius:10px;padding:12px;font-size:0.78rem;line-height:1.45;max-height:420px;overflow:auto;">${escHtml(formatted)}</pre>
+    </div>`;
   } catch (err) {
     leadsEl.innerHTML = `<span style="color:#991b1b;font-size:0.85rem;">Error: ${escHtml(err.message)}</span>`;
   }
@@ -615,6 +639,8 @@ document.getElementById("listsContainer").addEventListener("click", async (e) =>
     await refreshListPriority(listId, el);
   } else if (action === "load-leads") {
     await loadListLeads(listId);
+  } else if (action === "view-upload-log") {
+    await loadUploadLog(listId);
   } else if (action === "delete-list") {
     await deleteList(listId, name, el);
   } else if (action === "delete-lead") {
