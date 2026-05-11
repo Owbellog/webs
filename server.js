@@ -6245,18 +6245,20 @@ async function handleWieland(req, res, url) {
     const listDescription = String(body.description || "").trim();
     const isSMS = body.isSMS === true;
     const listPayload = {
-      localizations: {
-        name: { en: { language: "en", value: listName } }
-      },
+      objectType: "outboundlist",
       campaignId: nccConfig.campaignId,
       isSMS,
       name: listName,
+      duplicateStrategy: null,
       description: listDescription || null,
       isScrub: false,
       file: uploadFileName,
-      createRelation: true,
-      enforceDuplicates: false,
-      duplicateStrategy: "NumbersAcrossLists"
+      keepOptinOnly: false,
+      isReassigned: false,
+      isWorkflow: false,
+      localizations: {
+        name: { en: { language: "en", value: listName } }
+      }
     };
     const uploadLogBase = buildWielandUploadLogBase({
       campaignKey,
