@@ -78,6 +78,7 @@ let currentWidgetToContactMap = {};
 let visibleTabs = { contacts: true, lists: true, campaign: true, mapping: true };
 let visibleListButtons = { activate: true, assign: true, update: true, refresh: true, log: true, delete: true };
 let loaded = { contacts: false, lists: false, campaign: false, mapping: false };
+let smsTemplatesCache = null;
 
 // ── Init check ────────────────────────────────────────────────────────────────
 function normalizeVisibleTabs(config = {}) {
@@ -1063,10 +1064,80 @@ function renderInfoRows(rows) {
   `).join("");
 }
 
+function templateId(template) {
+  return template?.templateId || template?._id || template?.id || "";
+}
+
+function templateName(template) {
+  return template?.localizations?.name?.en?.value || template?.name || templateId(template) || "Unnamed template";
+}
+
+async function loadSmsTemplates() {
+  if (smsTemplatesCache) return smsTemplatesCache;
+  const data = await api("/api/wieland/templates");
+  smsTemplatesCache = Array.isArray(data.templates) ? data.templates : [];
+  return smsTemplatesCache;
+}
+
+async function renderSmsTemplateSelector(campaign = {}) {
+  const container = document.getElementById("campaignSmsTemplateInfo");
+  container.classList.add("w-loading");
+  container.innerHTML = "Loading…";
+  try {
+    const templates = await loadSmsTemplates();
+    const currentId = campaign.smsTemplateId || "";
+    container.classList.remove("w-loading");
+    const options = [
+      `<option value="">— No SMS template —</option>`,
+      ...templates.map((template) => {
+        const id = templateId(template);
+        const selected = id && id === currentId ? " selected" : "";
+        return `<option value="${escHtml(id)}"${selected}>${escHtml(templateName(template))}${id ? ` — ${escHtml(id)}` : ""}</option>`;
+      })
+    ].join("");
+    container.innerHTML = `
+      <div style="display:grid;gap:10px;">
+        <select id="campaignSmsTemplateSelect" class="w-input">${options}</select>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <button class="w-btn w-btn-secondary w-btn-sm" id="campaignSmsTemplateSave" type="button">Save template</button>
+          <span id="campaignSmsTemplateStatus" style="color:var(--muted);font-size:0.85rem;">Current: ${escHtml(currentId || "none")}</span>
+        </div>
+      </div>
+    `;
+    document.getElementById("campaignSmsTemplateSave").addEventListener("click", saveSmsTemplate);
+  } catch (err) {
+    container.classList.remove("w-loading");
+    container.innerHTML = `<span style="color:var(--muted);font-size:0.85rem;">SMS templates unavailable.</span>`;
+    console.error("SMS templates error:", err);
+  }
+}
+
+async function saveSmsTemplate() {
+  const select = document.getElementById("campaignSmsTemplateSelect");
+  const button = document.getElementById("campaignSmsTemplateSave");
+  const status = document.getElementById("campaignSmsTemplateStatus");
+  if (!select || !button || !status) return;
+  button.disabled = true;
+  status.textContent = "Saving…";
+  try {
+    const smsTemplateId = select.value;
+    await apiPatch("/api/wieland/campaign/sms-template", { smsTemplateId });
+    campaignStatusCache = null;
+    status.textContent = `Saved: ${smsTemplateId || "none"}`;
+    showToast("SMS template saved.");
+  } catch (err) {
+    status.textContent = "Save failed.";
+    showToast(err.message, "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function loadCampaignStatus() {
   const slotsInfo = document.getElementById("slotsInfo");
   const campaignConfigInfo = document.getElementById("campaignConfigInfo");
   const campaignDialRulesInfo = document.getElementById("campaignDialRulesInfo");
+  const campaignSmsTemplateInfo = document.getElementById("campaignSmsTemplateInfo");
   const campaignDispositionsInfo = document.getElementById("campaignDispositionsInfo");
   const campaignFilterInfo = document.getElementById("campaignFilterInfo");
   try {
@@ -1099,6 +1170,7 @@ async function loadCampaignStatus() {
       ["Primary phone field", fmtValue(c.primaryPhoneField)],
       ["Lead order by", fmtValue(c.leadOrderByField)]
     ]);
+    renderSmsTemplateSelector(c);
     const dispositions = c?.dispositions?.objects || [];
     campaignDispositionsInfo.classList.remove("w-loading");
     if (dispositions.length) {
@@ -1127,9 +1199,11 @@ async function loadCampaignStatus() {
     slotsInfo.innerHTML = `<span style="color:var(--muted);font-size:0.85rem;">Campaign status unavailable.</span>`;
     campaignConfigInfo.classList.remove("w-loading");
     campaignDialRulesInfo.classList.remove("w-loading");
+    campaignSmsTemplateInfo.classList.remove("w-loading");
     campaignDispositionsInfo.classList.remove("w-loading");
     campaignConfigInfo.innerHTML = `<span style="color:var(--muted);font-size:0.85rem;">Campaign data unavailable.</span>`;
     campaignDialRulesInfo.innerHTML = `<span style="color:var(--muted);font-size:0.85rem;">Dial rules unavailable.</span>`;
+    campaignSmsTemplateInfo.innerHTML = `<span style="color:var(--muted);font-size:0.85rem;">SMS template unavailable.</span>`;
     campaignDispositionsInfo.innerHTML = `<span style="color:var(--muted);font-size:0.85rem;">Dispositions unavailable.</span>`;
     campaignFilterInfo.textContent = "Campaign filter unavailable.";
   }

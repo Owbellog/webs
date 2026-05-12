@@ -6688,6 +6688,40 @@ async function handleWieland(req, res, url) {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/wieland/templates") {
+    const result = await nccFetch(nccConfig, "/template");
+    if (!result.ok) {
+      sendJson(res, result.status, { error: "NCC API error", details: result.data });
+      return;
+    }
+    const templates = Array.isArray(result.data)
+      ? result.data
+      : (result.data?.objects || result.data?.results || result.data?.data || []);
+    sendJson(res, 200, { templates });
+    return;
+  }
+
+  if (req.method === "PATCH" && url.pathname === "/api/wieland/campaign/sms-template") {
+    if (!nccConfig.campaignId) { sendJson(res, 400, { error: "Campaign ID not configured." }); return; }
+    let body;
+    try { body = await readJson(req); } catch {
+      sendJson(res, 400, { error: "Invalid JSON." }); return;
+    }
+    const smsTemplateId = String(body.smsTemplateId || "").trim();
+    const result = await nccFetch(
+      nccConfig,
+      `/campaign/${encodeURIComponent(nccConfig.campaignId)}`,
+      "PATCH",
+      { smsTemplateId: smsTemplateId || null }
+    );
+    if (result.ok) {
+      sendJson(res, 200, { ok: true, campaign: result.data, smsTemplateId: smsTemplateId || null });
+    } else {
+      sendJson(res, result.status, { error: "NCC API error", details: result.data });
+    }
+    return;
+  }
+
   // ── Campaign status ──────────────────────────────────────────────────────
   if (req.method === "GET" && url.pathname === "/api/wieland/campaign/status") {
     if (!nccConfig.campaignId) { sendJson(res, 400, { error: "Campaign ID not configured." }); return; }
