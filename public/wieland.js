@@ -1096,11 +1096,11 @@ async function renderSmsTemplateSelector(campaign = {}) {
       })
     ].join("");
     container.innerHTML = `
-      <div style="display:grid;gap:10px;">
-        <select id="campaignSmsTemplateSelect" class="w-input">${options}</select>
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <div class="w-template-control">
+        <select id="campaignSmsTemplateSelect" class="w-input w-template-select">${options}</select>
+        <div class="w-template-actions">
           <button class="w-btn w-btn-secondary w-btn-sm" id="campaignSmsTemplateSave" type="button">Save template</button>
-          <span id="campaignSmsTemplateStatus" style="color:var(--muted);font-size:0.85rem;">Current: ${escHtml(currentId || "none")}</span>
+          <span id="campaignSmsTemplateStatus" class="w-template-status">Current: ${escHtml(currentId || "none")}</span>
         </div>
       </div>
     `;

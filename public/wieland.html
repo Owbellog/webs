@@ -433,6 +433,37 @@
       .w-info-row-label { color: var(--muted); font-weight: 600; }
       .w-info-row-value { font-weight: 700; color: var(--text); }
 
+      .w-template-control {
+        display: grid;
+        gap: 10px;
+        min-width: 0;
+      }
+
+      .w-template-select {
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+        box-sizing: border-box;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .w-template-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        min-width: 0;
+      }
+
+      .w-template-status {
+        color: var(--muted);
+        font-size: 0.85rem;
+        min-width: 0;
+        max-width: 100%;
+        overflow-wrap: anywhere;
+      }
+
       .w-slots-bar {
         height: 8px;
         background: var(--line-soft);
