@@ -1,6 +1,7 @@
 "use strict";
 
 const params = new URLSearchParams(window.location.search);
+const appBase = new URL(".", window.location.href);
 const token = params.get("token") || "";
 const initialDomain = params.get("domain") || "astonvilla.thrio.io";
 
@@ -19,7 +20,8 @@ const resultLog = document.getElementById("resultLog");
 domainInput.value = initialDomain;
 
 function buildApi(path) {
-  const url = new URL(path, window.location.href);
+  const cleanPath = path.startsWith("/") ? path.slice(1) : path;
+  const url = new URL(cleanPath, appBase);
   url.searchParams.set("token", token);
   url.searchParams.set("domain", domainInput.value.trim() || initialDomain);
   return url.toString();
@@ -36,7 +38,8 @@ async function request(path, options = {}) {
   try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
   if (!response.ok) {
     const details = data.details ? ` ${JSON.stringify(data.details)}` : "";
-    throw new Error(`${data.error || "Request failed."}${details}`);
+    const raw = data.raw ? ` ${String(data.raw).slice(0, 300)}` : "";
+    throw new Error(`[${response.status}] ${data.error || "Request failed."}${details}${raw}`);
   }
   return data;
 }
