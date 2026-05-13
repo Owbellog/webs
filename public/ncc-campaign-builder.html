@@ -166,6 +166,10 @@
     }
     .step.ok { color: var(--ok); border-color: #bbf7d0; background: #f0fdf4; }
     .step.err { color: var(--err); border-color: #fecaca; background: #fff1f2; }
+    .login-panel {
+      max-width: 560px;
+      margin: 0 auto;
+    }
     @media (max-width: 860px) {
       .shell { padding: 18px; }
       .grid, .form-grid { grid-template-columns: 1fr; }
@@ -181,10 +185,32 @@
         <h1>NCC Campaign Builder</h1>
         <div class="subtitle">Create a campaign, configure phone routing, workflow and business hours.</div>
       </div>
-      <div id="sessionBadge" class="badge">Validating admin…</div>
+      <div id="sessionBadge" class="badge">Sign in required</div>
     </header>
 
-    <div class="grid">
+    <form class="panel login-panel" id="loginForm">
+      <h2 class="section-title">Sign in</h2>
+      <div class="form-grid">
+        <div class="field full">
+          <label for="loginDomain">Domain</label>
+          <input id="loginDomain" name="domain" placeholder="astonvilla.thrio.io" autocomplete="organization" />
+        </div>
+        <div class="field full">
+          <label for="loginUsername">Username</label>
+          <input id="loginUsername" name="username" placeholder="name@company.com" autocomplete="username" />
+        </div>
+        <div class="field full">
+          <label for="loginPassword">Password</label>
+          <input id="loginPassword" name="password" type="password" autocomplete="current-password" />
+        </div>
+      </div>
+      <div class="actions">
+        <button id="loginBtn" type="submit">Sign in</button>
+      </div>
+      <div class="hint">Only users with an Administrator profile can use this page.</div>
+    </form>
+
+    <div class="grid hidden" id="builderGrid">
       <form class="panel" id="builderForm">
         <h2 class="section-title">Campaign setup</h2>
         <div class="form-grid">
@@ -258,6 +284,7 @@
         <div class="actions">
           <button id="submitBtn" type="submit">Create NCC campaign</button>
           <button class="secondary" id="reloadNumbersBtn" type="button">Reload inbound numbers</button>
+          <button class="secondary" id="logoutBtn" type="button">Sign out</button>
         </div>
       </form>
 

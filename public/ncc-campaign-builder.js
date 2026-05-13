@@ -2,10 +2,17 @@
 
 const params = new URLSearchParams(window.location.search);
 const appBase = new URL(".", window.location.href);
-const token = params.get("token") || "";
+const STORAGE_KEY = "ncc_campaign_builder_session";
 const initialDomain = params.get("domain") || "astonvilla.thrio.io";
+let currentToken = params.get("token") || "";
 
 const sessionBadge = document.getElementById("sessionBadge");
+const loginForm = document.getElementById("loginForm");
+const loginDomain = document.getElementById("loginDomain");
+const loginUsername = document.getElementById("loginUsername");
+const loginPassword = document.getElementById("loginPassword");
+const loginBtn = document.getElementById("loginBtn");
+const builderGrid = document.getElementById("builderGrid");
 const form = document.getElementById("builderForm");
 const domainInput = document.getElementById("domain");
 const campaignType = document.getElementById("campaignType");
@@ -14,10 +21,23 @@ const outboundField = document.getElementById("outboundField");
 const inboundAddress = document.getElementById("inboundAddress");
 const submitBtn = document.getElementById("submitBtn");
 const reloadNumbersBtn = document.getElementById("reloadNumbersBtn");
+const logoutBtn = document.getElementById("logoutBtn");
 const stepList = document.getElementById("stepList");
 const resultLog = document.getElementById("resultLog");
 
 domainInput.value = initialDomain;
+loginDomain.value = initialDomain;
+
+try {
+  const saved = JSON.parse(window.sessionStorage.getItem(STORAGE_KEY) || "{}");
+  if (!currentToken && saved.token) currentToken = saved.token;
+  if (saved.domain && !params.get("domain")) {
+    domainInput.value = saved.domain;
+    loginDomain.value = saved.domain;
+  }
+} catch {
+  window.sessionStorage.removeItem(STORAGE_KEY);
+}
 
 function decodeJwt(tokenValue) {
   try {
@@ -32,15 +52,15 @@ function decodeJwt(tokenValue) {
 }
 
 function tokenSummary() {
-  const payload = decodeJwt(token);
-  const preview = token
-    ? `${token.slice(0, 36)}...${token.slice(-18)}`
+  const payload = decodeJwt(currentToken);
+  const preview = currentToken
+    ? `${currentToken.slice(0, 36)}...${currentToken.slice(-18)}`
     : "";
   if (!payload) return { validJwt: false };
   const now = Math.floor(Date.now() / 1000);
   return {
     validJwt: true,
-    length: token.length,
+    length: currentToken.length,
     preview,
     username: payload.username || payload.sub || "",
     userId: payload.userId || "",
@@ -53,7 +73,7 @@ function tokenSummary() {
 function buildApi(path) {
   const cleanPath = path.startsWith("/") ? path.slice(1) : path;
   const url = new URL(cleanPath, appBase);
-  url.searchParams.set("token", token);
+  url.searchParams.set("token", currentToken);
   url.searchParams.set("domain", domainInput.value.trim() || initialDomain);
   return url.toString();
 }
@@ -116,10 +136,11 @@ function getPhoneLabel(item) {
 }
 
 async function validateSession() {
-  if (!token) {
-    setBadge("err", "Missing token");
-    form.querySelectorAll("input,select,textarea,button").forEach((el) => { el.disabled = true; });
-    showLog("Open this widget with ?token=<NCC token>&domain=astonvilla.thrio.io");
+  if (!currentToken) {
+    setBadge("", "Sign in required");
+    loginForm.classList.remove("hidden");
+    builderGrid.classList.add("hidden");
+    showLog("Sign in to start.");
     return;
   }
   const summary = tokenSummary();
@@ -133,12 +154,50 @@ async function validateSession() {
     showLog({ message: "Validating NCC session with URL token.", token: tokenSummary() });
     const data = await request("/api/ncc-builder/session");
     setBadge("ok", `${data.user?.name || "Admin"} · ${data.profile?.name || "Administrator"}`);
+    loginForm.classList.add("hidden");
+    builderGrid.classList.remove("hidden");
     showLog({ session: data });
     await loadInboundNumbers();
   } catch (error) {
     setBadge("err", "Not authorized");
+    loginForm.classList.remove("hidden");
+    builderGrid.classList.add("hidden");
     submitBtn.disabled = true;
     showLog(error.message);
+  }
+}
+
+async function login(event) {
+  event.preventDefault();
+  loginBtn.disabled = true;
+  loginBtn.textContent = "Signing in…";
+  setBadge("", "Signing in…");
+  showLog("Signing in with NCC credentials…");
+  try {
+    const data = await request("/api/ncc-builder/login", {
+      method: "POST",
+      body: JSON.stringify({
+        domain: loginDomain.value.trim() || initialDomain,
+        username: loginUsername.value.trim(),
+        password: loginPassword.value
+      })
+    });
+    currentToken = data.token || "";
+    domainInput.value = loginDomain.value.trim() || initialDomain;
+    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ token: currentToken, domain: domainInput.value }));
+    loginPassword.value = "";
+    submitBtn.disabled = false;
+    setBadge("ok", `${data.user?.name || "Admin"} · ${data.profile?.name || "Administrator"}`);
+    loginForm.classList.add("hidden");
+    builderGrid.classList.remove("hidden");
+    showLog({ login: data });
+    await loadInboundNumbers();
+  } catch (error) {
+    setBadge("err", "Login failed");
+    showLog(error.message);
+  } finally {
+    loginBtn.disabled = false;
+    loginBtn.textContent = "Sign in";
   }
 }
 
@@ -170,7 +229,7 @@ function updateTypeUi() {
 function readForm() {
   const campaignName = document.getElementById("campaignName").value.trim();
   return {
-    token,
+    token: currentToken,
     domain: domainInput.value.trim() || initialDomain,
     campaignName,
     campaignType: campaignType.value,
@@ -210,6 +269,15 @@ form.addEventListener("submit", async (event) => {
 
 campaignType.addEventListener("change", updateTypeUi);
 reloadNumbersBtn.addEventListener("click", loadInboundNumbers);
+loginForm.addEventListener("submit", login);
+logoutBtn.addEventListener("click", () => {
+  currentToken = "";
+  window.sessionStorage.removeItem(STORAGE_KEY);
+  setBadge("", "Sign in required");
+  builderGrid.classList.add("hidden");
+  loginForm.classList.remove("hidden");
+  showLog("Signed out.");
+});
 domainInput.addEventListener("change", validateSession);
 
 updateTypeUi();

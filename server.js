@@ -7252,6 +7252,20 @@ function nccId(item, ...extraKeys) {
   return "";
 }
 
+function extractNccToken(data) {
+  if (!data) return "";
+  if (typeof data === "string") return data.trim().replace(/^"|"$/g, "");
+  return String(
+    data.token
+    || data.access_token
+    || data.accessToken
+    || data.jwt
+    || data.authorization
+    || data.Authorization
+    || ""
+  ).trim();
+}
+
 async function resolveThrioDataConfig(campaignId) {
   if (campaignId) {
     const campaigns = await readCampaigns();
@@ -7405,6 +7419,72 @@ async function handleThrioData(req, res, url) {
 // ──────────────────────────────────────────────────────────────────────────
 
 async function handleNccCampaignBuilder(req, res, url) {
+  if (req.method === "POST" && url.pathname === "/api/ncc-builder/login") {
+    let body;
+    try { body = await readJson(req); } catch { sendJson(res, 400, { error: "Invalid JSON." }); return; }
+    const username = String(body.username || "").trim();
+    const password = String(body.password || "");
+    const domain = String(body.domain || "astonvilla.thrio.io").trim();
+    if (!username || !password) {
+      sendJson(res, 400, { error: "Username and password are required." });
+      return;
+    }
+    const config = {
+      token: "",
+      domain,
+      baseUrl: buildNccBuilderBaseUrl(domain),
+      headers: { "Content-Type": "application/json" }
+    };
+    try {
+      const basic = Buffer.from(`${username}:${password}`, "utf8").toString("base64");
+      const tokenResponse = await fetch("https://login.thrio.com/provider/token-with-authorities", {
+        method: "GET",
+        headers: { "Content-Type": "application/json", Authorization: `Basic ${basic}` }
+      });
+      const tokenText = await tokenResponse.text();
+      let tokenData;
+      try { tokenData = tokenText ? JSON.parse(tokenText) : {}; } catch { tokenData = tokenText; }
+      if (!tokenResponse.ok) {
+        sendJson(res, tokenResponse.status, { error: "Failed to get NCC token.", details: tokenData });
+        return;
+      }
+      const providerToken = extractNccToken(tokenData);
+      if (!providerToken) {
+        sendJson(res, 502, { error: "Login provider did not return a token.", details: tokenData });
+        return;
+      }
+
+      config.token = providerToken;
+      const loginResponse = await nccBuilderFetch(config, "/login", "POST", {}, "/users/api");
+      if (!loginResponse.ok) {
+        sendJson(res, loginResponse.status, { error: "Failed to login to NCC users API.", details: loginResponse.data });
+        return;
+      }
+      const sessionToken = extractNccToken(loginResponse.data) || providerToken;
+      config.token = sessionToken;
+      const validation = await validateNccBuilderAdmin(config);
+      sendJson(res, 200, {
+        ok: true,
+        token: sessionToken,
+        tokenInfo: summarizeNccBuilderToken(sessionToken),
+        user: {
+          id: validation.session.userId || validation.session._id || "",
+          name: validation.session.name || "",
+          username: validation.session.username || "",
+          userProfileId: validation.session.userProfileId || ""
+        },
+        profile: {
+          id: validation.adminProfile?._id || validation.adminProfile?.userprofileId || "",
+          name: profileDisplayName(validation.adminProfile),
+          label: validation.adminProfile?.label || ""
+        }
+      });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message, details: error.details });
+    }
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/ncc-builder/session") {
     const config = getNccBuilderAuth(req, url);
     try {
