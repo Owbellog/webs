@@ -6967,11 +6967,20 @@ function getNccBuilderAuth(req, url, body = {}) {
   };
 }
 
+function nccBuilderAuthHeaders(config, bearer = false) {
+  const token = String(config.token || "").trim();
+  const authorization = bearer && token && !/^Bearer\s+/i.test(token) ? `Bearer ${token}` : token;
+  return { Authorization: authorization, "Content-Type": "application/json" };
+}
+
 async function nccBuilderFetch(config, pathName, method = "GET", body = null, apiRoot = "/data/api/types") {
   const target = `${config.baseUrl}${apiRoot}${pathName}`;
-  const opts = { method, headers: config.headers };
+  const opts = { method, headers: nccBuilderAuthHeaders(config) };
   if (body !== null && method !== "GET") opts.body = JSON.stringify(body);
-  const upstream = await fetch(target, opts);
+  let upstream = await fetch(target, opts);
+  if ((upstream.status === 401 || upstream.status === 403) && config.token && !/^Bearer\s+/i.test(config.token)) {
+    upstream = await fetch(target, { ...opts, headers: nccBuilderAuthHeaders(config, true) });
+  }
   const text = await upstream.text();
   let data;
   try { data = text ? JSON.parse(text) : {}; } catch { data = text; }
