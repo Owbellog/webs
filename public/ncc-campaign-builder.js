@@ -19,6 +19,7 @@ const domainLabel = document.getElementById("domainLabel");
 const campaignType = document.getElementById("campaignType");
 const inboundField = document.getElementById("inboundField");
 const outboundField = document.getElementById("outboundField");
+const inboundOnlyFields = Array.from(document.querySelectorAll(".inbound-only"));
 const inboundAddress = document.getElementById("inboundAddress");
 const submitBtn = document.getElementById("submitBtn");
 const prevStepBtn = document.getElementById("prevStepBtn");
@@ -246,6 +247,7 @@ function updateTypeUi() {
   const inbound = campaignType.value === "inbound";
   inboundField.classList.toggle("hidden", !inbound);
   outboundField.classList.toggle("hidden", inbound);
+  inboundOnlyFields.forEach((field) => field.classList.toggle("hidden", !inbound));
 }
 
 function readForm() {
@@ -257,6 +259,9 @@ function readForm() {
     campaignType: campaignType.value,
     inboundAddress: inboundAddress.value,
     outboundCallerId: document.getElementById("outboundCallerId").value.trim(),
+    queueName: document.getElementById("queueName").value.trim() || `${campaignName} queue`,
+    queueAssignmentType: document.getElementById("queueAssignmentType").value,
+    queueBlended: document.getElementById("queueBlended").checked,
     workflowName: document.getElementById("workflowName").value.trim() || `${campaignName} workflow`,
     scheduleName: document.getElementById("scheduleName").value.trim() || `${campaignName} schedule`,
     businessEventName: document.getElementById("businessEventName").value.trim() || `${campaignName} schedule`,
@@ -289,12 +294,18 @@ function showReview() {
     campaignName: data.campaignName,
     campaignType: data.campaignType,
     phone: data.campaignType === "inbound" ? data.inboundAddress : data.outboundCallerId,
+    queue: data.campaignType === "inbound" ? {
+      name: data.queueName,
+      assignmentType: data.queueAssignmentType,
+      blended: data.queueBlended
+    } : "not used for outbound",
     workflowName: data.workflowName,
     scheduleName: data.scheduleName,
     businessEventName: data.businessEventName,
     hours: `${data.startTime} - ${data.endTime}`,
     days: data.days,
-    messagesNote: "Messages will appear in the log until the NCC message endpoint is configured."
+    outOfHoursPrompt: data.outOfHoursMessage ? "will be created and added to OUT OF HOURS" : "missing",
+    inHoursMessage: data.inHoursMessage ? "captured in log" : "empty"
   };
   reviewLog.textContent = JSON.stringify(review, null, 2);
 }
@@ -303,8 +314,10 @@ function validateStep() {
   const data = readForm();
   if (activeStep === 0 && !data.campaignName) return "Campaign name is required.";
   if (activeStep === 1 && data.campaignType === "inbound" && !data.inboundAddress) return "Select an inbound phone.";
+  if (activeStep === 1 && data.campaignType === "inbound" && !data.queueName) return "Queue name is required.";
   if (activeStep === 1 && data.campaignType === "outbound" && !data.outboundCallerId) return "Enter an outbound caller ID.";
   if (activeStep === 3 && (!data.startTime || !data.endTime || !data.days.length)) return "Select business hours and at least one day.";
+  if (activeStep === 4 && !data.outOfHoursMessage) return "Out-of-hours message is required to create the prompt.";
   return "";
 }
 

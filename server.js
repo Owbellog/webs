@@ -7180,7 +7180,58 @@ function buildNccBuilderBusinessEventPayload(name) {
   };
 }
 
-function buildNccBuilderWorkflowBusinessHoursPatch(workflow, businessEventName) {
+function buildNccBuilderQueuePayload(name, assignmentType, blended) {
+  return {
+    objectType: "queue",
+    blended: Boolean(blended),
+    playAnnouncementPromptId: null,
+    assignmentType: String(assignmentType || "fifo_across_all_queues"),
+    pushQueueDataInRealTime: true,
+    hideInCompanyDirectory: false,
+    businessEventId: null,
+    disableSkills: false,
+    noAnswerStatusAsAvailable: false,
+    socialSLA: 3600,
+    slaCalculation: null,
+    emailSLA: 3600,
+    realtimeAssignment: true,
+    lifo: false,
+    name,
+    voiceSLA: 30,
+    chatSLA: 30,
+    smsSLA: null,
+    localizations: { name: { en: { language: "en", value: name } } },
+    _adjustedByData: true,
+    _showDialPad: false,
+    _working: true,
+    selected: true,
+    _selected: true
+  };
+}
+
+function buildNccBuilderPromptPayload(name, content) {
+  const text = String(content || "").trim();
+  return {
+    esVoiceName: "es-ES-Standard-A",
+    localizations: {
+      name: { en: { language: "en", value: name } },
+      content: {
+        en: { language: "en", value: text },
+        fr: { language: "fr", value: text },
+        es: { language: "es", value: text },
+        pt: { language: "pt", value: text }
+      }
+    },
+    content: text,
+    objectType: "prompt",
+    enVoiceName: "en-US-Neural2-A",
+    frVoiceName: "fr-CA-Neural2-A",
+    name,
+    ptVoiceName: "pt-PT-Standard-A"
+  };
+}
+
+function buildNccBuilderWorkflowBusinessHoursPatch(workflow, businessEventName, prompt = null, queue = null) {
   const states = workflow?.states && typeof workflow.states === "object" ? JSON.parse(JSON.stringify(workflow.states)) : {};
   const endStateId = Object.keys(states).find((id) => id !== "start-state") || nccBuilderId();
   if (!states[endStateId]) {
@@ -7199,28 +7250,51 @@ function buildNccBuilderWorkflowBusinessHoursPatch(workflow, businessEventName) 
   }
   const outStateId = nccBuilderId();
   const transitionId = `refId${Date.now()}`;
+  const queueTransitionId = `refId${Date.now() + 1}`;
   states["start-state"] = {
     ...(states["start-state"] || {}),
     category: "Begin",
     campaignStateId: "start-state",
-    actions: [{
-      icon: "icon-transition",
-      name: "Transition",
-      description: "Transition to another state",
-      properties: {
-        description: null,
-        condition: {
-          conditionType: "AND",
-          scriptId: null,
-          customCondition: null,
-          expressions: [{ leftExpression: `workitem.businessEvents. ${businessEventName}`, operator: "==", rightExpression: "FALSE" }]
+    actions: [
+      {
+        icon: "icon-transition",
+        name: "Transition",
+        description: "Transition to another state",
+        properties: {
+          description: null,
+          condition: {
+            conditionType: "AND",
+            scriptId: null,
+            customCondition: null,
+            expressions: [{ leftExpression: `workitem.businessEvents. ${businessEventName}`, operator: "==", rightExpression: "FALSE" }]
+          },
+          stateId: outStateId
         },
-        stateId: outStateId
+        type: "transition",
+        _selected: true,
+        transitionId
       },
-      type: "transition",
-      _selected: true,
-      transitionId
-    }],
+      ...(queue?.id ? [{
+        icon: "icon-queue",
+        name: "Queue",
+        description: "Queue",
+        properties: {
+          description: null,
+          condition: {
+            conditionType: "AND",
+            scriptId: null,
+            customCondition: null,
+            expressions: [{ leftExpression: `workitem.businessEvents. ${businessEventName}`, operator: "==", rightExpression: "TRUE" }]
+          },
+          queueId: queue.id,
+          expansions: { queueId: { name: queue.name || "" } },
+          _working: false
+        },
+        type: "queue",
+        _selected: false,
+        id: queueTransitionId
+      }] : [])
+    ],
     transitions: [{ name: "Transition", id: transitionId }],
     objectType: "campaignstate",
     key: "start-state",
@@ -7229,17 +7303,48 @@ function buildNccBuilderWorkflowBusinessHoursPatch(workflow, businessEventName) 
     name: "Begin State",
     location: "0 0"
   };
+  const outTransitionId = `refId${Date.now() + 2}`;
   states[outStateId] = {
     category: "Standard",
     objectType: "campaignstate",
     campaignStateId: outStateId,
     name: "OUT OF HOURS",
     description: "Newly Created State",
-    actions: [],
+    actions: [
+      ...(prompt?.id ? [{
+        icon: "icon-playprompt",
+        name: "Play Prompt",
+        description: "",
+        properties: {
+          description: null,
+          condition: { conditionType: "NONE", scriptId: null, customCondition: null, expressions: [{ leftExpression: null, operator: "==", rightExpression: null }] },
+          loop: 1,
+          promptId: prompt.id,
+          expansions: { promptId: { name: prompt.name || "" } },
+          _working: false
+        },
+        type: "playprompt",
+        _selected: true
+      }] : []),
+      {
+        name: "Transition",
+        description: "Transition to another state",
+        properties: {
+          condition: { conditionType: "NONE", expressions: [{ operator: "==" }] },
+          stateId: endStateId,
+          description: "Transition to another state"
+        },
+        type: "transition",
+        _selected: false,
+        transitionId: outTransitionId,
+        icon: "icon-transition",
+        id: `refId${Date.now() + 3}`
+      }
+    ],
     _id: outStateId,
     key: outStateId,
     location: "248.1302490234375 91.43226623535156",
-    transitions: []
+    transitions: [{ name: "Transition", id: outTransitionId }]
   };
   return { states };
 }
@@ -7587,6 +7692,18 @@ async function handleNccCampaignBuilder(req, res, url) {
       addStep("configureCampaignPhone", phonePatchResult, phonePatchPayload);
       if (!phonePatchResult.ok) { sendJson(res, phonePatchResult.status, { error: "Failed to configure campaign phone.", steps }); return; }
 
+      let queueId = "";
+      let queueName = "";
+      if (campaignType === "inbound") {
+        queueName = String(body.queueName || `${campaignName} queue`).trim();
+        const queuePayload = buildNccBuilderQueuePayload(queueName, body.queueAssignmentType, body.queueBlended !== false);
+        const queueResult = await nccBuilderFetch(config, "/queue", "POST", queuePayload);
+        addStep("createInboundQueue", queueResult, queuePayload);
+        if (!queueResult.ok) { sendJson(res, queueResult.status, { error: "Failed to create inbound queue.", steps }); return; }
+        queueId = nccId(queueResult.data, "queueId");
+        if (!queueId) { sendJson(res, 502, { error: "NCC did not return queue id.", steps }); return; }
+      }
+
       const workflowPayload = buildNccBuilderWorkflowPayload(workflowName);
       const workflowResult = await nccBuilderFetch(config, "/workflow", "POST", workflowPayload);
       addStep("createWorkflow", workflowResult, workflowPayload);
@@ -7618,7 +7735,25 @@ async function handleNccCampaignBuilder(req, res, url) {
         if (!relationResult.ok) { sendJson(res, relationResult.status, { error: "Failed to attach time event to business event.", steps }); return; }
       }
 
-      const workflowPatchPayload = buildNccBuilderWorkflowBusinessHoursPatch(workflowResult.data, businessEventName);
+      let promptId = "";
+      let promptName = "";
+      const outOfHoursMessage = String(body.outOfHoursMessage || "").trim();
+      if (outOfHoursMessage) {
+        promptName = String(body.outOfHoursPromptName || `${campaignName} out of hours`).trim();
+        const promptPayload = buildNccBuilderPromptPayload(promptName, outOfHoursMessage);
+        const promptResult = await nccBuilderFetch(config, "/prompt", "POST", promptPayload);
+        addStep("createOutOfHoursPrompt", promptResult, promptPayload);
+        if (!promptResult.ok) { sendJson(res, promptResult.status, { error: "Failed to create out-of-hours prompt.", steps }); return; }
+        promptId = nccId(promptResult.data, "promptId");
+        if (!promptId) { sendJson(res, 502, { error: "NCC did not return prompt id.", steps }); return; }
+      }
+
+      const workflowPatchPayload = buildNccBuilderWorkflowBusinessHoursPatch(
+        workflowResult.data,
+        businessEventName,
+        promptId ? { id: promptId, name: promptName } : null,
+        queueId ? { id: queueId, name: queueName } : null
+      );
       const workflowPatchResult = await nccBuilderFetch(config, `/workflow/${encodeURIComponent(workflowId)}`, "PATCH", workflowPatchPayload);
       addStep("patchWorkflowBusinessHours", workflowPatchResult, workflowPatchPayload);
       if (!workflowPatchResult.ok) { sendJson(res, workflowPatchResult.status, { error: "Failed to patch workflow business hours.", steps }); return; }
@@ -7627,12 +7762,14 @@ async function handleNccCampaignBuilder(req, res, url) {
         ok: true,
         campaignId,
         workflowId,
+        queueId,
         businesseventId,
         timeeventId,
+        promptId,
         messages: {
           inHours: String(body.inHoursMessage || "").trim(),
-          outOfHours: String(body.outOfHoursMessage || "").trim(),
-          note: "Messages were captured by the widget but not sent because no NCC message endpoint/payload was provided."
+          outOfHours: outOfHoursMessage,
+          note: outOfHoursMessage ? "Out-of-hours prompt was created and added to the workflow." : "No out-of-hours prompt was created because the message was empty."
         },
         steps
       });

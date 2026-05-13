@@ -281,6 +281,27 @@
               <label for="outboundCallerId">Outbound caller ID</label>
               <input id="outboundCallerId" name="outboundCallerId" placeholder="+12342342341" />
             </div>
+            <div class="field inbound-only">
+              <label for="queueName">Queue name</label>
+              <input id="queueName" name="queueName" placeholder="queuetest" />
+              <div class="hint">Inbound campaigns create a queue and route in-hours traffic to it.</div>
+            </div>
+            <div class="field inbound-only">
+              <label for="queueAssignmentType">Agent assignment</label>
+              <select id="queueAssignmentType" name="queueAssignmentType">
+                <option value="fifo_across_all_queues">First In First Out Across All Queues</option>
+                <option value="fifo_by_status">First In First Out by Status</option>
+                <option value="fifo_per_queue">First In First Out Per Queue</option>
+                <option value="lifo_across_all_queues">Last In First Out Across All Queues</option>
+                <option value="lifo_by_status">Last In First Out by Status</option>
+                <option value="lifo_per_queue">Last In First Out Per Queue</option>
+              </select>
+            </div>
+            <div class="field inbound-only">
+              <label>Blended queue</label>
+              <label class="check"><input id="queueBlended" name="queueBlended" type="checkbox" checked /> Enable blended queue</label>
+              <div class="hint">Use blended when agents will also handle outbound or another channel.</div>
+            </div>
           </div>
         </section>
 
@@ -332,7 +353,7 @@
 
         <section class="wizard-step" data-step="4">
           <h3 class="section-title">5. Messages</h3>
-          <div class="hint" style="margin-bottom:16px;">Capture the in-hours and out-of-hours messages. They are shown in the execution log until the NCC message endpoint is provided.</div>
+          <div class="hint" style="margin-bottom:16px;">The out-of-hours message creates a prompt and adds it to the OUT OF HOURS state in the workflow. The in-hours message is captured in the log for now.</div>
           <div class="form-grid">
             <div class="field full">
               <label for="inHoursMessage">In-hours message</label>
