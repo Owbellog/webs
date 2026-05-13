@@ -7059,15 +7059,24 @@ async function validateNccBuilderAdmin(config) {
   };
 }
 
-function buildNccBuilderCampaignPayload(name) {
+function buildNccBuilderCampaignPayload(name, addresses = []) {
   const payload = buildThrioCampaignPayload(name, "", null);
   delete payload.addresses;
+  if (Array.isArray(addresses) && addresses.length) payload.addresses = addresses;
   payload.workflowId = null;
   payload.callerId = "";
   payload.autoDispositionId = null;
   payload.useForSMS = false;
   payload.localizations = { name: { en: { language: "en", value: name } } };
   return payload;
+}
+
+function normalizeNccInboundAddress(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const digits = raw.replace(/[^\d]/g, "");
+  if (digits.length >= 10) return digits;
+  return raw;
 }
 
 function buildNccBuilderWorkflowPayload(name) {
@@ -7710,7 +7719,13 @@ async function handleNccCampaignBuilder(req, res, url) {
       if (!campaignName) { sendJson(res, 400, { error: "Campaign name is required." }); return; }
       if (!workflowName) { sendJson(res, 400, { error: "Workflow name is required." }); return; }
 
-      const campaignPayload = buildNccBuilderCampaignPayload(campaignName);
+      let selectedAddress = "";
+      if (campaignType === "inbound") {
+        selectedAddress = normalizeNccInboundAddress(body.inboundAddress);
+        if (!selectedAddress) { sendJson(res, 400, { error: "Inbound address is required.", steps }); return; }
+      }
+
+      const campaignPayload = buildNccBuilderCampaignPayload(campaignName, selectedAddress ? [selectedAddress] : []);
       const campaignResult = await nccBuilderFetch(config, "/campaign", "POST", campaignPayload);
       addStep("createCampaign", campaignResult, campaignPayload);
       if (!campaignResult.ok) { sendJson(res, campaignResult.status, { error: "Failed to create campaign.", steps }); return; }
@@ -7719,8 +7734,6 @@ async function handleNccCampaignBuilder(req, res, url) {
 
       let phonePatchPayload = null;
       if (campaignType === "inbound") {
-        const selectedAddress = String(body.inboundAddress || "").trim();
-        if (!selectedAddress) { sendJson(res, 400, { error: "Inbound address is required.", steps }); return; }
         phonePatchPayload = { addresses: [selectedAddress] };
       } else {
         const callerId = String(body.outboundCallerId || "").trim();
