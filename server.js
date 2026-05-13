@@ -6973,6 +6973,21 @@ function nccBuilderAuthHeaders(config, bearer = false) {
   return { Authorization: authorization, "Content-Type": "application/json" };
 }
 
+function summarizeNccBuilderToken(token) {
+  const payload = decodeJwtPayload(token);
+  if (!payload) return { validJwt: false };
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    validJwt: true,
+    username: payload.username || payload.sub || "",
+    tenantId: payload.tenantId || "",
+    userId: payload.userId || "",
+    issuedAt: payload.iat ? new Date(payload.iat * 1000).toISOString() : "",
+    expiresAt: payload.exp ? new Date(payload.exp * 1000).toISOString() : "",
+    expired: payload.exp ? now >= payload.exp : false
+  };
+}
+
 async function nccBuilderFetch(config, pathName, method = "GET", body = null, apiRoot = "/data/api/types") {
   const target = `${config.baseUrl}${apiRoot}${pathName}`;
   const opts = { method, headers: nccBuilderAuthHeaders(config) };
@@ -7020,7 +7035,7 @@ async function validateNccBuilderAdmin(config) {
   if (!sessionResult.ok) {
     const error = new Error("Unable to validate NCC session.");
     error.status = sessionResult.status;
-    error.details = sessionResult.data;
+    error.details = { response: sessionResult.data, token: summarizeNccBuilderToken(config.token) };
     throw error;
   }
   const profilesResult = await nccBuilderFetch(config, "/userprofile");

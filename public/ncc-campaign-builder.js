@@ -19,6 +19,32 @@ const resultLog = document.getElementById("resultLog");
 
 domainInput.value = initialDomain;
 
+function decodeJwt(tokenValue) {
+  try {
+    const parts = String(tokenValue || "").split(".");
+    if (parts.length < 2) return null;
+    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
+    return JSON.parse(atob(padded));
+  } catch {
+    return null;
+  }
+}
+
+function tokenSummary() {
+  const payload = decodeJwt(token);
+  if (!payload) return { validJwt: false };
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    validJwt: true,
+    username: payload.username || payload.sub || "",
+    userId: payload.userId || "",
+    tenantId: payload.tenantId || "",
+    expiresAt: payload.exp ? new Date(payload.exp * 1000).toLocaleString() : "",
+    expired: payload.exp ? now >= payload.exp : false
+  };
+}
+
 function buildApi(path) {
   const cleanPath = path.startsWith("/") ? path.slice(1) : path;
   const url = new URL(cleanPath, appBase);
@@ -89,6 +115,13 @@ async function validateSession() {
     setBadge("err", "Missing token");
     form.querySelectorAll("input,select,textarea,button").forEach((el) => { el.disabled = true; });
     showLog("Open this widget with ?token=<NCC token>&domain=astonvilla.thrio.io");
+    return;
+  }
+  const summary = tokenSummary();
+  if (summary.validJwt && summary.expired) {
+    setBadge("err", "Token expired");
+    submitBtn.disabled = true;
+    showLog({ error: "The token in the URL is expired.", token: summary });
     return;
   }
   try {
