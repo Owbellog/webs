@@ -170,6 +170,40 @@
       max-width: 560px;
       margin: 0 auto;
     }
+    .stepper {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 18px;
+    }
+    .step-pill {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 8px 11px;
+      color: var(--muted);
+      font-size: 0.8rem;
+      font-weight: 800;
+      background: #fff;
+    }
+    .step-pill.active {
+      color: #fff;
+      background: var(--brand);
+      border-color: var(--brand);
+    }
+    .wizard-step { display: none; }
+    .wizard-step.active { display: block; }
+    .domain-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+      padding: 9px 12px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      font-weight: 800;
+      background: #fff;
+    }
     @media (max-width: 860px) {
       .shell { padding: 18px; }
       .grid, .form-grid { grid-template-columns: 1fr; }
@@ -190,11 +224,8 @@
 
     <form class="panel login-panel" id="loginForm">
       <h2 class="section-title">Sign in</h2>
+      <div class="hint" style="margin-bottom:16px;">Enter your NCC credentials. The page will validate your session and use the domain assigned to your user.</div>
       <div class="form-grid">
-        <div class="field full">
-          <label for="loginDomain">Domain</label>
-          <input id="loginDomain" name="domain" placeholder="astonvilla.thrio.io" autocomplete="organization" />
-        </div>
         <div class="field full">
           <label for="loginUsername">Username</label>
           <input id="loginUsername" name="username" placeholder="name@company.com" autocomplete="username" />
@@ -213,76 +244,117 @@
     <div class="grid hidden" id="builderGrid">
       <form class="panel" id="builderForm">
         <h2 class="section-title">Campaign setup</h2>
-        <div class="form-grid">
-          <div class="field">
-            <label for="domain">Domain</label>
-            <input id="domain" name="domain" placeholder="astonvilla.thrio.io" />
-          </div>
-          <div class="field">
-            <label for="campaignName">Campaign name</label>
-            <input id="campaignName" name="campaignName" placeholder="campanatest" required />
-          </div>
-          <div class="field">
-            <label for="campaignType">Campaign type</label>
-            <select id="campaignType" name="campaignType">
-              <option value="inbound">Inbound</option>
-              <option value="outbound">Outbound</option>
-            </select>
-          </div>
-          <div class="field" id="inboundField">
-            <label for="inboundAddress">Inbound phone</label>
-            <select id="inboundAddress" name="inboundAddress">
-              <option value="">Loading numbers…</option>
-            </select>
-          </div>
-          <div class="field hidden" id="outboundField">
-            <label for="outboundCallerId">Outbound caller ID</label>
-            <input id="outboundCallerId" name="outboundCallerId" placeholder="+12342342341" />
-          </div>
-          <div class="field">
-            <label for="workflowName">Workflow name</label>
-            <input id="workflowName" name="workflowName" placeholder="testprueba" />
-          </div>
-          <div class="field">
-            <label for="scheduleName">Schedule name</label>
-            <input id="scheduleName" name="scheduleName" placeholder="horariotest1" />
-          </div>
-          <div class="field">
-            <label for="businessEventName">Business event name</label>
-            <input id="businessEventName" name="businessEventName" placeholder="horariotest" />
-          </div>
-          <div class="field">
-            <label for="startTime">Start</label>
-            <input id="startTime" name="startTime" type="time" value="08:00" />
-          </div>
-          <div class="field">
-            <label for="endTime">End</label>
-            <input id="endTime" name="endTime" type="time" value="19:00" />
-          </div>
-          <div class="field full">
-            <label>Days</label>
-            <div class="days" id="days">
-              <label class="check"><input type="checkbox" value="Monday" checked /> Monday</label>
-              <label class="check"><input type="checkbox" value="Tuesday" checked /> Tuesday</label>
-              <label class="check"><input type="checkbox" value="Wednesday" checked /> Wednesday</label>
-              <label class="check"><input type="checkbox" value="Thursday" checked /> Thursday</label>
-              <label class="check"><input type="checkbox" value="Friday" checked /> Friday</label>
-              <label class="check"><input type="checkbox" value="Saturday" /> Saturday</label>
-              <label class="check"><input type="checkbox" value="Sunday" /> Sunday</label>
+        <div class="domain-chip">Domain: <span id="domainLabel">Detected after login</span></div>
+        <input id="domain" name="domain" type="hidden" />
+
+        <div class="stepper" id="wizardStepper"></div>
+
+        <section class="wizard-step active" data-step="0">
+          <h3 class="section-title">1. Campaign</h3>
+          <div class="hint" style="margin-bottom:16px;">Create the base campaign. In this step only the campaign name and type are required.</div>
+          <div class="form-grid">
+            <div class="field">
+              <label for="campaignName">Campaign name</label>
+              <input id="campaignName" name="campaignName" placeholder="campanatest" required />
+            </div>
+            <div class="field">
+              <label for="campaignType">Campaign type</label>
+              <select id="campaignType" name="campaignType">
+                <option value="inbound">Inbound</option>
+                <option value="outbound">Outbound</option>
+              </select>
             </div>
           </div>
-          <div class="field full">
-            <label for="inHoursMessage">In-hours message</label>
-            <textarea id="inHoursMessage" name="inHoursMessage" placeholder="Message to use during business hours"></textarea>
-            <div class="hint">Stored in the result log for now. NCC message endpoint/payload is still needed to write it.</div>
+        </section>
+
+        <section class="wizard-step" data-step="1">
+          <h3 class="section-title">2. Phone routing</h3>
+          <div class="hint" style="margin-bottom:16px;">For inbound campaigns select an unused NCC number. For outbound campaigns enter the caller ID that will be patched into the campaign.</div>
+          <div class="form-grid">
+            <div class="field" id="inboundField">
+              <label for="inboundAddress">Inbound phone</label>
+              <select id="inboundAddress" name="inboundAddress">
+                <option value="">Loading numbers…</option>
+              </select>
+            </div>
+            <div class="field hidden" id="outboundField">
+              <label for="outboundCallerId">Outbound caller ID</label>
+              <input id="outboundCallerId" name="outboundCallerId" placeholder="+12342342341" />
+            </div>
           </div>
-          <div class="field full">
-            <label for="outOfHoursMessage">Out-of-hours message</label>
-            <textarea id="outOfHoursMessage" name="outOfHoursMessage" placeholder="Message to use out of hours"></textarea>
+        </section>
+
+        <section class="wizard-step" data-step="2">
+          <h3 class="section-title">3. Workflow</h3>
+          <div class="hint" style="margin-bottom:16px;">This creates a workflow and later attaches it to the campaign. The workflow will include the out-of-hours routing condition.</div>
+          <div class="form-grid">
+            <div class="field">
+              <label for="workflowName">Workflow name</label>
+              <input id="workflowName" name="workflowName" placeholder="testprueba" />
+            </div>
           </div>
-        </div>
+        </section>
+
+        <section class="wizard-step" data-step="3">
+          <h3 class="section-title">4. Business hours</h3>
+          <div class="hint" style="margin-bottom:16px;">Define the schedule and business event. The workflow condition will use this business event name.</div>
+          <div class="form-grid">
+            <div class="field">
+              <label for="scheduleName">Schedule name</label>
+              <input id="scheduleName" name="scheduleName" placeholder="horariotest1" />
+            </div>
+            <div class="field">
+              <label for="businessEventName">Business event name</label>
+              <input id="businessEventName" name="businessEventName" placeholder="horariotest" />
+            </div>
+            <div class="field">
+              <label for="startTime">Start</label>
+              <input id="startTime" name="startTime" type="time" value="08:00" />
+            </div>
+            <div class="field">
+              <label for="endTime">End</label>
+              <input id="endTime" name="endTime" type="time" value="19:00" />
+            </div>
+            <div class="field full">
+              <label>Days</label>
+              <div class="days" id="days">
+                <label class="check"><input type="checkbox" value="Monday" checked /> Monday</label>
+                <label class="check"><input type="checkbox" value="Tuesday" checked /> Tuesday</label>
+                <label class="check"><input type="checkbox" value="Wednesday" checked /> Wednesday</label>
+                <label class="check"><input type="checkbox" value="Thursday" checked /> Thursday</label>
+                <label class="check"><input type="checkbox" value="Friday" checked /> Friday</label>
+                <label class="check"><input type="checkbox" value="Saturday" /> Saturday</label>
+                <label class="check"><input type="checkbox" value="Sunday" /> Sunday</label>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="wizard-step" data-step="4">
+          <h3 class="section-title">5. Messages</h3>
+          <div class="hint" style="margin-bottom:16px;">Capture the in-hours and out-of-hours messages. They are shown in the execution log until the NCC message endpoint is provided.</div>
+          <div class="form-grid">
+            <div class="field full">
+              <label for="inHoursMessage">In-hours message</label>
+              <textarea id="inHoursMessage" name="inHoursMessage" placeholder="Message to use during business hours"></textarea>
+            </div>
+            <div class="field full">
+              <label for="outOfHoursMessage">Out-of-hours message</label>
+              <textarea id="outOfHoursMessage" name="outOfHoursMessage" placeholder="Message to use out of hours"></textarea>
+            </div>
+          </div>
+        </section>
+
+        <section class="wizard-step" data-step="5">
+          <h3 class="section-title">6. Review and create</h3>
+          <div class="hint">Review the values, then create the campaign, phone routing, workflow and business hours in NCC.</div>
+          <pre class="log" id="reviewLog" style="min-height:160px;margin-top:16px;"></pre>
+        </section>
+
         <div class="actions">
-          <button id="submitBtn" type="submit">Create NCC campaign</button>
+          <button class="secondary" id="prevStepBtn" type="button">Back</button>
+          <button id="nextStepBtn" type="button">Next</button>
+          <button id="submitBtn" class="hidden" type="submit">Create NCC campaign</button>
           <button class="secondary" id="reloadNumbersBtn" type="button">Reload inbound numbers</button>
           <button class="secondary" id="logoutBtn" type="button">Sign out</button>
         </div>

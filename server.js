@@ -7266,6 +7266,25 @@ function extractNccToken(data) {
   ).trim();
 }
 
+function extractNccDomain(data, token = "") {
+  const payload = decodeJwtPayload(token) || {};
+  const candidates = [
+    data?.domain,
+    data?.location,
+    data?.baseUrl,
+    data?.url,
+    data?.user?.location,
+    data?.session?.location,
+    payload.domain,
+    payload.location
+  ];
+  for (const candidate of candidates) {
+    const clean = sanitizeDomain(candidate);
+    if (clean) return clean;
+  }
+  return "";
+}
+
 async function resolveThrioDataConfig(campaignId) {
   if (campaignId) {
     const campaigns = await readCampaigns();
@@ -7424,17 +7443,10 @@ async function handleNccCampaignBuilder(req, res, url) {
     try { body = await readJson(req); } catch { sendJson(res, 400, { error: "Invalid JSON." }); return; }
     const username = String(body.username || "").trim();
     const password = String(body.password || "");
-    const domain = String(body.domain || "astonvilla.thrio.io").trim();
     if (!username || !password) {
       sendJson(res, 400, { error: "Username and password are required." });
       return;
     }
-    const config = {
-      token: "",
-      domain,
-      baseUrl: buildNccBuilderBaseUrl(domain),
-      headers: { "Content-Type": "application/json" }
-    };
     try {
       const basic = Buffer.from(`${username}:${password}`, "utf8").toString("base64");
       const tokenResponse = await fetch("https://login.thrio.com/provider/token-with-authorities", {
@@ -7454,6 +7466,13 @@ async function handleNccCampaignBuilder(req, res, url) {
         return;
       }
 
+      const domain = extractNccDomain(tokenData, providerToken) || "astonvilla.thrio.io";
+      const config = {
+        token: providerToken,
+        domain,
+        baseUrl: buildNccBuilderBaseUrl(domain),
+        headers: { "Content-Type": "application/json" }
+      };
       config.token = providerToken;
       const loginResponse = await nccBuilderFetch(config, "/login", "POST", {}, "/users/api");
       if (!loginResponse.ok) {
@@ -7461,11 +7480,16 @@ async function handleNccCampaignBuilder(req, res, url) {
         return;
       }
       const sessionToken = extractNccToken(loginResponse.data) || providerToken;
+      config.domain = extractNccDomain(loginResponse.data, sessionToken) || domain;
+      config.baseUrl = buildNccBuilderBaseUrl(config.domain);
       config.token = sessionToken;
       const validation = await validateNccBuilderAdmin(config);
+      config.domain = extractNccDomain(validation.session, sessionToken) || config.domain;
+      config.baseUrl = buildNccBuilderBaseUrl(config.domain);
       sendJson(res, 200, {
         ok: true,
         token: sessionToken,
+        domain: config.domain,
         tokenInfo: summarizeNccBuilderToken(sessionToken),
         user: {
           id: validation.session.userId || validation.session._id || "",
@@ -7489,8 +7513,10 @@ async function handleNccCampaignBuilder(req, res, url) {
     const config = getNccBuilderAuth(req, url);
     try {
       const validation = await validateNccBuilderAdmin(config);
+      const detectedDomain = extractNccDomain(validation.session, config.token) || config.domain;
       sendJson(res, 200, {
         ok: true,
+        domain: detectedDomain,
         user: {
           id: validation.session.userId || validation.session._id || "",
           name: validation.session.name || "",

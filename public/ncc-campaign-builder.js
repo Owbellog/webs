@@ -3,38 +3,52 @@
 const params = new URLSearchParams(window.location.search);
 const appBase = new URL(".", window.location.href);
 const STORAGE_KEY = "ncc_campaign_builder_session";
-const initialDomain = params.get("domain") || "astonvilla.thrio.io";
+const initialDomain = params.get("domain") || "";
 let currentToken = params.get("token") || "";
+let currentDomain = initialDomain;
 
 const sessionBadge = document.getElementById("sessionBadge");
 const loginForm = document.getElementById("loginForm");
-const loginDomain = document.getElementById("loginDomain");
 const loginUsername = document.getElementById("loginUsername");
 const loginPassword = document.getElementById("loginPassword");
 const loginBtn = document.getElementById("loginBtn");
 const builderGrid = document.getElementById("builderGrid");
 const form = document.getElementById("builderForm");
 const domainInput = document.getElementById("domain");
+const domainLabel = document.getElementById("domainLabel");
 const campaignType = document.getElementById("campaignType");
 const inboundField = document.getElementById("inboundField");
 const outboundField = document.getElementById("outboundField");
 const inboundAddress = document.getElementById("inboundAddress");
 const submitBtn = document.getElementById("submitBtn");
+const prevStepBtn = document.getElementById("prevStepBtn");
+const nextStepBtn = document.getElementById("nextStepBtn");
 const reloadNumbersBtn = document.getElementById("reloadNumbersBtn");
 const logoutBtn = document.getElementById("logoutBtn");
+const wizardStepper = document.getElementById("wizardStepper");
+const reviewLog = document.getElementById("reviewLog");
 const stepList = document.getElementById("stepList");
 const resultLog = document.getElementById("resultLog");
 
-domainInput.value = initialDomain;
-loginDomain.value = initialDomain;
+const wizardSteps = [
+  "Campaign",
+  "Phone",
+  "Workflow",
+  "Hours",
+  "Messages",
+  "Review"
+];
+let activeStep = 0;
+
+domainInput.value = currentDomain;
+domainLabel.textContent = currentDomain || "Detected after login";
 
 try {
   const saved = JSON.parse(window.sessionStorage.getItem(STORAGE_KEY) || "{}");
   if (!currentToken && saved.token) currentToken = saved.token;
-  if (saved.domain && !params.get("domain")) {
-    domainInput.value = saved.domain;
-    loginDomain.value = saved.domain;
-  }
+  if (saved.domain && !params.get("domain")) currentDomain = saved.domain;
+  domainInput.value = currentDomain;
+  domainLabel.textContent = currentDomain || "Detected after login";
 } catch {
   window.sessionStorage.removeItem(STORAGE_KEY);
 }
@@ -74,7 +88,9 @@ function buildApi(path) {
   const cleanPath = path.startsWith("/") ? path.slice(1) : path;
   const url = new URL(cleanPath, appBase);
   url.searchParams.set("token", currentToken);
-  url.searchParams.set("domain", domainInput.value.trim() || initialDomain);
+  if (currentDomain || domainInput.value.trim()) {
+    url.searchParams.set("domain", currentDomain || domainInput.value.trim());
+  }
   return url.toString();
 }
 
@@ -153,6 +169,7 @@ async function validateSession() {
   try {
     showLog({ message: "Validating NCC session with URL token.", token: tokenSummary() });
     const data = await request("/api/ncc-builder/session");
+    setDetectedDomain(data.domain || currentDomain);
     setBadge("ok", `${data.user?.name || "Admin"} · ${data.profile?.name || "Administrator"}`);
     loginForm.classList.add("hidden");
     builderGrid.classList.remove("hidden");
@@ -177,14 +194,13 @@ async function login(event) {
     const data = await request("/api/ncc-builder/login", {
       method: "POST",
       body: JSON.stringify({
-        domain: loginDomain.value.trim() || initialDomain,
         username: loginUsername.value.trim(),
         password: loginPassword.value
       })
     });
     currentToken = data.token || "";
-    domainInput.value = loginDomain.value.trim() || initialDomain;
-    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ token: currentToken, domain: domainInput.value }));
+    setDetectedDomain(data.domain || "");
+    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ token: currentToken, domain: currentDomain }));
     loginPassword.value = "";
     submitBtn.disabled = false;
     setBadge("ok", `${data.user?.name || "Admin"} · ${data.profile?.name || "Administrator"}`);
@@ -199,6 +215,12 @@ async function login(event) {
     loginBtn.disabled = false;
     loginBtn.textContent = "Sign in";
   }
+}
+
+function setDetectedDomain(domain) {
+  currentDomain = String(domain || currentDomain || "").trim();
+  domainInput.value = currentDomain;
+  domainLabel.textContent = currentDomain || "Detected after login";
 }
 
 async function loadInboundNumbers() {
@@ -230,7 +252,7 @@ function readForm() {
   const campaignName = document.getElementById("campaignName").value.trim();
   return {
     token: currentToken,
-    domain: domainInput.value.trim() || initialDomain,
+    domain: currentDomain || domainInput.value.trim(),
     campaignName,
     campaignType: campaignType.value,
     inboundAddress: inboundAddress.value,
@@ -244,6 +266,46 @@ function readForm() {
     inHoursMessage: document.getElementById("inHoursMessage").value.trim(),
     outOfHoursMessage: document.getElementById("outOfHoursMessage").value.trim()
   };
+}
+
+function renderWizard() {
+  wizardStepper.innerHTML = wizardSteps.map((name, index) => (
+    `<div class="step-pill ${index === activeStep ? "active" : ""}">${index + 1}. ${escapeHtml(name)}</div>`
+  )).join("");
+  document.querySelectorAll(".wizard-step").forEach((section) => {
+    section.classList.toggle("active", Number(section.dataset.step) === activeStep);
+  });
+  prevStepBtn.disabled = activeStep === 0;
+  nextStepBtn.classList.toggle("hidden", activeStep === wizardSteps.length - 1);
+  submitBtn.classList.toggle("hidden", activeStep !== wizardSteps.length - 1);
+  reloadNumbersBtn.classList.toggle("hidden", activeStep !== 1);
+  if (activeStep === wizardSteps.length - 1) showReview();
+}
+
+function showReview() {
+  const data = readForm();
+  const review = {
+    domain: data.domain || "not detected",
+    campaignName: data.campaignName,
+    campaignType: data.campaignType,
+    phone: data.campaignType === "inbound" ? data.inboundAddress : data.outboundCallerId,
+    workflowName: data.workflowName,
+    scheduleName: data.scheduleName,
+    businessEventName: data.businessEventName,
+    hours: `${data.startTime} - ${data.endTime}`,
+    days: data.days,
+    messagesNote: "Messages will appear in the log until the NCC message endpoint is configured."
+  };
+  reviewLog.textContent = JSON.stringify(review, null, 2);
+}
+
+function validateStep() {
+  const data = readForm();
+  if (activeStep === 0 && !data.campaignName) return "Campaign name is required.";
+  if (activeStep === 1 && data.campaignType === "inbound" && !data.inboundAddress) return "Select an inbound phone.";
+  if (activeStep === 1 && data.campaignType === "outbound" && !data.outboundCallerId) return "Enter an outbound caller ID.";
+  if (activeStep === 3 && (!data.startTime || !data.endTime || !data.days.length)) return "Select business hours and at least one day.";
+  return "";
 }
 
 form.addEventListener("submit", async (event) => {
@@ -272,13 +334,29 @@ reloadNumbersBtn.addEventListener("click", loadInboundNumbers);
 loginForm.addEventListener("submit", login);
 logoutBtn.addEventListener("click", () => {
   currentToken = "";
+  currentDomain = "";
   window.sessionStorage.removeItem(STORAGE_KEY);
   setBadge("", "Sign in required");
   builderGrid.classList.add("hidden");
   loginForm.classList.remove("hidden");
+  domainInput.value = "";
+  domainLabel.textContent = "Detected after login";
   showLog("Signed out.");
 });
-domainInput.addEventListener("change", validateSession);
+prevStepBtn.addEventListener("click", () => {
+  activeStep = Math.max(0, activeStep - 1);
+  renderWizard();
+});
+nextStepBtn.addEventListener("click", () => {
+  const error = validateStep();
+  if (error) {
+    showLog(error);
+    return;
+  }
+  activeStep = Math.min(wizardSteps.length - 1, activeStep + 1);
+  renderWizard();
+});
 
 updateTypeUi();
+renderWizard();
 validateSession();
