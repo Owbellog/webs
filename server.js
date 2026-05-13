@@ -7249,7 +7249,8 @@ function buildNccBuilderWorkflowBusinessHoursPatch(workflow, businessEventName, 
     };
   }
   const outStateId = nccBuilderId();
-  const transitionId = `refId${Date.now()}`;
+  const queueStateId = queue?.id ? nccBuilderId() : "";
+  const outHoursTransitionId = `refId${Date.now()}`;
   const queueTransitionId = `refId${Date.now() + 1}`;
   states["start-state"] = {
     ...(states["start-state"] || {}),
@@ -7271,31 +7272,29 @@ function buildNccBuilderWorkflowBusinessHoursPatch(workflow, businessEventName, 
           stateId: outStateId
         },
         type: "transition",
-        _selected: true,
-        transitionId
+        _selected: false,
+        transitionId: outHoursTransitionId,
+        id: `refId${Date.now() + 4}`
       },
       ...(queue?.id ? [{
-        icon: "icon-queue",
-        name: "Queue",
-        description: "Queue",
+        name: "Transition",
+        description: "Transition to another state",
         properties: {
-          description: null,
-          condition: {
-            conditionType: "AND",
-            scriptId: null,
-            customCondition: null,
-            expressions: [{ leftExpression: `workitem.businessEvents. ${businessEventName}`, operator: "==", rightExpression: "TRUE" }]
-          },
-          queueId: queue.id,
-          expansions: { queueId: { name: queue.name || "" } },
-          _working: false
+          description: "Entra en cola",
+          condition: { conditionType: "NONE", expressions: [{ operator: "==" }] },
+          stateId: queueStateId
         },
-        type: "queue",
-        _selected: false,
-        id: queueTransitionId
+        type: "transition",
+        _selected: true,
+        transitionId: queueTransitionId,
+        icon: "icon-transition",
+        id: `refId${Date.now() + 5}`
       }] : [])
     ],
-    transitions: [{ name: "Transition", id: transitionId }],
+    transitions: [
+      { name: "Transition", id: outHoursTransitionId },
+      ...(queue?.id ? [{ name: "Transition", id: queueTransitionId }] : [])
+    ],
     objectType: "campaignstate",
     key: "start-state",
     _id: "start-state",
@@ -7346,6 +7345,46 @@ function buildNccBuilderWorkflowBusinessHoursPatch(workflow, businessEventName, 
     location: "248.1302490234375 91.43226623535156",
     transitions: [{ name: "Transition", id: outTransitionId }]
   };
+  if (queue?.id) {
+    states[queueStateId] = {
+      category: "Standard",
+      objectType: "campaignstate",
+      campaignStateId: queueStateId,
+      name: "Queue",
+      description: "Newly Created State",
+      actions: [{
+        icon: "icon-enterqueues",
+        name: "Enter Queue",
+        description: "",
+        properties: {
+          description: null,
+          priority: "5",
+          queues: [queue.id],
+          ringAllEnabled: false,
+          stickyEnabled: false,
+          stickyUserType: "5",
+          stickyUserAddress: null,
+          stickyUserExtension: null,
+          stickyUserId: null,
+          stickyUserIdFromExpression: null,
+          stickyDurationToWaitSeconds: 0,
+          condition: {
+            conditionType: "NONE",
+            scriptId: null,
+            customCondition: null,
+            expressions: [{ leftExpression: null, operator: "==", rightExpression: null }]
+          },
+          expansions: { queueId: { [queue.id]: queue.name || "" } }
+        },
+        type: "enterqueue",
+        _selected: true
+      }],
+      _id: queueStateId,
+      key: queueStateId,
+      location: "456.276123046875 -237.38018798828125",
+      transitions: []
+    };
+  }
   return { states };
 }
 
