@@ -33,10 +33,15 @@ function decodeJwt(tokenValue) {
 
 function tokenSummary() {
   const payload = decodeJwt(token);
+  const preview = token
+    ? `${token.slice(0, 36)}...${token.slice(-18)}`
+    : "";
   if (!payload) return { validJwt: false };
   const now = Math.floor(Date.now() / 1000);
   return {
     validJwt: true,
+    length: token.length,
+    preview,
     username: payload.username || payload.sub || "",
     userId: payload.userId || "",
     tenantId: payload.tenantId || "",
@@ -125,6 +130,7 @@ async function validateSession() {
     return;
   }
   try {
+    showLog({ message: "Validating NCC session with URL token.", token: tokenSummary() });
     const data = await request("/api/ncc-builder/session");
     setBadge("ok", `${data.user?.name || "Admin"} · ${data.profile?.name || "Administrator"}`);
     showLog({ session: data });
