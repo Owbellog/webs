@@ -834,6 +834,11 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (url.pathname.startsWith("/api/ncc-builder/")) {
+    await handleNccCampaignBuilder(req, res, url);
+    return;
+  }
+
   if (req.method !== "GET" && req.method !== "HEAD") {
     sendJson(res, 405, { error: "Method not allowed" });
     return;
@@ -6942,6 +6947,287 @@ function buildThrioPstnNumberPayload(number, description, provider) {
   };
 }
 
+function nccBuilderId() {
+  return crypto.randomBytes(12).toString("hex");
+}
+
+function buildNccBuilderBaseUrl(domain) {
+  const clean = sanitizeDomain(domain || "astonvilla.thrio.io") || "astonvilla.thrio.io";
+  return `https://${clean}`;
+}
+
+function getNccBuilderAuth(req, url, body = {}) {
+  const token = String(body.token || url.searchParams.get("token") || req.headers["x-ncc-token"] || "").trim();
+  const domain = String(body.domain || url.searchParams.get("domain") || "astonvilla.thrio.io").trim();
+  return {
+    token,
+    domain,
+    baseUrl: buildNccBuilderBaseUrl(domain),
+    headers: { Authorization: token, "Content-Type": "application/json" }
+  };
+}
+
+async function nccBuilderFetch(config, pathName, method = "GET", body = null, apiRoot = "/data/api/types") {
+  const target = `${config.baseUrl}${apiRoot}${pathName}`;
+  const opts = { method, headers: config.headers };
+  if (body !== null && method !== "GET") opts.body = JSON.stringify(body);
+  const upstream = await fetch(target, opts);
+  const text = await upstream.text();
+  let data;
+  try { data = text ? JSON.parse(text) : {}; } catch { data = text; }
+  return { ok: upstream.ok, status: upstream.status, data, endpoint: `${apiRoot}${pathName}` };
+}
+
+function nccObjectList(data) {
+  return Array.isArray(data) ? data : (data?.objects || data?.results || data?.data || []);
+}
+
+function profileDisplayName(profile) {
+  return profile?.localizations?.name?.en?.value || profile?.name || profile?.label || "";
+}
+
+function isAdministratorProfile(session, profiles) {
+  const profileId = String(session?.userProfileId || session?.userProfile?._id || session?.userProfile?.userprofileId || "").trim();
+  const profile = nccObjectList(profiles).find((item) => {
+    const ids = [item?._id, item?.userprofileId, item?.id].map((v) => String(v || ""));
+    return ids.includes(profileId);
+  }) || session?.userProfile || null;
+  const label = String(profile?.label || "").toUpperCase();
+  const name = profileDisplayName(profile).toLowerCase();
+  return {
+    ok: label.includes("ADMIN") || name.includes("administrator") || name.includes("administrador"),
+    profile,
+    profileId
+  };
+}
+
+async function validateNccBuilderAdmin(config) {
+  if (!config.token) {
+    const error = new Error("Token is required.");
+    error.status = 400;
+    throw error;
+  }
+  const sessionResult = await nccBuilderFetch(config, "/session", "GET", null, "/users/api");
+  if (!sessionResult.ok) {
+    const error = new Error("Unable to validate NCC session.");
+    error.status = sessionResult.status;
+    error.details = sessionResult.data;
+    throw error;
+  }
+  const profilesResult = await nccBuilderFetch(config, "/userprofile");
+  if (!profilesResult.ok) {
+    const error = new Error("Unable to load NCC user profiles.");
+    error.status = profilesResult.status;
+    error.details = profilesResult.data;
+    throw error;
+  }
+  const admin = isAdministratorProfile(sessionResult.data, profilesResult.data);
+  if (!admin.ok) {
+    const error = new Error("Only Administrator profiles can use this widget.");
+    error.status = 403;
+    error.details = { userProfileId: admin.profileId, profile: admin.profile };
+    throw error;
+  }
+  return {
+    session: sessionResult.data,
+    profiles: nccObjectList(profilesResult.data),
+    adminProfile: admin.profile
+  };
+}
+
+function buildNccBuilderCampaignPayload(name) {
+  const payload = buildThrioCampaignPayload(name, "", null);
+  delete payload.addresses;
+  payload.workflowId = null;
+  payload.callerId = "";
+  payload.autoDispositionId = null;
+  payload.useForSMS = false;
+  payload.localizations = { name: { en: { language: "en", value: name } } };
+  return payload;
+}
+
+function buildNccBuilderWorkflowPayload(name) {
+  const endStateId = nccBuilderId();
+  const transitionId = nccBuilderId();
+  return {
+    objectType: "workflow",
+    maxActions: null,
+    states: {
+      [endStateId]: {
+        category: "Standard",
+        campaignStateId: endStateId,
+        actions: [{
+          category: "Action",
+          title: "Terminate",
+          name: "Terminate",
+          type: "terminate",
+          description: "Terminate",
+          icon: "./assets/svg/icon-terminate",
+          svg: "",
+          color: "#FFFFFF",
+          fig: "Rectangle",
+          properties: { description: null, condition: { conditionType: "NONE", scriptId: null, customCondition: null, expressions: [{ leftExpression: null, operator: "==", rightExpression: null }] } }
+        }],
+        objectType: "campaignstate",
+        key: endStateId,
+        _id: endStateId,
+        description: "End State",
+        name: "End State",
+        location: "200 100"
+      },
+      "start-state": {
+        category: "Begin",
+        campaignStateId: "start-state",
+        actions: [{
+          category: "Action",
+          title: "Transition",
+          name: "Start",
+          type: "transition",
+          description: "Transition to another state",
+          icon: "./assets/svg/icon-transition",
+          svg: "",
+          color: "#FFFFFF",
+          fig: "Rectangle",
+          properties: { description: null, condition: { conditionType: "NONE", scriptId: null, customCondition: null, expressions: [{ leftExpression: null, operator: "==", rightExpression: null }] }, stateId: endStateId, name: "Start" }
+        }],
+        transitions: [{ name: "Start", id: transitionId }],
+        objectType: "campaignstate",
+        key: "start-state",
+        _id: "start-state",
+        description: "Begin State",
+        name: "Begin State",
+        location: "0 0"
+      }
+    },
+    finalWorkitemStateId: null,
+    finalUserStateId: null,
+    name,
+    localizations: { name: { en: { language: "en", value: name } } },
+    _adjustedByData: true,
+    _showDialPad: false,
+    _working: true,
+    selected: true,
+    _selected: true
+  };
+}
+
+function minutesFromTime(value, fallback) {
+  const raw = String(value || "");
+  const match = raw.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return fallback;
+  const hours = Math.max(0, Math.min(23, Number(match[1]) || 0));
+  const minutes = Math.max(0, Math.min(59, Number(match[2]) || 0));
+  return hours * 60 + minutes;
+}
+
+function buildNccBuilderTimeEventPayload(name, days, startTime, endTime) {
+  const now = Date.now();
+  return {
+    objectType: "timeevent",
+    timeEventType: "weekdays",
+    start: minutesFromTime(startTime, 480),
+    name,
+    dayOfTheMonth: null,
+    days: Array.isArray(days) && days.length ? days : ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+    timeInterval: null,
+    from: now,
+    end: minutesFromTime(endTime, 1140),
+    to: now,
+    day: null,
+    localizations: { name: { en: { language: "en", value: name } } },
+    _adjustedByData: true,
+    _showDialPad: false,
+    _working: true,
+    selected: true,
+    _selected: true
+  };
+}
+
+function buildNccBuilderBusinessEventPayload(name) {
+  return {
+    objectType: "businessevent",
+    name,
+    localizations: { name: { en: { language: "en", value: name } } },
+    _adjustedByData: true,
+    _showDialPad: false,
+    _working: true,
+    selected: true,
+    _selected: true
+  };
+}
+
+function buildNccBuilderWorkflowBusinessHoursPatch(workflow, businessEventName) {
+  const states = workflow?.states && typeof workflow.states === "object" ? JSON.parse(JSON.stringify(workflow.states)) : {};
+  const endStateId = Object.keys(states).find((id) => id !== "start-state") || nccBuilderId();
+  if (!states[endStateId]) {
+    states[endStateId] = {
+      category: "Standard",
+      campaignStateId: endStateId,
+      actions: [],
+      objectType: "campaignstate",
+      key: endStateId,
+      _id: endStateId,
+      description: "End State",
+      name: "End State",
+      location: "445.6146240234375 223.08331298828125",
+      transitions: []
+    };
+  }
+  const outStateId = nccBuilderId();
+  const transitionId = `refId${Date.now()}`;
+  states["start-state"] = {
+    ...(states["start-state"] || {}),
+    category: "Begin",
+    campaignStateId: "start-state",
+    actions: [{
+      icon: "icon-transition",
+      name: "Transition",
+      description: "Transition to another state",
+      properties: {
+        description: null,
+        condition: {
+          conditionType: "AND",
+          scriptId: null,
+          customCondition: null,
+          expressions: [{ leftExpression: `workitem.businessEvents. ${businessEventName}`, operator: "==", rightExpression: "FALSE" }]
+        },
+        stateId: outStateId
+      },
+      type: "transition",
+      _selected: true,
+      transitionId
+    }],
+    transitions: [{ name: "Transition", id: transitionId }],
+    objectType: "campaignstate",
+    key: "start-state",
+    _id: "start-state",
+    description: "Begin State",
+    name: "Begin State",
+    location: "0 0"
+  };
+  states[outStateId] = {
+    category: "Standard",
+    objectType: "campaignstate",
+    campaignStateId: outStateId,
+    name: "OUT OF HOURS",
+    description: "Newly Created State",
+    actions: [],
+    _id: outStateId,
+    key: outStateId,
+    location: "248.1302490234375 91.43226623535156",
+    transitions: []
+  };
+  return { states };
+}
+
+function nccId(item, ...extraKeys) {
+  for (const key of ["_id", "id", ...extraKeys]) {
+    const value = item?.[key];
+    if (value) return String(value);
+  }
+  return "";
+}
+
 async function resolveThrioDataConfig(campaignId) {
   if (campaignId) {
     const campaigns = await readCampaigns();
@@ -7091,6 +7377,142 @@ async function handleThrioData(req, res, url) {
   }
 
   sendJson(res, 404, { error: "Thrio data route not found." });
+}
+// ──────────────────────────────────────────────────────────────────────────
+
+async function handleNccCampaignBuilder(req, res, url) {
+  if (req.method === "GET" && url.pathname === "/api/ncc-builder/session") {
+    const config = getNccBuilderAuth(req, url);
+    try {
+      const validation = await validateNccBuilderAdmin(config);
+      sendJson(res, 200, {
+        ok: true,
+        user: {
+          id: validation.session.userId || validation.session._id || "",
+          name: validation.session.name || "",
+          username: validation.session.username || "",
+          userProfileId: validation.session.userProfileId || ""
+        },
+        profile: {
+          id: validation.adminProfile?._id || validation.adminProfile?.userprofileId || "",
+          name: profileDisplayName(validation.adminProfile),
+          label: validation.adminProfile?.label || ""
+        }
+      });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message, details: error.details });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/ncc-builder/pstn-unused") {
+    const config = getNccBuilderAuth(req, url);
+    try {
+      await validateNccBuilderAdmin(config);
+      const result = await nccBuilderFetch(config, "/pstnnumber/unused?filter=campaign:addresses");
+      sendJson(res, result.status, result.ok ? { objects: nccObjectList(result.data) } : { error: "NCC API error", details: result.data });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message, details: error.details });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/ncc-builder/create") {
+    let body;
+    try { body = await readJson(req); } catch { sendJson(res, 400, { error: "Invalid JSON." }); return; }
+    const config = getNccBuilderAuth(req, url, body);
+    const steps = [];
+    const addStep = (name, result, payload = null) => {
+      steps.push({ name, endpoint: result?.endpoint || "", status: result?.status || 0, ok: Boolean(result?.ok), payload, response: result?.data });
+    };
+    try {
+      await validateNccBuilderAdmin(config);
+
+      const campaignName = String(body.campaignName || "").trim();
+      const campaignType = String(body.campaignType || "inbound").trim();
+      const workflowName = String(body.workflowName || `${campaignName} workflow`).trim();
+      const scheduleName = String(body.scheduleName || `${campaignName} schedule`).trim();
+      const businessEventName = String(body.businessEventName || scheduleName).trim();
+      if (!campaignName) { sendJson(res, 400, { error: "Campaign name is required." }); return; }
+      if (!workflowName) { sendJson(res, 400, { error: "Workflow name is required." }); return; }
+
+      const campaignPayload = buildNccBuilderCampaignPayload(campaignName);
+      const campaignResult = await nccBuilderFetch(config, "/campaign", "POST", campaignPayload);
+      addStep("createCampaign", campaignResult, campaignPayload);
+      if (!campaignResult.ok) { sendJson(res, campaignResult.status, { error: "Failed to create campaign.", steps }); return; }
+      const campaignId = nccId(campaignResult.data, "campaignId");
+      if (!campaignId) { sendJson(res, 502, { error: "NCC did not return campaign id.", steps }); return; }
+
+      let phonePatchPayload = null;
+      if (campaignType === "inbound") {
+        const selectedAddress = String(body.inboundAddress || "").trim();
+        if (!selectedAddress) { sendJson(res, 400, { error: "Inbound address is required.", steps }); return; }
+        phonePatchPayload = { addresses: [selectedAddress] };
+      } else {
+        const callerId = String(body.outboundCallerId || "").trim();
+        if (!callerId) { sendJson(res, 400, { error: "Outbound caller ID is required.", steps }); return; }
+        phonePatchPayload = { callerId };
+      }
+      const phonePatchResult = await nccBuilderFetch(config, `/campaign/${encodeURIComponent(campaignId)}`, "PATCH", phonePatchPayload);
+      addStep("configureCampaignPhone", phonePatchResult, phonePatchPayload);
+      if (!phonePatchResult.ok) { sendJson(res, phonePatchResult.status, { error: "Failed to configure campaign phone.", steps }); return; }
+
+      const workflowPayload = buildNccBuilderWorkflowPayload(workflowName);
+      const workflowResult = await nccBuilderFetch(config, "/workflow", "POST", workflowPayload);
+      addStep("createWorkflow", workflowResult, workflowPayload);
+      if (!workflowResult.ok) { sendJson(res, workflowResult.status, { error: "Failed to create workflow.", steps }); return; }
+      const workflowId = nccId(workflowResult.data, "workflowId");
+      if (!workflowId) { sendJson(res, 502, { error: "NCC did not return workflow id.", steps }); return; }
+
+      const campaignWorkflowPatch = { workflowId };
+      const campaignWorkflowResult = await nccBuilderFetch(config, `/campaign/${encodeURIComponent(campaignId)}`, "PATCH", campaignWorkflowPatch);
+      addStep("attachWorkflowToCampaign", campaignWorkflowResult, campaignWorkflowPatch);
+      if (!campaignWorkflowResult.ok) { sendJson(res, campaignWorkflowResult.status, { error: "Failed to attach workflow to campaign.", steps }); return; }
+
+      const timeEventPayload = buildNccBuilderTimeEventPayload(scheduleName, body.days, body.startTime, body.endTime);
+      const timeEventResult = await nccBuilderFetch(config, "/timeevent", "POST", timeEventPayload);
+      addStep("createTimeEvent", timeEventResult, timeEventPayload);
+      if (!timeEventResult.ok) { sendJson(res, timeEventResult.status, { error: "Failed to create time event.", steps }); return; }
+      const timeeventId = nccId(timeEventResult.data, "timeeventId");
+
+      const businessEventPayload = buildNccBuilderBusinessEventPayload(businessEventName);
+      const businessEventResult = await nccBuilderFetch(config, "/businessevent", "POST", businessEventPayload);
+      addStep("createBusinessEvent", businessEventResult, businessEventPayload);
+      if (!businessEventResult.ok) { sendJson(res, businessEventResult.status, { error: "Failed to create business event.", steps }); return; }
+      const businesseventId = nccId(businessEventResult.data, "businesseventId");
+
+      if (businesseventId && timeeventId) {
+        const relationPayload = { businesseventId, timeeventId, _working: true };
+        const relationResult = await nccBuilderFetch(config, "/businesseventtimeevent", "POST", relationPayload);
+        addStep("attachTimeEventToBusinessEvent", relationResult, relationPayload);
+        if (!relationResult.ok) { sendJson(res, relationResult.status, { error: "Failed to attach time event to business event.", steps }); return; }
+      }
+
+      const workflowPatchPayload = buildNccBuilderWorkflowBusinessHoursPatch(workflowResult.data, businessEventName);
+      const workflowPatchResult = await nccBuilderFetch(config, `/workflow/${encodeURIComponent(workflowId)}`, "PATCH", workflowPatchPayload);
+      addStep("patchWorkflowBusinessHours", workflowPatchResult, workflowPatchPayload);
+      if (!workflowPatchResult.ok) { sendJson(res, workflowPatchResult.status, { error: "Failed to patch workflow business hours.", steps }); return; }
+
+      sendJson(res, 200, {
+        ok: true,
+        campaignId,
+        workflowId,
+        businesseventId,
+        timeeventId,
+        messages: {
+          inHours: String(body.inHoursMessage || "").trim(),
+          outOfHours: String(body.outOfHoursMessage || "").trim(),
+          note: "Messages were captured by the widget but not sent because no NCC message endpoint/payload was provided."
+        },
+        steps
+      });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message, details: error.details, steps });
+    }
+    return;
+  }
+
+  sendJson(res, 404, { error: "NCC campaign builder route not found." });
 }
 // ──────────────────────────────────────────────────────────────────────────
 

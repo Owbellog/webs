@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>NCC Campaign Builder</title>
+  <style>
+    :root {
+      --brand: #202a5a;
+      --line: #d5dbe8;
+      --muted: #667085;
+      --bg: #f7f5f0;
+      --ok: #166534;
+      --err: #991b1b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Manrope, Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: #171b2a;
+    }
+    .shell {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 28px;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      align-items: flex-start;
+      margin-bottom: 22px;
+    }
+    h1 {
+      margin: 0;
+      color: var(--brand);
+      font-size: 1.8rem;
+      letter-spacing: 0;
+    }
+    .subtitle { color: var(--muted); margin-top: 6px; }
+    .badge {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 8px 12px;
+      background: #fff;
+      color: var(--muted);
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .badge.ok { color: var(--ok); border-color: #bbf7d0; background: #f0fdf4; }
+    .badge.err { color: var(--err); border-color: #fecaca; background: #fff1f2; }
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+      gap: 18px;
+      align-items: start;
+    }
+    .panel {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 22px;
+      box-shadow: 0 14px 30px rgba(32, 42, 90, 0.06);
+    }
+    .section-title {
+      margin: 0 0 16px;
+      color: var(--brand);
+      font-size: 1.05rem;
+    }
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .field { min-width: 0; }
+    .field.full { grid-column: 1 / -1; }
+    label {
+      display: block;
+      margin-bottom: 7px;
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+    input, select, textarea {
+      width: 100%;
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 12px 13px;
+      font: inherit;
+      background: #fff;
+      color: #171b2a;
+    }
+    textarea { resize: vertical; min-height: 86px; }
+    .hint {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 0.82rem;
+      line-height: 1.35;
+    }
+    .days {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .check {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 10px;
+      color: var(--brand);
+      font-weight: 700;
+    }
+    .check input { width: auto; }
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 18px;
+    }
+    button {
+      border: 1px solid var(--brand);
+      border-radius: 9px;
+      padding: 12px 16px;
+      font: inherit;
+      font-weight: 800;
+      cursor: pointer;
+      color: #fff;
+      background: var(--brand);
+    }
+    button.secondary {
+      background: #fff;
+      color: var(--brand);
+      border-color: var(--line);
+    }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    .hidden { display: none !important; }
+    .log {
+      background: #0f172a;
+      color: #dbeafe;
+      border-radius: 10px;
+      padding: 14px;
+      min-height: 220px;
+      overflow: auto;
+      font-size: 0.8rem;
+      white-space: pre-wrap;
+    }
+    .step-list {
+      display: grid;
+      gap: 8px;
+      margin: 0 0 16px;
+    }
+    .step {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      color: var(--muted);
+      font-weight: 700;
+    }
+    .step.ok { color: var(--ok); border-color: #bbf7d0; background: #f0fdf4; }
+    .step.err { color: var(--err); border-color: #fecaca; background: #fff1f2; }
+    @media (max-width: 860px) {
+      .shell { padding: 18px; }
+      .grid, .form-grid { grid-template-columns: 1fr; }
+      header { display: grid; }
+      .days { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div>
+        <h1>NCC Campaign Builder</h1>
+        <div class="subtitle">Create a campaign, configure phone routing, workflow and business hours.</div>
+      </div>
+      <div id="sessionBadge" class="badge">Validating admin…</div>
+    </header>
+
+    <div class="grid">
+      <form class="panel" id="builderForm">
+        <h2 class="section-title">Campaign setup</h2>
+        <div class="form-grid">
+          <div class="field">
+            <label for="domain">Domain</label>
+            <input id="domain" name="domain" placeholder="astonvilla.thrio.io" />
+          </div>
+          <div class="field">
+            <label for="campaignName">Campaign name</label>
+            <input id="campaignName" name="campaignName" placeholder="campanatest" required />
+          </div>
+          <div class="field">
+            <label for="campaignType">Campaign type</label>
+            <select id="campaignType" name="campaignType">
+              <option value="inbound">Inbound</option>
+              <option value="outbound">Outbound</option>
+            </select>
+          </div>
+          <div class="field" id="inboundField">
+            <label for="inboundAddress">Inbound phone</label>
+            <select id="inboundAddress" name="inboundAddress">
+              <option value="">Loading numbers…</option>
+            </select>
+          </div>
+          <div class="field hidden" id="outboundField">
+            <label for="outboundCallerId">Outbound caller ID</label>
+            <input id="outboundCallerId" name="outboundCallerId" placeholder="+12342342341" />
+          </div>
+          <div class="field">
+            <label for="workflowName">Workflow name</label>
+            <input id="workflowName" name="workflowName" placeholder="testprueba" />
+          </div>
+          <div class="field">
+            <label for="scheduleName">Schedule name</label>
+            <input id="scheduleName" name="scheduleName" placeholder="horariotest1" />
+          </div>
+          <div class="field">
+            <label for="businessEventName">Business event name</label>
+            <input id="businessEventName" name="businessEventName" placeholder="horariotest" />
+          </div>
+          <div class="field">
+            <label for="startTime">Start</label>
+            <input id="startTime" name="startTime" type="time" value="08:00" />
+          </div>
+          <div class="field">
+            <label for="endTime">End</label>
+            <input id="endTime" name="endTime" type="time" value="19:00" />
+          </div>
+          <div class="field full">
+            <label>Days</label>
+            <div class="days" id="days">
+              <label class="check"><input type="checkbox" value="Monday" checked /> Monday</label>
+              <label class="check"><input type="checkbox" value="Tuesday" checked /> Tuesday</label>
+              <label class="check"><input type="checkbox" value="Wednesday" checked /> Wednesday</label>
+              <label class="check"><input type="checkbox" value="Thursday" checked /> Thursday</label>
+              <label class="check"><input type="checkbox" value="Friday" checked /> Friday</label>
+              <label class="check"><input type="checkbox" value="Saturday" /> Saturday</label>
+              <label class="check"><input type="checkbox" value="Sunday" /> Sunday</label>
+            </div>
+          </div>
+          <div class="field full">
+            <label for="inHoursMessage">In-hours message</label>
+            <textarea id="inHoursMessage" name="inHoursMessage" placeholder="Message to use during business hours"></textarea>
+            <div class="hint">Stored in the result log for now. NCC message endpoint/payload is still needed to write it.</div>
+          </div>
+          <div class="field full">
+            <label for="outOfHoursMessage">Out-of-hours message</label>
+            <textarea id="outOfHoursMessage" name="outOfHoursMessage" placeholder="Message to use out of hours"></textarea>
+          </div>
+        </div>
+        <div class="actions">
+          <button id="submitBtn" type="submit">Create NCC campaign</button>
+          <button class="secondary" id="reloadNumbersBtn" type="button">Reload inbound numbers</button>
+        </div>
+      </form>
+
+      <aside class="panel">
+        <h2 class="section-title">Execution</h2>
+        <div class="step-list" id="stepList"></div>
+        <pre class="log" id="resultLog">Waiting…</pre>
+      </aside>
+    </div>
+  </div>
+  <script src="./ncc-campaign-builder.js"></script>
+</body>
+</html>
