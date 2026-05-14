@@ -285,18 +285,14 @@ async function load() {
 
   renderLoading("Cargando configuración…");
 
-  // 1. Fetch campaign config
+  // 1. Fetch pulseforms config (dedicated endpoint — no token/kbIds required)
   let pf;
   try {
-    const params = new URLSearchParams({ campaign: campaignId });
-    if (phone) params.set("phone", phone);
-    if (customerId) params.set("customer_id", customerId);
-
-    const configData = await apiFetch(`/api/config?${params}`);
+    const configData = await apiFetch(`/api/pulseforms/config?campaign=${encodeURIComponent(campaignId)}`);
     if (!configData.configured) throw new Error(configData.error || "Campaign not configured.");
 
     pf = configData.campaign?.pulseforms;
-    if (!pf || pf.enabled === false) throw new Error("PulseForms is not enabled for this campaign.");
+    if (!pf) throw new Error("PulseForms is not enabled for this campaign.");
 
     state.config = pf;
 

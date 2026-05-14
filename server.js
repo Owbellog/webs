@@ -797,6 +797,11 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/pulseforms/config") {
+    await handlePulseFormsConfig(req, res, url);
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/pulseforms/query") {
     await handlePulseFormsQuery(req, res, url);
     return;
@@ -2797,6 +2802,31 @@ Return ONLY valid JSON: {"layouts":[{"id":"layout_1","name":"...","description":
     }
   } catch (error) {
     sendJson(res, 500, { error: `PulseForms layout generation failed: ${error.message}` });
+  }
+}
+
+async function handlePulseFormsConfig(req, res, url) {
+  try {
+    const campaignId = String(url.searchParams.get("campaign") || "").trim();
+    if (!campaignId) { sendJson(res, 400, { error: "Missing ?campaign= parameter." }); return; }
+
+    const campaigns = await getEffectiveCampaigns();
+    const config = campaigns.find((c) => c.id === campaignId);
+    if (!config) { sendJson(res, 404, { error: `Campaign "${campaignId}" not found.` }); return; }
+
+    const pf = config.pulseforms || {};
+    if (pf.enabled === false) { sendJson(res, 400, { error: "PulseForms is not enabled for this campaign." }); return; }
+
+    sendJson(res, 200, {
+      configured: true,
+      campaign: {
+        id: config.id,
+        name: config.name,
+        pulseforms: publicPulseFormsConfig(pf)
+      }
+    });
+  } catch (error) {
+    sendJson(res, 500, { configured: false, error: error.message });
   }
 }
 
