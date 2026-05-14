@@ -283,6 +283,25 @@
         }
         .pf-form.pf-form--2col .pf-field--full { grid-column: 1 / -1; }
       }
+
+      /* ── Layout sections ─────────────────────────────────────────────────── */
+      .pf-layout-mode-bar {
+        display: flex; align-items: center; gap: 8px;
+        padding: 6px 0 2px;
+      }
+
+      .pf-submit-wrap {
+        margin-top: 4px;
+      }
+
+      @media (min-width: 600px) {
+        .pf-layout-grid {
+          display: grid;
+          grid-template-columns: 1fr 340px;
+          gap: 12px;
+          align-items: start;
+        }
+      }
     </style>
   </head>
   <body>

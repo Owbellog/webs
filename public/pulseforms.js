@@ -101,36 +101,80 @@ function renderForm(pf, prefilled = false) {
   const formFields = pf.formFields || [];
   const mode = pf.mode || "query";
   const canSubmit = mode === "submit" || mode === "both";
-
   const modeLabelMap = { query: "Consulta", submit: "Envío", both: "Consulta y envío" };
   const modeLabel = modeLabelMap[mode] || mode;
-
-  const fieldsHtml = formFields.map((f) => renderFormField(f, prefilled && f.id in state.values)).join("");
-
+  const modeBadge = `<span class="pf-mode-badge pf-mode-badge--${esc(mode)}">${esc(modeLabel)}</span>`;
   const submitBtn = canSubmit
-    ? `<div class="pf-field pf-field--full">
-        <button type="submit" class="pf-submit-btn" id="pfSubmitBtn">Enviar información</button>
-       </div>`
+    ? `<button type="submit" class="pf-submit-btn" id="pfSubmitBtn">Enviar información</button>`
     : "";
 
-  const hasTwoCols = formFields.length >= 3;
+  const layout = pf.activeLayout;
 
-  pfBody.innerHTML = `
-    <div class="pf-card">
-      <div class="pf-card-head">
-        <h3>
-          <span class="pf-mode-badge pf-mode-badge--${esc(mode)}">${esc(modeLabel)}</span>
-        </h3>
+  if (layout?.sections?.length) {
+    const fieldMap = Object.fromEntries(formFields.map((f) => [f.id, f]));
+    const assignedIds = new Set(layout.sections.flatMap((s) => s.fields || []));
+    const unassigned = formFields.filter((f) => !assignedIds.has(f.id));
+
+    const renderSection = (section) => {
+      const sectionFields = (section.fields || []).map((id) => fieldMap[id]).filter(Boolean);
+      if (!sectionFields.length) return "";
+      const hasTwoCols = sectionFields.length >= 3;
+      const fieldsHtml = sectionFields.map((f) => renderFormField(f, prefilled && f.id in state.values)).join("");
+      return `
+        <div class="pf-card">
+          <div class="pf-card-head"><h3>${esc(section.title || section.id || "")}</h3></div>
+          <div class="pf-card-body">
+            <div class="pf-form${hasTwoCols ? " pf-form--2col" : ""}">
+              ${fieldsHtml}
+            </div>
+          </div>
+        </div>`;
+    };
+
+    const mainSections = layout.sections.filter((s) => s.placement !== "side");
+    const sideSections = layout.sections.filter((s) => s.placement === "side");
+
+    const unassignedHtml = unassigned.length
+      ? `<div class="pf-card"><div class="pf-card-body"><div class="pf-form${unassigned.length >= 3 ? " pf-form--2col" : ""}">
+           ${unassigned.map((f) => renderFormField(f, prefilled && f.id in state.values)).join("")}
+         </div></div></div>`
+      : "";
+
+    let bodyHtml;
+    if (mainSections.length && sideSections.length) {
+      bodyHtml = `
+        <div class="pf-layout-grid">
+          <div class="pf-layout-main">${mainSections.map(renderSection).join("")}${unassignedHtml}</div>
+          <div class="pf-layout-side">${sideSections.map(renderSection).join("")}</div>
+        </div>`;
+    } else {
+      bodyHtml = layout.sections.map(renderSection).join("") + unassignedHtml;
+    }
+
+    pfBody.innerHTML = `
+      <div class="pf-layout-mode-bar">${modeBadge}</div>
+      <form id="pfForm" novalidate>
+        ${bodyHtml}
+        ${submitBtn ? `<div class="pf-submit-wrap">${submitBtn}</div>` : ""}
+      </form>
+      <div id="pfStatusArea"></div>
+      ${prefilled ? `<div class="pf-timestamp" id="pfTimestamp"></div>` : ""}`;
+  } else {
+    const hasTwoCols = formFields.length >= 3;
+    const fieldsHtml = formFields.map((f) => renderFormField(f, prefilled && f.id in state.values)).join("");
+    pfBody.innerHTML = `
+      <div class="pf-card">
+        <div class="pf-card-head"><h3>${modeBadge}</h3></div>
+        <div class="pf-card-body">
+          <form class="pf-form${hasTwoCols ? " pf-form--2col" : ""}" id="pfForm" novalidate>
+            ${fieldsHtml}
+            ${submitBtn ? `<div class="pf-field pf-field--full">${submitBtn}</div>` : ""}
+          </form>
+        </div>
       </div>
-      <div class="pf-card-body">
-        <form class="pf-form${hasTwoCols ? " pf-form--2col" : ""}" id="pfForm" novalidate>
-          ${fieldsHtml}
-          ${submitBtn}
-        </form>
-      </div>
-    </div>
-    <div id="pfStatusArea"></div>
-    ${prefilled ? `<div class="pf-timestamp" id="pfTimestamp"></div>` : ""}`;
+      <div id="pfStatusArea"></div>
+      ${prefilled ? `<div class="pf-timestamp" id="pfTimestamp"></div>` : ""}`;
+  }
 
   wireFormEvents(pf);
   notifyHeight();
@@ -252,7 +296,14 @@ const DEMO_CONFIG = {
     { id: "notes",      label: "Notes",       type: "textarea", required: false }
   ],
   sourceCount: 1,
-  activeLayout: null
+  activeLayout: {
+    sections: [
+      { id: "contact", title: "Información de contacto", type: "form", placement: "main", fields: ["first_name", "last_name", "phone", "email"] },
+      { id: "account", title: "Cuenta", type: "form", placement: "side", fields: ["account"] },
+      { id: "notes",   title: "Notas", type: "form", placement: "side", fields: ["notes"] }
+    ],
+    generatedAt: Date.now()
+  }
 };
 
 const DEMO_VALUES = {
