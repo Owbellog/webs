@@ -2805,11 +2805,18 @@ Rules (strictly follow):
 4. Output raw JSON only. Do not write any other text before or after the JSON object.`;
     const rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, systemPrompt, JSON.stringify({ mode: pf.mode, formFields, sources }, null, 2));
     try {
-      // Strip markdown fences, then find the first {...} block
-      let cleaned = rawText.replace(/```(?:json)?\s*/gi, "").replace(/```/g, "").trim();
-      if (!cleaned.startsWith("{")) {
-        const match = rawText.match(/\{[\s\S]*\}/);
-        if (match) cleaned = match[0];
+      // Extract the outermost {"layouts":...} block by counting braces
+      let cleaned = rawText;
+      const startIdx = rawText.indexOf('{"layouts":');
+      if (startIdx !== -1) {
+        let depth = 0, endIdx = startIdx;
+        for (let i = startIdx; i < rawText.length; i++) {
+          if (rawText[i] === "{") depth++;
+          else if (rawText[i] === "}") { depth--; if (depth === 0) { endIdx = i; break; } }
+        }
+        cleaned = rawText.slice(startIdx, endIdx + 1);
+      } else {
+        cleaned = rawText.replace(/```(?:json)?\s*/gi, "").replace(/```/g, "").trim();
       }
       const parsed = JSON.parse(cleaned);
       sendJson(res, 200, { ok: true, layouts: Array.isArray(parsed.layouts) ? parsed.layouts : [] });
