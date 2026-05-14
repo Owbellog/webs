@@ -1903,6 +1903,37 @@ function buildPulseFormsLayoutPreview(layout) {
       </div>`;
   };
 
+  if (layout.layoutStyle === "tabs") {
+    const sections = layout.sections || [];
+    const total = sections.length || 1;
+    const tabBtns = sections.map((s, i) =>
+      `<span style="padding:3px 9px;border-radius:5px;font-size:.69rem;font-weight:700;background:${i === 0 ? "#4a6cf7" : "#f0f2fb"};color:${i === 0 ? "#fff" : "#888d9b"};white-space:nowrap;">${safeHtml(s.title || s.id || `Paso ${i + 1}`)}</span>`
+    ).join("");
+    const firstSection = sections[0];
+    const firstFieldItems = firstSection ? (firstSection.fields || []).map((fid) => {
+      const f = fieldMap[fid] || { label: fid, type: "text" };
+      const icon = typeIcon[f.type] || "—";
+      return `<div style="display:flex;align-items:center;gap:5px;padding:3px 0;border-bottom:1px solid #eef0f8;">
+        <span style="font-size:.68rem;color:#aab0bf;width:14px;text-align:center;">${icon}</span>
+        <span style="font-size:.73rem;color:#555d72;font-weight:600;flex:1;">${safeHtml(f.label || fid)}</span>
+      </div>`;
+    }).join("") : "";
+    return `<div style="padding:8px;">
+      <div style="height:3px;background:#e2e6f0;border-radius:2px;margin-bottom:8px;overflow:hidden;">
+        <div style="height:100%;width:${Math.round(100 / total)}%;background:#4a6cf7;border-radius:2px;"></div>
+      </div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;">${tabBtns}</div>
+      <div style="background:#fff;border:1px solid #e2e6f0;border-radius:8px;padding:8px 10px;margin-bottom:8px;">
+        <div style="font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#4a6cf7;margin-bottom:4px;">${safeHtml(firstSection?.title || "")}</div>
+        ${firstFieldItems || '<span style="font-size:.7rem;color:#c8cdd8;">Sin campos</span>'}
+      </div>
+      <div style="display:flex;gap:6px;">
+        <div style="flex:1;height:26px;background:#f0f2fb;border:1px solid #e2e6f0;border-radius:6px;"></div>
+        <div style="flex:1;height:26px;background:#4a6cf7;border-radius:6px;"></div>
+      </div>
+    </div>`;
+  }
+
   const mainSections = (layout.sections || []).filter((s) => s.placement !== "side");
   const sideSections = (layout.sections || []).filter((s) => s.placement === "side");
 

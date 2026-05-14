@@ -97,6 +97,94 @@ function renderFormField(field, prefilled = false) {
     </div>`;
 }
 
+function renderFormWithTabs(pf, layout, prefilled, mode, canSubmit) {
+  const formFields = pf.formFields || [];
+  const sections = layout.sections;
+  const fieldMap = Object.fromEntries(formFields.map((f) => [f.id, f]));
+  const total = sections.length;
+  const modeLabelMap = { query: "Consulta", submit: "Envío", both: "Consulta y envío" };
+  const modeLabel = modeLabelMap[mode] || mode;
+  const modeBadge = `<span class="pf-mode-badge pf-mode-badge--${esc(mode)}">${esc(modeLabel)}</span>`;
+
+  const tabNav = sections.map((s, i) =>
+    `<button type="button" class="pf-tab-btn${i === 0 ? " pf-tab-btn--active" : ""}" data-tab="${i}">${esc(s.title || s.id || `Paso ${i + 1}`)}</button>`
+  ).join("");
+
+  const panels = sections.map((s, i) => {
+    const sectionFields = (s.fields || []).map((id) => fieldMap[id]).filter(Boolean);
+    const hasTwoCols = sectionFields.length >= 3;
+    const fieldsHtml = sectionFields.map((f) => renderFormField(f, prefilled && f.id in state.values)).join("");
+    const isLast = i === total - 1;
+    const footer = `
+      <div class="pf-tabs-footer">
+        <button type="button" class="pf-tabs-footer-prev"${i === 0 ? " disabled" : ""}>← Anterior</button>
+        ${isLast && canSubmit
+          ? `<button type="submit" class="pf-tabs-footer-submit" id="pfSubmitBtn">Enviar información →</button>`
+          : !isLast
+          ? `<button type="button" class="pf-tabs-footer-next">Siguiente →</button>`
+          : ""}
+      </div>`;
+    return `
+      <div class="pf-tab-panel${i === 0 ? " pf-tab-panel--active" : ""}" data-panel="${i}">
+        <div class="pf-card">
+          <div class="pf-card-head"><h3>${esc(s.title || s.id || "")}</h3></div>
+          <div class="pf-card-body">
+            <div class="pf-form${hasTwoCols ? " pf-form--2col" : ""}">
+              ${fieldsHtml || '<span style="color:#aab0bf;font-size:.8rem;">Sin campos asignados</span>'}
+            </div>
+          </div>
+        </div>
+        ${footer}
+      </div>`;
+  }).join("");
+
+  pfBody.innerHTML = `
+    <div class="pf-layout-mode-bar">${modeBadge}</div>
+    <div class="pf-tabs-progress">
+      <div class="pf-tabs-progress-bar" id="pfProgressBar" style="width:${Math.round(100 / total)}%"></div>
+    </div>
+    <div class="pf-tabs-nav">${tabNav}</div>
+    <form id="pfForm" novalidate>${panels}</form>
+    <div id="pfStatusArea"></div>
+    ${prefilled ? `<div class="pf-timestamp" id="pfTimestamp"></div>` : ""}`;
+
+  let current = 0;
+
+  function goToTab(idx) {
+    if (idx < 0 || idx >= total) return;
+    pfBody.querySelectorAll(".pf-tab-panel").forEach((p, i) => p.classList.toggle("pf-tab-panel--active", i === idx));
+    pfBody.querySelectorAll(".pf-tab-btn").forEach((b, i) => b.classList.toggle("pf-tab-btn--active", i === idx));
+    const bar = document.getElementById("pfProgressBar");
+    if (bar) bar.style.width = `${Math.round((idx + 1) / total * 100)}%`;
+    current = idx;
+    notifyHeight();
+  }
+
+  function validateTab(idx) {
+    const s = sections[idx];
+    const required = (s.fields || []).map((id) => fieldMap[id]).filter((f) => f?.required);
+    const missing = required.filter((f) => !state.values[f.id]?.trim());
+    if (missing.length) {
+      showStatus("error", "Campos requeridos", `Completa: ${missing.map((f) => f.label).join(", ")}`);
+      return false;
+    }
+    return true;
+  }
+
+  pfBody.querySelectorAll(".pf-tab-btn").forEach((btn) => {
+    btn.addEventListener("click", () => goToTab(Number(btn.dataset.tab)));
+  });
+  pfBody.querySelectorAll(".pf-tabs-footer-next").forEach((btn) => {
+    btn.addEventListener("click", () => { if (validateTab(current)) goToTab(current + 1); });
+  });
+  pfBody.querySelectorAll(".pf-tabs-footer-prev").forEach((btn) => {
+    btn.addEventListener("click", () => goToTab(current - 1));
+  });
+
+  wireFormEvents(pf);
+  notifyHeight();
+}
+
 function renderForm(pf, prefilled = false) {
   const formFields = pf.formFields || [];
   const mode = pf.mode || "query";
@@ -111,6 +199,10 @@ function renderForm(pf, prefilled = false) {
   const layout = pf.activeLayout;
 
   if (layout?.sections?.length) {
+    if (layout.layoutStyle === "tabs" && layout.sections.length > 1) {
+      renderFormWithTabs(pf, layout, prefilled, mode, canSubmit);
+      return;
+    }
     const fieldMap = Object.fromEntries(formFields.map((f) => [f.id, f]));
     const assignedIds = new Set(layout.sections.flatMap((s) => s.fields || []));
     const unassigned = formFields.filter((f) => !assignedIds.has(f.id));
@@ -297,10 +389,11 @@ const DEMO_CONFIG = {
   ],
   sourceCount: 1,
   activeLayout: {
+    layoutStyle: "tabs",
     sections: [
-      { id: "contact", title: "Información de contacto", type: "form", placement: "main", fields: ["first_name", "last_name", "phone", "email"] },
-      { id: "account", title: "Cuenta", type: "form", placement: "side", fields: ["account"] },
-      { id: "notes",   title: "Notas", type: "form", placement: "side", fields: ["notes"] }
+      { id: "contact", title: "Contacto",  type: "form", placement: "main", fields: ["first_name", "last_name", "phone", "email"] },
+      { id: "account", title: "Cuenta",    type: "form", placement: "main", fields: ["account"] },
+      { id: "notes",   title: "Notas",     type: "form", placement: "main", fields: ["notes"] }
     ],
     generatedAt: Date.now()
   }

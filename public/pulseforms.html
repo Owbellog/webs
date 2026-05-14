@@ -289,10 +289,7 @@
         display: flex; align-items: center; gap: 8px;
         padding: 6px 0 2px;
       }
-
-      .pf-submit-wrap {
-        margin-top: 4px;
-      }
+      .pf-submit-wrap { margin-top: 4px; }
 
       @media (min-width: 600px) {
         .pf-layout-grid {
@@ -302,6 +299,75 @@
           align-items: start;
         }
       }
+
+      /* ── Tabs ────────────────────────────────────────────────────────────── */
+      .pf-tabs-progress {
+        height: 3px;
+        background: rgba(74,108,247,.12);
+        border-radius: 3px;
+        margin-bottom: 12px;
+        overflow: hidden;
+      }
+      .pf-tabs-progress-bar {
+        height: 100%;
+        background: var(--pf-accent);
+        border-radius: 3px;
+        transition: width .3s ease;
+      }
+      .pf-tabs-nav {
+        display: flex; gap: 4px; flex-wrap: wrap;
+        margin-bottom: 12px;
+      }
+      .pf-tab-btn {
+        flex: 1; min-width: 0;
+        padding: 5px 10px;
+        font-family: var(--pf-font);
+        font-size: .72rem; font-weight: 700;
+        border: 1px solid var(--pf-border);
+        border-radius: 7px;
+        background: none; color: #888d9b;
+        cursor: pointer;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        transition: background .15s, color .15s, border-color .15s;
+      }
+      .pf-tab-btn:hover:not(.pf-tab-btn--active) { background: rgba(74,108,247,.06); }
+      .pf-tab-btn--active {
+        background: var(--pf-accent);
+        color: #fff;
+        border-color: var(--pf-accent);
+      }
+      .pf-tab-panel { display: none; }
+      .pf-tab-panel--active { display: block; }
+      .pf-tabs-footer {
+        display: flex; gap: 8px;
+        margin-top: 10px;
+      }
+      .pf-tabs-footer-prev,
+      .pf-tabs-footer-next,
+      .pf-tabs-footer-submit {
+        flex: 1; padding: 9px;
+        font-family: var(--pf-font);
+        font-size: .82rem; font-weight: 700;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: background .15s, opacity .15s;
+      }
+      .pf-tabs-footer-prev {
+        background: none;
+        border: 1px solid var(--pf-border);
+        color: #666d7d;
+      }
+      .pf-tabs-footer-prev:hover:not(:disabled) { background: rgba(0,0,0,.04); }
+      .pf-tabs-footer-prev:disabled { opacity: .35; cursor: default; }
+      .pf-tabs-footer-next,
+      .pf-tabs-footer-submit {
+        background: var(--pf-accent);
+        border: 1px solid var(--pf-accent);
+        color: #fff;
+      }
+      .pf-tabs-footer-next:hover { opacity: .88; }
+      .pf-tabs-footer-submit:hover:not(:disabled) { opacity: .88; }
+      .pf-tabs-footer-submit:disabled { opacity: .45; cursor: default; }
     </style>
   </head>
   <body>

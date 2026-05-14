@@ -2791,8 +2791,16 @@ async function handlePulseFormsGenerateLayouts(req, res) {
       description: s.description, bodyTemplate: s.bodyTemplate, fieldMappings: s.fieldMappings || {}
     }));
     const formFields = pf.formFields || [];
-    const systemPrompt = `You are a UX designer for a CRM integration widget called PulseForms. Generate 3 layout options for a widget that can query or submit information to Sugar CRM or another CRM.
-Return ONLY valid JSON: {"layouts":[{"id":"layout_1","name":"...","description":"...","sections":[{"id":"...","title":"...","type":"form|results|actions|status|notes","placement":"main|side","fields":["..."]}]}]}${customPrompt ? `\n\nAdditional instructions from the user: ${customPrompt}` : ""}`;
+    const systemPrompt = `You are a UX designer for a CRM integration widget called PulseForms. Generate 3 layout options for a widget that can query or submit information to a CRM.
+
+Return ONLY valid JSON with this exact structure:
+{"layouts":[{"id":"layout_1","name":"...","description":"...","layoutStyle":"cards|tabs","sections":[{"id":"...","title":"...","type":"form","placement":"main|side","fields":["field_id_1","field_id_2"]}]}]}
+
+Rules:
+- layoutStyle "tabs": each section becomes a separate tab with Prev/Next navigation. Use when user asks for wizard, steps, or tab navigation. All sections should use placement "main".
+- layoutStyle "cards": sections render as stacked or side-by-side cards. Use placement "main" for primary content, "side" for secondary/compact info.
+- fields array must only contain field IDs from the provided formFields list.
+- Every field must appear in exactly one section.${customPrompt ? `\n\nAdditional instructions from the user: ${customPrompt}` : ""}`;
     const rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, systemPrompt, JSON.stringify({ mode: pf.mode, formFields, sources }, null, 2));
     try {
       const cleaned = rawText.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
