@@ -2803,11 +2803,16 @@ Rules:
 - Every field must appear in exactly one section.${customPrompt ? `\n\nAdditional instructions from the user: ${customPrompt}` : ""}`;
     const rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, systemPrompt, JSON.stringify({ mode: pf.mode, formFields, sources }, null, 2));
     try {
-      const cleaned = rawText.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
+      // Strip markdown fences, then find the first {...} block
+      let cleaned = rawText.replace(/```(?:json)?\s*/gi, "").replace(/```/g, "").trim();
+      if (!cleaned.startsWith("{")) {
+        const match = rawText.match(/\{[\s\S]*\}/);
+        if (match) cleaned = match[0];
+      }
       const parsed = JSON.parse(cleaned);
       sendJson(res, 200, { ok: true, layouts: Array.isArray(parsed.layouts) ? parsed.layouts : [] });
     } catch {
-      sendJson(res, 502, { error: "AI returned invalid layout JSON", raw: rawText.slice(0, 500) });
+      sendJson(res, 502, { error: "AI returned invalid layout JSON", raw: rawText.slice(0, 800) });
     }
   } catch (error) {
     sendJson(res, 500, { error: `PulseForms layout generation failed: ${error.message}` });
