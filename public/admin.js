@@ -59,6 +59,8 @@ const pulseformsSuggestedFieldsList = document.getElementById("pulseformsSuggest
 const pulseformsJsonFieldsFile = document.getElementById("pulseformsJsonFieldsFile");
 const pulseformsJsonFieldsText = document.getElementById("pulseformsJsonFieldsText");
 const pulseformsImportJsonFieldsBtn = document.getElementById("pulseformsImportJsonFieldsBtn");
+const pulseformsAddJsonFieldsBtn = document.getElementById("pulseformsAddJsonFieldsBtn");
+const pulseformsJsonFieldsPreview = document.getElementById("pulseformsJsonFieldsPreview");
 const pulseformsImportToggle = document.getElementById("pulseformsImportToggle");
 const pulseformsImportForm = document.getElementById("pulseformsImportForm");
 const pulseformsAnalyzeBtn = document.getElementById("pulseformsAnalyzeBtn");
@@ -632,6 +634,45 @@ function renderPulseFormsSuggestedFields(fields = []) {
   pulseformsSuggestedFieldsList.dataset.fields = JSON.stringify(fields || []);
 }
 
+function renderPulseFormsJsonFields(fields = []) {
+  if (!pulseformsJsonFieldsPreview) return;
+  pulseformsJsonFieldsPreview.innerHTML = "";
+  (fields || []).forEach((field, index) => {
+    const card = document.createElement("div");
+    card.className = "sa-source-card";
+    card.style.padding = "12px";
+    card.innerHTML = `
+      <label style="display:flex;align-items:flex-start;gap:10px;margin:0;">
+        <input class="pf-json-field-check" type="checkbox" data-index="${index}" checked style="margin-top:4px;" />
+        <span>
+          <strong>${escapeHtml(field.label || field.id || "Field")}</strong>
+          <span style="display:block;color:#667085;font-size:.82rem;">${escapeHtml(field.id || "")} · ${escapeHtml(field.type || "text")}${field.required ? " · required" : ""}</span>
+          ${field.reason ? `<span style="display:block;color:#667085;font-size:.78rem;margin-top:4px;">${escapeHtml(field.reason)}</span>` : ""}
+        </span>
+      </label>`;
+    pulseformsJsonFieldsPreview.appendChild(card);
+  });
+  pulseformsJsonFieldsPreview.dataset.fields = JSON.stringify(fields || []);
+}
+
+function addPulseFormsFieldsFromSelection(fieldsSource, selector) {
+  const existingIds = new Set(readPulseFormsFields().map((field) => field.id));
+  let added = 0;
+  document.querySelectorAll(selector).forEach((checkbox) => {
+    const idx = Number(checkbox.dataset.index);
+    const field = fieldsSource[idx];
+    if (!field) return;
+    const id = normalizePulseFormsFieldId(field.id || field.label);
+    if (!id || existingIds.has(id)) return;
+    existingIds.add(id);
+    addPulseFormsFieldRow({ ...field, id });
+    added += 1;
+  });
+  refreshPulseFormsMappingOptions();
+  markDirty();
+  return added;
+}
+
 function readFileAsDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -685,7 +726,9 @@ function normalizePulseFormsImportedField(field = {}) {
   const label = String(field.label || field.name || field.id || "").trim();
   const id = normalizePulseFormsFieldId(field.id || field.name || label);
   const validTypes = new Set(["text", "textarea", "number", "phone", "email", "date", "select", "checkbox"]);
-  const type = validTypes.has(String(field.type || "text")) ? String(field.type || "text") : "text";
+  const rawType = String(field.type || "text").toLowerCase();
+  const mappedType = rawType === "dropdown" || rawType === "picklist" ? "select" : rawType;
+  const type = validTypes.has(mappedType) ? mappedType : "text";
   return {
     id,
     label,
@@ -1738,23 +1781,17 @@ pulseformsAnalyzeFieldsBtn?.addEventListener("click", async () => {
 pulseformsAddSuggestedFieldsBtn?.addEventListener("click", () => {
   let suggestions = [];
   try { suggestions = JSON.parse(pulseformsSuggestedFieldsList?.dataset.fields || "[]"); } catch { suggestions = []; }
-  const existingIds = new Set(readPulseFormsFields().map((field) => field.id));
-  pulseformsSuggestedFieldsList?.querySelectorAll(".pf-suggested-field-check:checked").forEach((checkbox) => {
-    const idx = Number(checkbox.dataset.index);
-    const field = suggestions[idx];
-    if (!field) return;
-    const id = normalizePulseFormsFieldId(field.id || field.label);
-    if (!id || existingIds.has(id)) return;
-    existingIds.add(id);
-    addPulseFormsFieldRow({ ...field, id });
-  });
-  refreshPulseFormsMappingOptions();
-  markDirty();
+  const added = addPulseFormsFieldsFromSelection(suggestions, ".pf-suggested-field-check:checked");
+  const status = document.getElementById("pulseformsFieldDiscoveryStatus");
+  if (status) status.textContent = `${added} campos agregados a Form Fields.`;
 });
 
 pulseformsImportJsonFieldsBtn?.addEventListener("click", async () => {
   const status = document.getElementById("pulseformsJsonFieldsStatus");
+  const result = document.getElementById("pulseformsJsonFieldsResult");
   if (status) status.textContent = "Leyendo JSON...";
+  if (result) result.style.display = "none";
+  if (pulseformsAddJsonFieldsBtn) pulseformsAddJsonFieldsBtn.style.display = "none";
   try {
     let rawJson = pulseformsJsonFieldsText?.value.trim() || "";
     const file = pulseformsJsonFieldsFile?.files?.[0];
@@ -1764,17 +1801,22 @@ pulseformsImportJsonFieldsBtn?.addEventListener("click", async () => {
     if (!fieldsFromJson.length) {
       throw new Error("No se encontraron campos validos. Usa fields, formFields, suggestedFields o un array directo.");
     }
-    renderPulseFormsSuggestedFields(fieldsFromJson);
-    const result = document.getElementById("pulseformsFieldDiscoveryResult");
-    const explanation = document.getElementById("pulseformsFieldDiscoveryExplanation");
-    if (explanation) explanation.textContent = "Campos cargados desde JSON. Selecciona los que quieres agregar.";
+    renderPulseFormsJsonFields(fieldsFromJson);
     if (result) result.style.display = "block";
-    if (pulseformsAddSuggestedFieldsBtn) pulseformsAddSuggestedFieldsBtn.style.display = "inline-block";
+    if (pulseformsAddJsonFieldsBtn) pulseformsAddJsonFieldsBtn.style.display = "inline-block";
     if (status) status.textContent = `${fieldsFromJson.length} campos listos para agregar.`;
   } catch (err) {
     if (status) status.textContent = "";
     alert("Error al cargar JSON: " + err.message);
   }
+});
+
+pulseformsAddJsonFieldsBtn?.addEventListener("click", () => {
+  let imported = [];
+  try { imported = JSON.parse(pulseformsJsonFieldsPreview?.dataset.fields || "[]"); } catch { imported = []; }
+  const added = addPulseFormsFieldsFromSelection(imported, ".pf-json-field-check:checked");
+  const status = document.getElementById("pulseformsJsonFieldsStatus");
+  if (status) status.textContent = `${added} campos agregados a Form Fields.`;
 });
 
 pulseformsImportToggle?.addEventListener("click", () => {

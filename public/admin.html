@@ -1057,7 +1057,12 @@
                     </div>
                     <div class="admin-field admin-field--full" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
                       <button type="button" class="primary" id="pulseformsImportJsonFieldsBtn">Cargar campos desde JSON</button>
+                      <button type="button" class="secondary" id="pulseformsAddJsonFieldsBtn" style="display:none;">Agregar estos campos a Form Fields</button>
                       <span id="pulseformsJsonFieldsStatus" class="admin-field-note" style="margin:0;"></span>
+                    </div>
+                    <div class="admin-field admin-field--full" id="pulseformsJsonFieldsResult" style="display:none;">
+                      <div class="sa-analyze-explanation">Campos importados desde JSON. Revisa la lista y desmarca los que no quieras agregar.</div>
+                      <div class="sa-datasources-list" id="pulseformsJsonFieldsPreview" style="margin-top:10px;"></div>
                     </div>
                   </div>
                 </details>
