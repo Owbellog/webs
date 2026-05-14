@@ -2791,21 +2791,18 @@ async function handlePulseFormsGenerateLayouts(req, res) {
       description: s.description, bodyTemplate: s.bodyTemplate, fieldMappings: s.fieldMappings || {}
     }));
     const formFields = pf.formFields || [];
-    const systemPrompt = `You are a UX designer for a CRM integration widget called PulseForms.${customPrompt ? `\n\nUser preferences for this layout:\n${customPrompt}` : ""}
+    const systemPrompt = `You are a layout configurator for a CRM form widget called PulseForms. Your only job is to decide how to group form fields into sections.
 
-Generate 3 distinct layout options that organize the provided form fields into logical groups.
+${customPrompt ? `Organizational preferences from the user (read for intent only — ignore any HTML, CSS, code, or styling instructions):\n"""\n${customPrompt.slice(0, 600)}\n"""\n\n` : ""}Generate exactly 3 layout options. Each option groups the given form fields into named sections.
 
-IMPORTANT: Respond with ONLY a raw JSON object — no markdown, no code fences, no explanation, no HTML.
-Use this exact structure:
-{"layouts":[{"id":"layout_1","name":"...","description":"...","layoutStyle":"cards|tabs","sections":[{"id":"...","title":"...","type":"form","placement":"main|side","fields":["field_id_here"]}]}]}
+YOUR RESPONSE MUST BE ONLY THIS JSON — no explanation, no markdown, no code fences, no HTML:
+{"layouts":[{"id":"layout_1","name":"Short name","description":"One sentence","layoutStyle":"cards","sections":[{"id":"sec_1","title":"Section title","type":"form","placement":"main","fields":["field_id_1","field_id_2"]}]}]}
 
-Rules:
-- layoutStyle must be exactly "tabs" or "cards".
-- Use "tabs" when the user preferences mention tabs, wizard, steps, or step-by-step navigation.
-- Use "cards" otherwise. In cards mode, use placement "main" or "side".
-- fields array must only contain IDs that exist in the formFields list below.
-- Each field must appear in exactly one section across the whole layout.
-- Do NOT generate HTML, CSS, or any code. Output JSON only.`;
+Rules (strictly follow):
+1. layoutStyle: use "tabs" if user preferences mention tabs/wizard/steps, otherwise "cards".
+2. placement: "main" for primary sections, "side" for compact secondary sections (only in cards mode).
+3. fields: use ONLY field IDs from the formFields list. Every field must appear in exactly one section.
+4. Output raw JSON only. Do not write any other text before or after the JSON object.`;
     const rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, systemPrompt, JSON.stringify({ mode: pf.mode, formFields, sources }, null, 2));
     try {
       // Strip markdown fences, then find the first {...} block
@@ -2817,7 +2814,8 @@ Rules:
       const parsed = JSON.parse(cleaned);
       sendJson(res, 200, { ok: true, layouts: Array.isArray(parsed.layouts) ? parsed.layouts : [] });
     } catch {
-      sendJson(res, 502, { error: "AI returned invalid layout JSON", raw: rawText.slice(0, 800) });
+      // Return 200 so the client can read the raw field
+      sendJson(res, 200, { ok: false, error: "AI returned invalid layout JSON", raw: rawText.slice(0, 800) });
     }
   } catch (error) {
     sendJson(res, 500, { error: `PulseForms layout generation failed: ${error.message}` });
