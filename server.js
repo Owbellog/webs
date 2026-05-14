@@ -2816,7 +2816,13 @@ Rules (strictly follow):
         }
         if (endIdx > startIdx) cleaned = rawText.slice(startIdx, endIdx + 1);
       }
-      const parsed = JSON.parse(cleaned);
+
+      // Repair common AI mistakes before parsing
+      const repaired = cleaned
+        .replace(/,\s*([}\]])/g, "$1")           // trailing commas
+        .replace(/"(\s*)\n(\s*)"/g, '",\n$2"');  // missing commas between strings
+
+      const parsed = JSON.parse(repaired);
       sendJson(res, 200, { ok: true, layouts: Array.isArray(parsed.layouts) ? parsed.layouts : [] });
     } catch (parseErr) {
       console.error("[pulseforms] layout JSON parse failed:", parseErr.message, "\ncleaned:", cleaned.slice(0, 500));
