@@ -2806,13 +2806,18 @@ Rules (strictly follow):
     const rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, systemPrompt, JSON.stringify({ mode: pf.mode, formFields, sources }, null, 2));
     let cleaned = rawText;
     try {
-      // Extract outermost JSON object by finding first { and balancing braces
+      // Extract outermost JSON object — skip { and } inside strings
       const startIdx = rawText.indexOf("{");
       if (startIdx !== -1) {
-        let depth = 0, endIdx = -1;
+        let depth = 0, inStr = false, esc = false, endIdx = -1;
         for (let i = startIdx; i < rawText.length; i++) {
-          if (rawText[i] === "{") depth++;
-          else if (rawText[i] === "}") { depth--; if (depth === 0) { endIdx = i; break; } }
+          const c = rawText[i];
+          if (esc) { esc = false; continue; }
+          if (c === "\\") { esc = true; continue; }
+          if (c === '"') { inStr = !inStr; continue; }
+          if (inStr) continue;
+          if (c === "{") depth++;
+          else if (c === "}") { depth--; if (depth === 0) { endIdx = i; break; } }
         }
         if (endIdx > startIdx) cleaned = rawText.slice(startIdx, endIdx + 1);
       }
