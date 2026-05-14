@@ -1996,12 +1996,15 @@ pulseformsLayoutGenerateBtn?.addEventListener("click", async () => {
       method: "POST",
       body: JSON.stringify({ campaignId, customPrompt })
     });
-    if (!data.ok || !data.layouts?.length) throw new Error(data.error || "No layouts returned");
+    if (!data.ok || !data.layouts?.length) {
+      const rawHint = data.raw ? `\nRespuesta IA: ${data.raw.slice(0, 300)}` : "";
+      throw new Error((data.error || "No layouts returned") + rawHint);
+    }
     if (panel) panel.style.display = "block";
     renderPulseFormsLayoutCards(data.layouts);
     if (status) { status.textContent = `${data.layouts.length} opciones generadas.`; status.style.color = "#15803d"; }
   } catch (err) {
-    if (status) { status.textContent = `Error: ${err.message}`; status.style.color = "#dc2626"; }
+    if (status) { status.textContent = `Error: ${err.message}`; status.style.color = "#dc2626"; status.style.whiteSpace = "pre-wrap"; }
   } finally {
     pulseformsLayoutGenerateBtn.disabled = false;
     pulseformsLayoutGenerateBtn.textContent = "Generar opciones de layout";

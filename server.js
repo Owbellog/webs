@@ -2791,16 +2791,21 @@ async function handlePulseFormsGenerateLayouts(req, res) {
       description: s.description, bodyTemplate: s.bodyTemplate, fieldMappings: s.fieldMappings || {}
     }));
     const formFields = pf.formFields || [];
-    const systemPrompt = `You are a UX designer for a CRM integration widget called PulseForms. Generate 3 layout options for a widget that can query or submit information to a CRM.
+    const systemPrompt = `You are a UX designer for a CRM integration widget called PulseForms.${customPrompt ? `\n\nUser preferences for this layout:\n${customPrompt}` : ""}
 
-Return ONLY valid JSON with this exact structure:
-{"layouts":[{"id":"layout_1","name":"...","description":"...","layoutStyle":"cards|tabs","sections":[{"id":"...","title":"...","type":"form","placement":"main|side","fields":["field_id_1","field_id_2"]}]}]}
+Generate 3 distinct layout options that organize the provided form fields into logical groups.
+
+IMPORTANT: Respond with ONLY a raw JSON object — no markdown, no code fences, no explanation, no HTML.
+Use this exact structure:
+{"layouts":[{"id":"layout_1","name":"...","description":"...","layoutStyle":"cards|tabs","sections":[{"id":"...","title":"...","type":"form","placement":"main|side","fields":["field_id_here"]}]}]}
 
 Rules:
-- layoutStyle "tabs": each section becomes a separate tab with Prev/Next navigation. Use when user asks for wizard, steps, or tab navigation. All sections should use placement "main".
-- layoutStyle "cards": sections render as stacked or side-by-side cards. Use placement "main" for primary content, "side" for secondary/compact info.
-- fields array must only contain field IDs from the provided formFields list.
-- Every field must appear in exactly one section.${customPrompt ? `\n\nAdditional instructions from the user: ${customPrompt}` : ""}`;
+- layoutStyle must be exactly "tabs" or "cards".
+- Use "tabs" when the user preferences mention tabs, wizard, steps, or step-by-step navigation.
+- Use "cards" otherwise. In cards mode, use placement "main" or "side".
+- fields array must only contain IDs that exist in the formFields list below.
+- Each field must appear in exactly one section across the whole layout.
+- Do NOT generate HTML, CSS, or any code. Output JSON only.`;
     const rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, systemPrompt, JSON.stringify({ mode: pf.mode, formFields, sources }, null, 2));
     try {
       // Strip markdown fences, then find the first {...} block
