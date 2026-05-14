@@ -116,7 +116,7 @@ function decryptSecret(value) {
 }
 
 // Fields that must be encrypted at rest
-const SECRET_FIELDS = ["token", "cookie", "geminiApiKey", "questionsGeminiApiKey", "wielandNccCredential", "summaryagenticAiApiKey", "summaryagenticHubspotToken"];
+const SECRET_FIELDS = ["token", "cookie", "geminiApiKey", "questionsGeminiApiKey", "wielandNccCredential", "summaryagenticAiApiKey", "summaryagenticHubspotToken", "pulseformsAiApiKey"];
 
 function encryptCampaignSecrets(campaign) {
   const result = { ...campaign };
@@ -779,6 +779,16 @@ async function handleRequest(req, res) {
 
   if (req.method === "POST" && url.pathname === "/api/summaryagentic/warm") {
     await handleSummaryAgenticWarm(req, res);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/pulseforms/analyze-url") {
+    await handlePulseFormsAnalyzeUrl(req, res);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/pulseforms/generate-layouts") {
+    await handlePulseFormsGenerateLayouts(req, res);
     return;
   }
 
@@ -2620,6 +2630,92 @@ Return ONLY a valid JSON object (no markdown, no explanation outside the json) w
   }
 }
 
+async function handlePulseFormsAnalyzeUrl(req, res) {
+  try {
+    let body;
+    try { body = await readJson(req); } catch { sendJson(res, 400, { error: "Invalid JSON body" }); return; }
+    const session = getSessionFromRequest(req);
+    if (!session) { sendJson(res, 401, { error: "Unauthorized" }); return; }
+    const { url: rawUrl, method = "GET", campaignId } = body;
+    if (!rawUrl) { sendJson(res, 400, { error: "url is required" }); return; }
+
+    let aiProvider = "claude", aiApiKey = "", aiModel = "";
+    if (campaignId) {
+      const campaigns = await getEffectiveCampaigns();
+      const config = campaigns.find((c) => c.id === campaignId);
+      if (config) {
+        aiProvider = config.pulseforms?.aiProvider || "claude";
+        aiApiKey = config.pulseformsAiApiKey || "";
+        aiModel = config.pulseforms?.aiModel || "";
+      }
+    }
+    if (!aiApiKey) { sendJson(res, 400, { error: "No AI API key configured for PulseForms." }); return; }
+
+    const systemPrompt = `You are an API configuration assistant for CRM integrations, especially Sugar CRM. Analyze the provided URL and suggest a reusable PulseForms data source template.
+Available placeholders: {{phone}}, {{customer_id}}, {{email}}, {{first_name}}, {{last_name}}, {{account_id}}, plus custom URL parameters.
+Return ONLY valid JSON with fields: name, url, fixedParams, headersJson, bodyTemplate, mode ("query" or "submit"), explanation.`;
+    const rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, systemPrompt, `URL: ${rawUrl}\nMethod: ${method}`);
+    let suggestion;
+    try {
+      const cleaned = rawText.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
+      suggestion = JSON.parse(cleaned);
+    } catch {
+      sendJson(res, 502, { error: "AI returned invalid JSON", raw: rawText.slice(0, 500) });
+      return;
+    }
+    sendJson(res, 200, {
+      ok: true,
+      name: String(suggestion.name || ""),
+      url: String(suggestion.url || rawUrl),
+      method,
+      mode: ["query", "submit"].includes(suggestion.mode) ? suggestion.mode : "query",
+      fixedParams: String(suggestion.fixedParams || ""),
+      headersJson: String(suggestion.headersJson || "{}"),
+      bodyTemplate: String(suggestion.bodyTemplate || ""),
+      explanation: String(suggestion.explanation || "")
+    });
+  } catch (error) {
+    sendJson(res, 500, { error: `PulseForms analyze failed: ${error.message}` });
+  }
+}
+
+async function handlePulseFormsGenerateLayouts(req, res) {
+  try {
+    let body;
+    try { body = await readJson(req); } catch { sendJson(res, 400, { error: "Invalid JSON body" }); return; }
+    const session = getSessionFromRequest(req);
+    if (!session) { sendJson(res, 401, { error: "Unauthorized" }); return; }
+    const campaignId = String(body.campaignId || "").trim();
+    if (!campaignId) { sendJson(res, 400, { error: "campaignId is required" }); return; }
+
+    const campaigns = await getEffectiveCampaigns();
+    const config = campaigns.find((c) => c.id === campaignId);
+    if (!config) { sendJson(res, 404, { error: "Campaign not found" }); return; }
+    const pf = config.pulseforms || {};
+    const aiProvider = pf.aiProvider || "claude";
+    const aiApiKey = config.pulseformsAiApiKey || "";
+    const aiModel = pf.aiModel || defaultAiModel(aiProvider);
+    if (!aiApiKey) { sendJson(res, 400, { error: "No AI API key configured for PulseForms." }); return; }
+
+    const sources = (pf.dataSources || []).map((s) => ({
+      id: s.id, name: s.name, mode: s.mode, method: s.method, url: s.url,
+      description: s.description, bodyTemplate: s.bodyTemplate
+    }));
+    const systemPrompt = `You are a UX designer for a CRM integration widget called PulseForms. Generate 3 layout options for a widget that can query or submit information to Sugar CRM or another CRM.
+Return ONLY valid JSON: {"layouts":[{"id":"layout_1","name":"...","description":"...","sections":[{"id":"...","title":"...","type":"form|results|actions|status|notes","placement":"main|side","fields":["..."]}]}]}`;
+    const rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, systemPrompt, JSON.stringify({ mode: pf.mode, sources }, null, 2));
+    try {
+      const cleaned = rawText.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
+      const parsed = JSON.parse(cleaned);
+      sendJson(res, 200, { ok: true, layouts: Array.isArray(parsed.layouts) ? parsed.layouts : [] });
+    } catch {
+      sendJson(res, 502, { error: "AI returned invalid layout JSON", raw: rawText.slice(0, 500) });
+    }
+  } catch (error) {
+    sendJson(res, 500, { error: `PulseForms layout generation failed: ${error.message}` });
+  }
+}
+
 function parseFixedParams(fixedParamsStr) {
   const result = {};
   for (const line of String(fixedParamsStr || "").split(/\n|,/)) {
@@ -3734,6 +3830,8 @@ function normalizeCampaign(input) {
     summaryagenticHubspotToken: String(input.summaryagenticHubspotToken || "").trim(),
     summaryagenticWarmToken: String(input.summaryagenticWarmToken || "").trim(),
     summaryagentic: normalizeSummaryAgenticConfig(input.summaryagentic || {}),
+    pulseformsAiApiKey: String(input.pulseformsAiApiKey || "").trim(),
+    pulseforms: normalizePulseFormsConfig(input.pulseforms || {}),
     apiAccessToken: String(input.apiAccessToken || "").trim(),
     ui: normalizeUiConfig(input.ui || input)
   };
@@ -4268,6 +4366,49 @@ function normalizeSummaryAgenticConfig(input) {
         : ["contacts","deals","tickets","calls"]
     }
   };
+}
+
+function normalizePulseFormsConfig(input) {
+  const src = input || {};
+  const VALID_PROVIDERS = ["claude", "gemini", "openai"];
+  const VALID_MODES = ["query", "submit", "both"];
+  return {
+    enabled: src.enabled !== false,
+    mode: VALID_MODES.includes(src.mode) ? src.mode : "query",
+    aiProvider: VALID_PROVIDERS.includes(src.aiProvider) ? src.aiProvider : "claude",
+    aiModel: String(src.aiModel || "").trim(),
+    aiPrompt: String(src.aiPrompt || "").trim(),
+    dataSources: normalizePulseFormsDataSources(src.dataSources || []),
+    activeLayout: Array.isArray(src.activeLayout?.sections) && src.activeLayout.sections.length
+      ? { sections: src.activeLayout.sections.map((s) => ({
+          id: String(s.id || ""),
+          title: String(s.title || ""),
+          type: String(s.type || "form"),
+          placement: String(s.placement || "main"),
+          fields: Array.isArray(s.fields) ? s.fields : []
+        })), generatedAt: src.activeLayout.generatedAt || null }
+      : null
+  };
+}
+
+function normalizePulseFormsDataSources(sources) {
+  if (!Array.isArray(sources)) return [];
+  return sources
+    .map((src) => ({
+      id: String(src.id || crypto.randomUUID()).trim(),
+      name: String(src.name || "").trim(),
+      mode: ["query", "submit"].includes(String(src.mode || "query")) ? String(src.mode || "query") : "query",
+      url: String(src.url || "").trim(),
+      method: ["GET", "POST", "PATCH"].includes(String(src.method || "GET").toUpperCase())
+        ? String(src.method || "GET").toUpperCase()
+        : "GET",
+      headersJson: String(src.headersJson || "{}").trim(),
+      bodyTemplate: String(src.bodyTemplate || "").trim(),
+      enabled: src.enabled !== false,
+      fixedParams: String(src.fixedParams || "").trim(),
+      description: String(src.description || "").trim()
+    }))
+    .filter((src) => src.url);
 }
 
 function normalizeSummaryDataSources(sources) {

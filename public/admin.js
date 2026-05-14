@@ -48,6 +48,14 @@ const summaryagenticImportForm = document.getElementById("summaryagenticImportFo
 const summaryagenticAnalyzeBtn = document.getElementById("summaryagenticAnalyzeBtn");
 const summaryagenticAnalyzeResult = document.getElementById("summaryagenticAnalyzeResult");
 const summaryagenticAddFromAnalysis = document.getElementById("summaryagenticAddFromAnalysis");
+const pulseformsSourcesList = document.getElementById("pulseformsSourcesList");
+const pulseformsAddSourceButton = document.getElementById("pulseformsAddSource");
+const pulseformsImportToggle = document.getElementById("pulseformsImportToggle");
+const pulseformsImportForm = document.getElementById("pulseformsImportForm");
+const pulseformsAnalyzeBtn = document.getElementById("pulseformsAnalyzeBtn");
+const pulseformsAnalyzeResult = document.getElementById("pulseformsAnalyzeResult");
+const pulseformsAddFromAnalysis = document.getElementById("pulseformsAddFromAnalysis");
+const pulseformsLayoutGenerateBtn = document.getElementById("pulseformsLayoutGenerateBtn");
 
 const DEFAULT_WIELAND_WIDGET_TO_CONTACT_MAP = {
   firstName: "firstName",
@@ -234,7 +242,13 @@ const fields = {
   summaryagenticAiPrompt: document.getElementById("summaryagenticAiPrompt"),
   summaryagenticHubspotEnabled: document.getElementById("summaryagenticHubspotEnabled"),
   summaryagenticHubspotToken: document.getElementById("summaryagenticHubspotToken"),
-  summaryagenticWarmToken: document.getElementById("summaryagenticWarmToken")
+  summaryagenticWarmToken: document.getElementById("summaryagenticWarmToken"),
+  pulseformsEnabled: document.getElementById("pulseformsEnabled"),
+  pulseformsMode: document.getElementById("pulseformsMode"),
+  pulseformsAiProvider: document.getElementById("pulseformsAiProvider"),
+  pulseformsAiModel: document.getElementById("pulseformsAiModel"),
+  pulseformsAiApiKey: document.getElementById("pulseformsAiApiKey"),
+  pulseformsAiPrompt: document.getElementById("pulseformsAiPrompt")
 };
 
 const state = {
@@ -437,6 +451,12 @@ function renderSummaryDataSources(sources) {
   (sources || []).forEach((src) => addSummarySourceCard(src));
 }
 
+function renderPulseFormsDataSources(sources) {
+  if (!pulseformsSourcesList) return;
+  pulseformsSourcesList.innerHTML = "";
+  (sources || []).forEach((src) => addPulseFormsSourceCard(src));
+}
+
 function addHeaderRow(container, key = "", value = "") {
   const row = document.createElement("div");
   row.className = "sa-kv-row";
@@ -489,6 +509,18 @@ function readHeadersKv(container) {
     if (k) obj[k] = v || "";
   });
   return JSON.stringify(obj);
+}
+
+function parseAdminFixedParams(value) {
+  return String(value || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const idx = line.indexOf("=");
+      return idx === -1 ? [line, ""] : [line.slice(0, idx).trim(), line.slice(idx + 1).trim()];
+    })
+    .filter(([key]) => key);
 }
 
 function addSummarySourceCard(src = {}) {
@@ -1102,6 +1134,91 @@ function addSummarySourceCard(src = {}) {
   summaryagenticSourcesList.appendChild(card);
 }
 
+function addPulseFormsSourceCard(src = {}) {
+  if (!pulseformsSourcesList) return;
+  const id = src.id || crypto.randomUUID();
+  const card = document.createElement("div");
+  card.className = "sa-source-card";
+  card.dataset.sourceId = id;
+  card.innerHTML = `
+    <div class="sa-source-card-header">
+      <strong class="sa-source-name-label">${escapeHtml(src.name || "New PulseForms source")}</strong>
+      <button type="button" class="sa-source-toggle">▲ Collapse</button>
+      <button type="button" class="sa-source-remove">✕ Remove</button>
+    </div>
+    <div class="sa-source-body">
+      <div class="sa-source-field">
+        <label>Name</label>
+        <input class="sa-field-name" type="text" value="${escapeHtml(src.name || "")}" placeholder="Sugar CRM Contacts" />
+      </div>
+      <div class="sa-source-field">
+        <label>Mode</label>
+        <select class="pf-field-mode">
+          <option value="query"${(src.mode || "query") === "query" ? " selected" : ""}>Query</option>
+          <option value="submit"${src.mode === "submit" ? " selected" : ""}>Submit</option>
+        </select>
+      </div>
+      <div class="sa-source-field">
+        <label>Method</label>
+        <select class="sa-field-method">
+          <option value="GET"${(src.method || "GET") === "GET" ? " selected" : ""}>GET</option>
+          <option value="POST"${src.method === "POST" ? " selected" : ""}>POST</option>
+          <option value="PATCH"${src.method === "PATCH" ? " selected" : ""}>PATCH</option>
+        </select>
+      </div>
+      <div class="sa-source-field sa-source-field--full">
+        <label>URL</label>
+        <input class="sa-field-url" type="text" value="${escapeHtml(src.url || "")}" placeholder="https://sugar.example.com/rest/v11/Contacts?phone={{phone}}" />
+      </div>
+      <div class="sa-source-field sa-source-field--full">
+        <label>Headers</label>
+        <div class="sa-headers-kv"></div>
+        <button type="button" class="sa-add-header-btn">+ Add header</button>
+      </div>
+      <div class="sa-source-field sa-source-field--full">
+        <label>Body template</label>
+        <textarea class="sa-field-body" rows="3" placeholder='{"phone":"{{phone}}","status":"{{status}}"}'>${escapeHtml(src.bodyTemplate || "")}</textarea>
+      </div>
+      <div class="sa-source-field sa-source-field--full">
+        <label>Fixed params</label>
+        <div class="sa-params-kv"></div>
+        <button type="button" class="sa-add-param-btn">+ Add param</button>
+      </div>
+      <div class="sa-source-field sa-source-field--full">
+        <label>Description</label>
+        <textarea class="sa-field-description" rows="2" placeholder="Ej: Consulta contactos en Sugar CRM por telefono.">${escapeHtml(src.description || "")}</textarea>
+      </div>
+      <div class="sa-source-field sa-source-field--full">
+        <label><input class="sa-field-enabled" type="checkbox"${src.enabled !== false ? " checked" : ""} /> Enabled</label>
+      </div>
+    </div>`;
+
+  card.querySelector(".sa-source-toggle").addEventListener("click", (event) => {
+    const body = card.querySelector(".sa-source-body");
+    const collapsed = body.style.display === "none";
+    body.style.display = collapsed ? "grid" : "none";
+    event.currentTarget.textContent = collapsed ? "▲ Collapse" : "▼ Expand";
+  });
+  card.querySelector(".sa-source-remove").addEventListener("click", () => {
+    card.remove();
+    markDirty();
+  });
+  card.querySelectorAll("input, select, textarea").forEach((el) => {
+    el.addEventListener("input", markDirty);
+    el.addEventListener("change", markDirty);
+  });
+  const headersWrap = card.querySelector(".sa-headers-kv");
+  const paramsWrap = card.querySelector(".sa-params-kv");
+  try {
+    const headers = JSON.parse(src.headersJson || "{}");
+    Object.entries(headers).forEach(([k, v]) => addHeaderRow(headersWrap, k, v));
+  } catch {}
+  parseAdminFixedParams(src.fixedParams || "").forEach(([k, v]) => addParamRow(paramsWrap, k, v));
+  card.querySelector(".sa-add-header-btn").addEventListener("click", () => { addHeaderRow(headersWrap); markDirty(); });
+  card.querySelector(".sa-add-param-btn").addEventListener("click", () => { addParamRow(paramsWrap); markDirty(); });
+  pulseformsSourcesList.appendChild(card);
+}
+
 function updateSummaryAgenticUrls(campaignId) {
   const saLink = document.getElementById("summaryagenticOpenLink");
   const urlPhone = document.getElementById("summaryagenticUrlPhone");
@@ -1131,6 +1248,25 @@ function updateSummaryAgenticUrls(campaignId) {
   }
 }
 
+function updatePulseFormsUrls(campaignId) {
+  const link = document.getElementById("pulseformsOpenLink");
+  const urlPhone = document.getElementById("pulseformsUrlPhone");
+  const urlCustomerId = document.getElementById("pulseformsUrlCustomerId");
+  const embedCode = document.getElementById("pulseformsEmbedCode");
+  const base = `${window.location.origin}${window.location.pathname.replace(/\/[^/]*$/, "/pulseforms.html")}`;
+  if (campaignId) {
+    if (link) { link.href = `./pulseforms.html?campaign=${encodeURIComponent(campaignId)}`; link.hidden = false; }
+    if (urlPhone) urlPhone.value = `${base}?campaign=${encodeURIComponent(campaignId)}&phone=+15551234567`;
+    if (urlCustomerId) urlCustomerId.value = `${base}?campaign=${encodeURIComponent(campaignId)}&customer_id=C-001`;
+    if (embedCode) embedCode.value = `<iframe src="${base}?campaign=${encodeURIComponent(campaignId)}&phone={{PHONE}}" style="width:100%;height:720px;border:none;" allow="clipboard-write"></iframe>`;
+  } else {
+    if (link) link.hidden = true;
+    if (urlPhone) urlPhone.value = "";
+    if (urlCustomerId) urlCustomerId.value = "";
+    if (embedCode) embedCode.value = "";
+  }
+}
+
 function readSummaryDataSources() {
   const cards = summaryagenticSourcesList.querySelectorAll(".sa-source-card");
   return Array.from(cards).map((card) => ({
@@ -1147,6 +1283,23 @@ function readSummaryDataSources() {
     suggestions: (() => { try { return JSON.parse(card.dataset.suggestions || "[]"); } catch { return []; } })(),
     enabled: card.querySelector(".sa-field-enabled")?.checked !== false,
     testPhone: card.querySelector(".sa-test-phone")?.value.trim() || "",
+    fixedParams: readParamsKv(card.querySelector(".sa-params-kv")),
+    description: card.querySelector(".sa-field-description")?.value.trim() || ""
+  })).filter((s) => s.url);
+}
+
+function readPulseFormsDataSources() {
+  if (!pulseformsSourcesList) return [];
+  const cards = pulseformsSourcesList.querySelectorAll(".sa-source-card");
+  return Array.from(cards).map((card) => ({
+    id: card.dataset.sourceId || crypto.randomUUID(),
+    name: card.querySelector(".sa-field-name")?.value.trim() || "",
+    mode: card.querySelector(".pf-field-mode")?.value || "query",
+    url: card.querySelector(".sa-field-url")?.value.trim() || "",
+    method: card.querySelector(".sa-field-method")?.value || "GET",
+    headersJson: readHeadersKv(card.querySelector(".sa-headers-kv")),
+    bodyTemplate: card.querySelector(".sa-field-body")?.value.trim() || "",
+    enabled: card.querySelector(".sa-field-enabled")?.checked !== false,
     fixedParams: readParamsKv(card.querySelector(".sa-params-kv")),
     description: card.querySelector(".sa-field-description")?.value.trim() || ""
   })).filter((s) => s.url);
@@ -1270,6 +1423,138 @@ summaryagenticAddFromAnalysis?.addEventListener("click", () => {
   summaryagenticImportForm.style.display = "none";
   summaryagenticImportToggle.textContent = "🔍 Import from URL";
   document.getElementById("summaryagenticImportUrl").value = "";
+});
+
+pulseformsAddSourceButton?.addEventListener("click", () => {
+  addPulseFormsSourceCard({});
+  markDirty();
+});
+
+pulseformsImportToggle?.addEventListener("click", () => {
+  const open = pulseformsImportForm.style.display === "none";
+  pulseformsImportForm.style.display = open ? "block" : "none";
+  pulseformsImportToggle.textContent = open ? "Cerrar" : "Import from URL";
+});
+
+pulseformsAnalyzeBtn?.addEventListener("click", async () => {
+  const rawUrl = document.getElementById("pulseformsImportUrl")?.value.trim();
+  const method = document.getElementById("pulseformsImportMethod")?.value || "GET";
+  if (!rawUrl) { alert("Pega una URL primero."); return; }
+  const campaignId = fields.id.value.trim();
+  pulseformsAnalyzeBtn.disabled = true;
+  pulseformsAnalyzeBtn.textContent = "Analizando...";
+  pulseformsAnalyzeResult.style.display = "none";
+  try {
+    const data = await apiRequest("/api/pulseforms/analyze-url", {
+      method: "POST",
+      body: JSON.stringify({ url: rawUrl, method, campaignId })
+    });
+    document.getElementById("pulseformsSugName").value = data.name || "";
+    document.getElementById("pulseformsSugUrl").value = data.url || rawUrl;
+    document.getElementById("pulseformsSugFixed").value = data.fixedParams || "";
+    document.getElementById("pulseformsSugHeaders").value = data.headersJson || "{}";
+    document.getElementById("pulseformsExplanation").textContent = data.explanation || "";
+    pulseformsAnalyzeResult.style.display = "block";
+  } catch (err) {
+    alert("Error al analizar: " + err.message);
+  } finally {
+    pulseformsAnalyzeBtn.disabled = false;
+    pulseformsAnalyzeBtn.textContent = "Analizar con IA";
+  }
+});
+
+pulseformsAddFromAnalysis?.addEventListener("click", () => {
+  const name = document.getElementById("pulseformsSugName")?.value.trim();
+  const url = document.getElementById("pulseformsSugUrl")?.value.trim();
+  const fixedParams = document.getElementById("pulseformsSugFixed")?.value.trim();
+  const headersJson = document.getElementById("pulseformsSugHeaders")?.value.trim();
+  const method = document.getElementById("pulseformsImportMethod")?.value || "GET";
+  addPulseFormsSourceCard({ name, url, method, fixedParams, headersJson });
+  markDirty();
+  pulseformsAnalyzeResult.style.display = "none";
+  pulseformsImportForm.style.display = "none";
+  pulseformsImportToggle.textContent = "Import from URL";
+  document.getElementById("pulseformsImportUrl").value = "";
+});
+
+function renderPulseFormsActiveLayout(layout) {
+  const badge = document.getElementById("pulseformsLayoutActiveBadge");
+  const info = document.getElementById("pulseformsLayoutActiveInfo");
+  if (!badge || !info) return;
+  if (layout?.sections?.length) {
+    badge.textContent = "Layout activo";
+    badge.style.color = "var(--color-success, #15803d)";
+    info.textContent = `${layout.sections.length} secciones · guardado ${layout.generatedAt ? new Date(layout.generatedAt).toLocaleString() : ""}`;
+  } else {
+    badge.textContent = "Sin layout fijo";
+    badge.style.color = "#888";
+    info.textContent = "";
+  }
+}
+
+function renderPulseFormsLayoutCards(layouts) {
+  const container = document.getElementById("pulseformsLayoutCards");
+  if (!container) return;
+  container.innerHTML = "";
+  layouts.forEach((layout) => {
+    const card = document.createElement("div");
+    card.className = "sa-layout-card";
+    card.innerHTML = `
+      <div class="sa-layout-card-head">
+        <div>
+          <strong>${safeHtml(layout.name || layout.id || "PulseForms layout")}</strong>
+          <div class="sa-layout-card-desc">${safeHtml(layout.description || "")}</div>
+        </div>
+        <button type="button" class="primary" style="flex-shrink:0;">Usar este layout</button>
+      </div>
+      <pre style="white-space:pre-wrap;font-size:.78rem;background:#f6f7fb;border:1px solid #dde2ef;border-radius:8px;padding:10px;">${safeHtml(JSON.stringify(layout.sections || [], null, 2))}</pre>`;
+    card.querySelector("button").addEventListener("click", () => {
+      const activeLayout = {
+        sections: (layout.sections || []).map(({ id, title, type, placement, fields }) => ({ id, title, type, placement, fields: fields || [] })),
+        generatedAt: Date.now()
+      };
+      const el = document.getElementById("pulseformsActiveLayout");
+      if (el) el.value = JSON.stringify(activeLayout);
+      renderPulseFormsActiveLayout(activeLayout);
+      container.innerHTML = "";
+      document.getElementById("pulseformsLayoutGeneratePanel").style.display = "none";
+      markDirty();
+    });
+    container.appendChild(card);
+  });
+}
+
+pulseformsLayoutGenerateBtn?.addEventListener("click", async () => {
+  const status = document.getElementById("pulseformsLayoutGenerateStatus");
+  const panel = document.getElementById("pulseformsLayoutGeneratePanel");
+  const campaignId = fields.id.value.trim();
+  if (!campaignId) { alert("Guarda el campaign primero."); return; }
+  pulseformsLayoutGenerateBtn.disabled = true;
+  pulseformsLayoutGenerateBtn.textContent = "Generando layouts...";
+  if (status) { status.textContent = "Generando opciones con IA..."; status.style.color = "#888"; }
+  if (panel) panel.style.display = "none";
+  try {
+    const data = await apiRequest("/api/pulseforms/generate-layouts", {
+      method: "POST",
+      body: JSON.stringify({ campaignId })
+    });
+    if (!data.ok || !data.layouts?.length) throw new Error(data.error || "No layouts returned");
+    if (panel) panel.style.display = "block";
+    renderPulseFormsLayoutCards(data.layouts);
+    if (status) { status.textContent = `${data.layouts.length} opciones generadas.`; status.style.color = "#15803d"; }
+  } catch (err) {
+    if (status) { status.textContent = `Error: ${err.message}`; status.style.color = "#dc2626"; }
+  } finally {
+    pulseformsLayoutGenerateBtn.disabled = false;
+    pulseformsLayoutGenerateBtn.textContent = "Generar opciones de layout";
+  }
+});
+
+document.getElementById("pulseformsLayoutClearBtn")?.addEventListener("click", () => {
+  const el = document.getElementById("pulseformsActiveLayout");
+  if (el) el.value = "null";
+  renderPulseFormsActiveLayout(null);
+  markDirty();
 });
 
 const SUMMARY_AGENTIC_DEFAULT_PROMPT = `You are an intelligent assistant for a BPO call center agent.
@@ -1857,6 +2142,18 @@ function fillForm(campaign) {
   if (activeLayoutEl) activeLayoutEl.value = JSON.stringify(sa.activeLayout || null);
   renderActiveLayout(sa.activeLayout || null);
   updateSummaryAgenticUrls(campaign.id || "");
+  const pf = campaign.pulseforms || {};
+  if (fields.pulseformsEnabled) fields.pulseformsEnabled.checked = pf.enabled !== false;
+  if (fields.pulseformsMode) fields.pulseformsMode.value = pf.mode || "query";
+  if (fields.pulseformsAiProvider) fields.pulseformsAiProvider.value = pf.aiProvider || "claude";
+  if (fields.pulseformsAiModel) fields.pulseformsAiModel.value = pf.aiModel || "";
+  if (fields.pulseformsAiApiKey) fields.pulseformsAiApiKey.value = campaign.pulseformsAiApiKey || "";
+  if (fields.pulseformsAiPrompt) fields.pulseformsAiPrompt.value = pf.aiPrompt || "";
+  renderPulseFormsDataSources(pf.dataSources || []);
+  const pfLayoutEl = document.getElementById("pulseformsActiveLayout");
+  if (pfLayoutEl) pfLayoutEl.value = JSON.stringify(pf.activeLayout || null);
+  renderPulseFormsActiveLayout(pf.activeLayout || null);
+  updatePulseFormsUrls(campaign.id || "");
   updateBreadcrumb(campaign.name || campaign.id || "");
   updateAdminPermissionUi();
   schedulePreviewRender();
@@ -2026,6 +2323,18 @@ function readForm() {
       },
       activeLayout: (() => {
         try { return JSON.parse(document.getElementById("summaryagenticActiveLayout")?.value || "null"); } catch { return null; }
+      })()
+    },
+    pulseformsAiApiKey: fields.pulseformsAiApiKey?.value.trim() || "",
+    pulseforms: {
+      enabled: fields.pulseformsEnabled?.checked !== false,
+      mode: fields.pulseformsMode?.value || "query",
+      aiProvider: fields.pulseformsAiProvider?.value || "claude",
+      aiModel: fields.pulseformsAiModel?.value.trim() || "",
+      aiPrompt: fields.pulseformsAiPrompt?.value.trim() || "",
+      dataSources: readPulseFormsDataSources(),
+      activeLayout: (() => {
+        try { return JSON.parse(document.getElementById("pulseformsActiveLayout")?.value || "null"); } catch { return null; }
       })()
     }
   };
@@ -2248,6 +2557,30 @@ function applyDefaultUiValues() {
   fields.summaryagenticAiModel.value = "";
   fields.summaryagenticAiApiKey.value = "";
   fields.summaryagenticAiPrompt.value = "";
+  if (fields.pulseformsEnabled) fields.pulseformsEnabled.checked = true;
+  if (fields.pulseformsMode) fields.pulseformsMode.value = "query";
+  if (fields.pulseformsAiProvider) fields.pulseformsAiProvider.value = "claude";
+  if (fields.pulseformsAiModel) fields.pulseformsAiModel.value = "";
+  if (fields.pulseformsAiApiKey) fields.pulseformsAiApiKey.value = "";
+  if (fields.pulseformsAiPrompt) fields.pulseformsAiPrompt.value = "";
+  renderPulseFormsDataSources([
+    {
+      id: crypto.randomUUID(),
+      name: "Sugar CRM — Contact lookup",
+      mode: "query",
+      url: "https://sugar.example.com/rest/v11/Contacts?filter[0][phone_work][$equals]={{phone}}",
+      method: "GET",
+      headersJson: '{"OAuth-Token": "YOUR_SUGAR_TOKEN"}',
+      bodyTemplate: "",
+      fixedParams: "",
+      enabled: true,
+      description: "Consulta contactos de Sugar CRM por telefono."
+    }
+  ]);
+  const pfLayoutEl = document.getElementById("pulseformsActiveLayout");
+  if (pfLayoutEl) pfLayoutEl.value = "null";
+  renderPulseFormsActiveLayout(null);
+  updatePulseFormsUrls("");
   renderSummaryDataSources([
     {
       id: crypto.randomUUID(),
@@ -2479,6 +2812,8 @@ function buildPreviewDocument(pageType, config, previewOptions) {
       ? buildQuestionsPreview(config)
     : pageType === "workitem"
       ? buildWorkitemPreview(config)
+    : pageType === "pulseforms"
+      ? buildPulseFormsPreview(config)
       : buildSentimentPreview(config);
 
   return `<!DOCTYPE html>
@@ -2619,6 +2954,28 @@ function buildWorkitemPreview(config) {
         </section>
       </div>
     </section>`;
+}
+
+function buildPulseFormsPreview(config) {
+  const pf = config.pulseforms || {};
+  const sources = pf.dataSources || [];
+  return `
+    <main style="padding:22px;font-family:Manrope,sans-serif;background:#f7f5f0;min-height:100%;">
+      <section style="background:#fff;border:1px solid #d7deec;border-radius:12px;padding:20px;box-shadow:0 10px 24px rgba(32,42,90,.08);">
+        <h1 style="margin:0 0 6px;color:#202a5a;font-size:1.55rem;">PulseForms</h1>
+        <p style="margin:0 0 18px;color:#667085;">CRM query and submit widget · ${escapeHtml(pf.mode || "query")}</p>
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;">
+          <div style="border:1px solid #d7deec;border-radius:9px;padding:12px;background:#fbfcff;"><strong>AI Provider</strong><br>${escapeHtml(pf.aiProvider || "claude")}</div>
+          <div style="border:1px solid #d7deec;border-radius:9px;padding:12px;background:#fbfcff;"><strong>Sources</strong><br>${sources.length}</div>
+          ${sources.slice(0, 4).map((src) => `
+            <div style="border:1px solid #d7deec;border-radius:9px;padding:12px;background:#fbfcff;">
+              <strong>${escapeHtml(src.name || "CRM source")}</strong><br>
+              <span style="color:#667085;">${escapeHtml(src.mode || "query")} · ${escapeHtml(src.method || "GET")}</span>
+            </div>
+          `).join("")}
+        </div>
+      </section>
+    </main>`;
 }
 
 function buildSentimentPreview(config) {
