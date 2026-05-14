@@ -787,6 +787,11 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/pulseforms/analyze-fields") {
+    await handlePulseFormsAnalyzeFields(req, res);
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/pulseforms/generate-layouts") {
     await handlePulseFormsGenerateLayouts(req, res);
     return;
@@ -2679,6 +2684,68 @@ Return ONLY valid JSON with fields: name, url, fixedParams, headersJson, bodyTem
   }
 }
 
+async function handlePulseFormsAnalyzeFields(req, res) {
+  try {
+    let body;
+    try { body = await readJson(req); } catch { sendJson(res, 400, { error: "Invalid JSON body" }); return; }
+    const session = getSessionFromRequest(req);
+    if (!session) { sendJson(res, 401, { error: "Unauthorized" }); return; }
+    const campaignId = String(body.campaignId || "").trim();
+    if (!campaignId) { sendJson(res, 400, { error: "campaignId is required. Save/select the campaign first." }); return; }
+
+    const campaigns = await getEffectiveCampaigns();
+    const config = campaigns.find((c) => c.id === campaignId);
+    if (!config) { sendJson(res, 404, { error: "Campaign not found" }); return; }
+
+    const pf = config.pulseforms || {};
+    const aiProvider = pf.aiProvider || "claude";
+    const aiApiKey = config.pulseformsAiApiKey || "";
+    const aiModel = pf.aiModel || defaultAiModel(aiProvider);
+    if (!aiApiKey) { sendJson(res, 400, { error: "No AI API key configured for PulseForms." }); return; }
+
+    const files = normalizePulseFormsAiFiles(body.files || []);
+    if (!files.length) { sendJson(res, 400, { error: "At least one file is required." }); return; }
+
+    const existingFields = Array.isArray(body.existingFields) ? body.existingFields : [];
+    const systemPrompt = `You are a CRM form analyst for a widget called PulseForms. Review the provided screenshots, documents or text and infer the fields needed to build a CRM integration form.
+Return ONLY valid JSON:
+{"fields":[{"id":"snake_case_id","label":"Human label","type":"text|textarea|number|phone|email|date|select|checkbox","required":true|false,"options":"comma separated options when type is select","reason":"short reason"}],"explanation":"short summary"}
+Rules: avoid duplicate existing fields, use stable snake_case ids, prefer practical CRM fields, and include only fields supported by the evidence.`;
+    const contextText = JSON.stringify({
+      notes: String(body.notes || "").trim(),
+      existingFields,
+      files: files.map((file) => ({
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        text: file.text || "",
+        hasBinary: Boolean(file.base64)
+      }))
+    }, null, 2);
+
+    const rawText = await callAiForPulseFormsFieldDiscovery(aiProvider, aiApiKey, aiModel, systemPrompt, contextText, files);
+    let parsed;
+    try {
+      const cleaned = rawText.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
+      parsed = JSON.parse(cleaned);
+    } catch {
+      sendJson(res, 502, { error: "AI returned invalid field JSON", raw: rawText.slice(0, 500) });
+      return;
+    }
+    const normalizedFields = normalizePulseFormsFields(parsed.fields || []).map((field, index) => ({
+      ...field,
+      reason: String(parsed.fields?.[index]?.reason || "").trim()
+    }));
+    sendJson(res, 200, {
+      ok: true,
+      fields: normalizedFields,
+      explanation: String(parsed.explanation || "")
+    });
+  } catch (error) {
+    sendJson(res, 500, { error: `PulseForms field analysis failed: ${error.message}` });
+  }
+}
+
 async function handlePulseFormsGenerateLayouts(req, res) {
   try {
     let body;
@@ -3065,6 +3132,36 @@ async function callAiForSummary(provider, apiKey, model, systemPrompt, contextTe
   return callGeminiForSummary(apiKey, model, systemPrompt, contextText);
 }
 
+function normalizePulseFormsAiFiles(files) {
+  if (!Array.isArray(files)) return [];
+  const maxBytes = 5 * 1024 * 1024;
+  let totalBytes = 0;
+  return files
+    .map((file) => {
+      const name = String(file.name || "uploaded-file").slice(0, 180);
+      const type = String(file.type || "application/octet-stream").slice(0, 120);
+      const size = Number(file.size || 0);
+      if (!Number.isFinite(size) || size < 0 || size > maxBytes) return null;
+      totalBytes += size;
+      if (totalBytes > 15 * 1024 * 1024) return null;
+      const text = String(file.text || "").slice(0, 40000);
+      const base64 = String(file.base64 || "").replace(/\s/g, "");
+      return { name, type, size, text, base64 };
+    })
+    .filter(Boolean)
+    .filter((file) => file.text || file.base64);
+}
+
+async function callAiForPulseFormsFieldDiscovery(provider, apiKey, model, systemPrompt, contextText, files) {
+  if (provider === "claude") {
+    return callClaudeForPulseFormsFields(apiKey, model, systemPrompt, contextText, files);
+  }
+  if (provider === "openai") {
+    return callOpenAiForPulseFormsFields(apiKey, model, systemPrompt, contextText, files);
+  }
+  return callGeminiForPulseFormsFields(apiKey, model, systemPrompt, contextText, files);
+}
+
 async function callClaudeForSummary(apiKey, model, systemPrompt, contextText) {
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -3089,6 +3186,48 @@ async function callClaudeForSummary(apiKey, model, systemPrompt, contextText) {
 
   const payload = await response.json();
   const text = payload?.content?.[0]?.text || "";
+  if (!text) throw new Error("Claude returned an empty response.");
+  return text;
+}
+
+async function callClaudeForPulseFormsFields(apiKey, model, systemPrompt, contextText, files) {
+  const content = [{ type: "text", text: contextText }];
+  for (const file of files || []) {
+    if (!file.base64) continue;
+    if (file.type.startsWith("image/")) {
+      content.push({
+        type: "image",
+        source: { type: "base64", media_type: file.type, data: file.base64 }
+      });
+    } else if (file.type === "application/pdf") {
+      content.push({
+        type: "document",
+        source: { type: "base64", media_type: "application/pdf", data: file.base64 }
+      });
+    }
+  }
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-beta": "pdfs-2024-09-25"
+    },
+    body: JSON.stringify({
+      model: model || "claude-sonnet-4-6",
+      max_tokens: 8192,
+      system: systemPrompt,
+      messages: [{ role: "user", content }]
+    }),
+    signal: AbortSignal.timeout(120000)
+  });
+  if (!response.ok) {
+    const errText = await response.text().catch(() => "");
+    throw new Error(`Claude API returned ${response.status}${errText ? `: ${errText}` : ""}`);
+  }
+  const payload = await response.json();
+  const text = payload?.content?.map((part) => part?.text || "").join("").trim();
   if (!text) throw new Error("Claude returned an empty response.");
   return text;
 }
@@ -3123,6 +3262,42 @@ async function callOpenAiForSummary(apiKey, model, systemPrompt, contextText) {
   return text;
 }
 
+async function callOpenAiForPulseFormsFields(apiKey, model, systemPrompt, contextText, files) {
+  const content = [{ type: "text", text: contextText }];
+  for (const file of files || []) {
+    if (!file.base64 || !file.type.startsWith("image/")) continue;
+    content.push({
+      type: "image_url",
+      image_url: { url: `data:${file.type};base64,${file.base64}` }
+    });
+  }
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model: model || "gpt-4o",
+      max_tokens: 8192,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content }
+      ]
+    }),
+    signal: AbortSignal.timeout(120000)
+  });
+  if (!response.ok) {
+    const errText = await response.text().catch(() => "");
+    throw new Error(`OpenAI API returned ${response.status}${errText ? `: ${errText}` : ""}`);
+  }
+  const payload = await response.json();
+  const text = payload?.choices?.[0]?.message?.content || "";
+  if (!text) throw new Error("OpenAI returned an empty response.");
+  return text;
+}
+
 async function callGeminiForSummary(apiKey, model, systemPrompt, contextText) {
   const endpoint = buildGeminiEndpoint("https://generativelanguage.googleapis.com", model || "gemini-2.5-flash");
   const response = await fetch(endpoint, {
@@ -3144,6 +3319,36 @@ async function callGeminiForSummary(apiKey, model, systemPrompt, contextText) {
     throw new Error(`Gemini API returned ${response.status}${errText ? `: ${errText}` : ""}`);
   }
 
+  const payload = await response.json();
+  const text = payload?.candidates?.[0]?.content?.parts?.map((p) => p?.text || "").join("").trim();
+  if (!text) throw new Error("Gemini returned an empty response.");
+  return text;
+}
+
+async function callGeminiForPulseFormsFields(apiKey, model, systemPrompt, contextText, files) {
+  const endpoint = buildGeminiEndpoint("https://generativelanguage.googleapis.com", model || "gemini-2.5-flash");
+  const parts = [{ text: contextText }];
+  for (const file of files || []) {
+    if (!file.base64) continue;
+    parts.push({ inlineData: { mimeType: file.type || "application/octet-stream", data: file.base64 } });
+  }
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": apiKey
+    },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      contents: [{ parts }],
+      generationConfig: { temperature: 0.2, maxOutputTokens: 8192, responseMimeType: "application/json" }
+    }),
+    signal: AbortSignal.timeout(120000)
+  });
+  if (!response.ok) {
+    const errText = await response.text().catch(() => "");
+    throw new Error(`Gemini API returned ${response.status}${errText ? `: ${errText}` : ""}`);
+  }
   const payload = await response.json();
   const text = payload?.candidates?.[0]?.content?.parts?.map((p) => p?.text || "").join("").trim();
   if (!text) throw new Error("Gemini returned an empty response.");

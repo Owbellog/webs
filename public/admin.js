@@ -52,6 +52,10 @@ const pulseformsSourcesList = document.getElementById("pulseformsSourcesList");
 const pulseformsAddSourceButton = document.getElementById("pulseformsAddSource");
 const pulseformsFieldsList = document.getElementById("pulseformsFieldsList");
 const pulseformsAddFieldButton = document.getElementById("pulseformsAddField");
+const pulseformsFieldFiles = document.getElementById("pulseformsFieldFiles");
+const pulseformsAnalyzeFieldsBtn = document.getElementById("pulseformsAnalyzeFieldsBtn");
+const pulseformsAddSuggestedFieldsBtn = document.getElementById("pulseformsAddSuggestedFieldsBtn");
+const pulseformsSuggestedFieldsList = document.getElementById("pulseformsSuggestedFieldsList");
 const pulseformsImportToggle = document.getElementById("pulseformsImportToggle");
 const pulseformsImportForm = document.getElementById("pulseformsImportForm");
 const pulseformsAnalyzeBtn = document.getElementById("pulseformsAnalyzeBtn");
@@ -602,6 +606,76 @@ function refreshPulseFormsMappingOptions() {
     const selected = select.value;
     select.innerHTML = getPulseFormsFieldOptions(selected);
   });
+}
+
+function renderPulseFormsSuggestedFields(fields = []) {
+  if (!pulseformsSuggestedFieldsList) return;
+  pulseformsSuggestedFieldsList.innerHTML = "";
+  (fields || []).forEach((field, index) => {
+    const card = document.createElement("div");
+    card.className = "sa-source-card";
+    card.style.padding = "12px";
+    card.innerHTML = `
+      <label style="display:flex;align-items:flex-start;gap:10px;margin:0;">
+        <input class="pf-suggested-field-check" type="checkbox" data-index="${index}" checked style="margin-top:4px;" />
+        <span>
+          <strong>${escapeHtml(field.label || field.id || "Field")}</strong>
+          <span style="display:block;color:#667085;font-size:.82rem;">${escapeHtml(field.id || "")} · ${escapeHtml(field.type || "text")}${field.required ? " · required" : ""}</span>
+          ${field.reason ? `<span style="display:block;color:#667085;font-size:.78rem;margin-top:4px;">${escapeHtml(field.reason)}</span>` : ""}
+        </span>
+      </label>`;
+    pulseformsSuggestedFieldsList.appendChild(card);
+  });
+  pulseformsSuggestedFieldsList.dataset.fields = JSON.stringify(fields || []);
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = reject;
+    reader.readAsText(file);
+  });
+}
+
+function shouldReadPulseFormsFileAsText(file) {
+  const type = String(file.type || "").toLowerCase();
+  return type.startsWith("text/")
+    || ["application/json", "application/xml", "text/csv"].includes(type)
+    || /\.(txt|csv|json|md|xml)$/i.test(file.name || "");
+}
+
+async function readPulseFormsDiscoveryFiles(fileList) {
+  const files = Array.from(fileList || []);
+  const maxBytes = 5 * 1024 * 1024;
+  const selected = [];
+  for (const file of files) {
+    if (file.size > maxBytes) {
+      throw new Error(`${file.name} supera 5 MB.`);
+    }
+    const item = {
+      name: file.name,
+      type: file.type || "application/octet-stream",
+      size: file.size
+    };
+    if (shouldReadPulseFormsFileAsText(file)) {
+      item.text = (await readFileAsText(file)).slice(0, 40000);
+    } else {
+      const dataUrl = await readFileAsDataUrl(file);
+      item.base64 = dataUrl.split(",")[1] || "";
+    }
+    selected.push(item);
+  }
+  return selected;
 }
 
 function addHeaderRow(container, key = "", value = "") {
@@ -1589,6 +1663,59 @@ pulseformsAddSourceButton?.addEventListener("click", () => {
 
 pulseformsAddFieldButton?.addEventListener("click", () => {
   addPulseFormsFieldRow({});
+  refreshPulseFormsMappingOptions();
+  markDirty();
+});
+
+pulseformsAnalyzeFieldsBtn?.addEventListener("click", async () => {
+  const files = pulseformsFieldFiles?.files;
+  if (!files || !files.length) { alert("Selecciona al menos un archivo."); return; }
+  const status = document.getElementById("pulseformsFieldDiscoveryStatus");
+  const result = document.getElementById("pulseformsFieldDiscoveryResult");
+  const explanation = document.getElementById("pulseformsFieldDiscoveryExplanation");
+  const notes = document.getElementById("pulseformsFieldDiscoveryNotes")?.value.trim() || "";
+  const campaignId = fields.id.value.trim();
+  pulseformsAnalyzeFieldsBtn.disabled = true;
+  pulseformsAnalyzeFieldsBtn.textContent = "Analizando...";
+  if (status) status.textContent = "Leyendo archivos...";
+  if (result) result.style.display = "none";
+  if (pulseformsAddSuggestedFieldsBtn) pulseformsAddSuggestedFieldsBtn.style.display = "none";
+  try {
+    const attachments = await readPulseFormsDiscoveryFiles(files);
+    if (status) status.textContent = "Consultando IA...";
+    const data = await apiRequest("/api/pulseforms/analyze-fields", {
+      method: "POST",
+      body: JSON.stringify({ campaignId, notes, existingFields: readPulseFormsFields(), files: attachments })
+    });
+    renderPulseFormsSuggestedFields(data.fields || []);
+    if (explanation) explanation.textContent = data.explanation || "Campos sugeridos por IA.";
+    if (result) result.style.display = "block";
+    if (pulseformsAddSuggestedFieldsBtn && (data.fields || []).length) {
+      pulseformsAddSuggestedFieldsBtn.style.display = "inline-block";
+    }
+    if (status) status.textContent = `${(data.fields || []).length} campos sugeridos.`;
+  } catch (err) {
+    if (status) status.textContent = "";
+    alert("Error al analizar archivos: " + err.message);
+  } finally {
+    pulseformsAnalyzeFieldsBtn.disabled = false;
+    pulseformsAnalyzeFieldsBtn.textContent = "Analizar archivos con IA";
+  }
+});
+
+pulseformsAddSuggestedFieldsBtn?.addEventListener("click", () => {
+  let suggestions = [];
+  try { suggestions = JSON.parse(pulseformsSuggestedFieldsList?.dataset.fields || "[]"); } catch { suggestions = []; }
+  const existingIds = new Set(readPulseFormsFields().map((field) => field.id));
+  pulseformsSuggestedFieldsList?.querySelectorAll(".pf-suggested-field-check:checked").forEach((checkbox) => {
+    const idx = Number(checkbox.dataset.index);
+    const field = suggestions[idx];
+    if (!field) return;
+    const id = normalizePulseFormsFieldId(field.id || field.label);
+    if (!id || existingIds.has(id)) return;
+    existingIds.add(id);
+    addPulseFormsFieldRow({ ...field, id });
+  });
   refreshPulseFormsMappingOptions();
   markDirty();
 });

@@ -1000,6 +1000,33 @@
                 </details>
 
                 <details class="admin-subsection" open>
+                  <summary>AI Field Discovery <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
+                    <p class="admin-field-note" style="margin:0 0 8px;">
+                      Carga imagenes, PDF, DOC/DOCX o archivos de texto para que la IA proponga los campos necesarios del formulario.
+                    </p>
+                    <div class="admin-field admin-field--full">
+                      <label for="pulseformsFieldFiles">Documents</label>
+                      <input id="pulseformsFieldFiles" type="file" multiple accept="image/*,.pdf,.doc,.docx,.txt,.csv,.json,.md" />
+                      <span class="admin-field-note">Maximo recomendado: 5 MB por archivo. Para DOC/DOCX, si el proveedor IA no acepta el binario, usa PDF o texto exportado.</span>
+                    </div>
+                    <div class="admin-field admin-field--full">
+                      <label for="pulseformsFieldDiscoveryNotes">Notas para la IA</label>
+                      <textarea id="pulseformsFieldDiscoveryNotes" rows="3" placeholder="Ej: crear campos para contacto de Sugar CRM, incluir telefono, email, empresa y motivo de consulta."></textarea>
+                    </div>
+                    <div class="admin-field admin-field--full" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                      <button type="button" class="primary" id="pulseformsAnalyzeFieldsBtn">Analizar archivos con IA</button>
+                      <button type="button" class="secondary" id="pulseformsAddSuggestedFieldsBtn" style="display:none;">Agregar campos sugeridos</button>
+                      <span id="pulseformsFieldDiscoveryStatus" class="admin-field-note" style="margin:0;"></span>
+                    </div>
+                    <div class="admin-field admin-field--full" id="pulseformsFieldDiscoveryResult" style="display:none;">
+                      <div class="sa-analyze-explanation" id="pulseformsFieldDiscoveryExplanation"></div>
+                      <div class="sa-datasources-list" id="pulseformsSuggestedFieldsList" style="margin-top:10px;"></div>
+                    </div>
+                  </div>
+                </details>
+
+                <details class="admin-subsection" open>
                   <summary>Data Sources <span class="chevron">▼</span></summary>
                   <div class="admin-section-grid admin-subsection-grid">
                     <p class="admin-field-note" style="margin:0 0 8px;">
