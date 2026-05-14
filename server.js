@@ -2785,13 +2785,14 @@ async function handlePulseFormsGenerateLayouts(req, res) {
     const aiModel = pf.aiModel || defaultAiModel(aiProvider);
     if (!aiApiKey) { sendJson(res, 400, { error: "No AI API key configured for PulseForms." }); return; }
 
+    const customPrompt = String(body.customPrompt || "").trim();
     const sources = (pf.dataSources || []).map((s) => ({
       id: s.id, name: s.name, mode: s.mode, method: s.method, url: s.url,
       description: s.description, bodyTemplate: s.bodyTemplate, fieldMappings: s.fieldMappings || {}
     }));
     const formFields = pf.formFields || [];
     const systemPrompt = `You are a UX designer for a CRM integration widget called PulseForms. Generate 3 layout options for a widget that can query or submit information to Sugar CRM or another CRM.
-Return ONLY valid JSON: {"layouts":[{"id":"layout_1","name":"...","description":"...","sections":[{"id":"...","title":"...","type":"form|results|actions|status|notes","placement":"main|side","fields":["..."]}]}]}`;
+Return ONLY valid JSON: {"layouts":[{"id":"layout_1","name":"...","description":"...","sections":[{"id":"...","title":"...","type":"form|results|actions|status|notes","placement":"main|side","fields":["..."]}]}]}${customPrompt ? `\n\nAdditional instructions from the user: ${customPrompt}` : ""}`;
     const rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, systemPrompt, JSON.stringify({ mode: pf.mode, formFields, sources }, null, 2));
     try {
       const cleaned = rawText.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();

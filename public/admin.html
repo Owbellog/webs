@@ -1123,7 +1123,12 @@
                   <summary>Layout del Widget <span class="chevron">▼</span></summary>
                   <div class="admin-section-grid admin-subsection-grid">
                     <div class="admin-field admin-field--full">
-                      <span class="admin-field-note">La IA puede proponer layouts para formularios de consulta/envio usando las fuentes configuradas.</span>
+                      <span class="admin-field-note">La IA propone hasta 3 layouts visuales para organizar los campos del formulario. Selecciona uno para fijarlo.</span>
+                    </div>
+                    <div class="admin-field admin-field--full">
+                      <label for="pulseformsLayoutPrompt">Instrucciones para la IA <span style="font-weight:400;color:#888;">(opcional)</span></label>
+                      <textarea id="pulseformsLayoutPrompt" rows="2" placeholder="Ej: organiza los campos técnicos en la columna derecha, agrupa contacto arriba, pon el botón de envío al final."></textarea>
+                      <span class="admin-field-note">Si el primer resultado no te convence, escribe aquí indicaciones y vuelve a generar.</span>
                     </div>
                     <div class="admin-field admin-field--full" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
                       <button type="button" class="primary" id="pulseformsLayoutGenerateBtn">Generar opciones de layout</button>

@@ -1881,6 +1881,43 @@ function renderPulseFormsActiveLayout(layout) {
   }
 }
 
+function buildPulseFormsLayoutPreview(layout) {
+  const fields = readPulseFormsFields();
+  const fieldMap = Object.fromEntries(fields.map((f) => [f.id, f]));
+  const typeIcon = { textarea: "¶", select: "▾", checkbox: "☑", phone: "✆", email: "✉", number: "#", date: "📅", text: "—" };
+
+  const renderSection = (section) => {
+    const fieldItems = (section.fields || []).map((fid) => {
+      const f = fieldMap[fid] || { label: fid, type: "text" };
+      const icon = typeIcon[f.type] || "—";
+      return `<div style="display:flex;align-items:center;gap:5px;padding:4px 0;border-bottom:1px solid #eef0f8;">
+        <span style="font-size:.7rem;color:#aab0bf;width:14px;text-align:center;">${icon}</span>
+        <span style="font-size:.75rem;color:#555d72;font-weight:600;flex:1;">${safeHtml(f.label || fid)}</span>
+        <span style="font-size:.68rem;color:#c8cdd8;">${safeHtml(f.type)}</span>
+      </div>`;
+    }).join("");
+    return `
+      <div style="background:#fff;border:1px solid #e2e6f0;border-radius:8px;padding:8px 10px;margin-bottom:6px;">
+        <div style="font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#4a6cf7;margin-bottom:4px;">${safeHtml(section.title || section.id || "")}</div>
+        ${fieldItems || '<span style="font-size:.72rem;color:#c8cdd8;">Sin campos</span>'}
+      </div>`;
+  };
+
+  const mainSections = (layout.sections || []).filter((s) => s.placement !== "side");
+  const sideSections = (layout.sections || []).filter((s) => s.placement === "side");
+
+  const mainHtml = mainSections.map(renderSection).join("");
+  const sideHtml = sideSections.map(renderSection).join("");
+
+  if (!sideSections.length) {
+    return `<div style="padding:8px;">${mainHtml}</div>`;
+  }
+  return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:8px;">
+    <div>${mainHtml}</div>
+    <div>${sideHtml}</div>
+  </div>`;
+}
+
 function renderPulseFormsLayoutCards(layouts) {
   const container = document.getElementById("pulseformsLayoutCards");
   if (!container) return;
@@ -1894,10 +1931,10 @@ function renderPulseFormsLayoutCards(layouts) {
           <strong>${safeHtml(layout.name || layout.id || "PulseForms layout")}</strong>
           <div class="sa-layout-card-desc">${safeHtml(layout.description || "")}</div>
         </div>
-        <button type="button" class="primary" style="flex-shrink:0;">Usar este layout</button>
+        <button type="button" class="primary sa-layout-select-btn" style="flex-shrink:0;">Usar este layout</button>
       </div>
-      <pre style="white-space:pre-wrap;font-size:.78rem;background:#f6f7fb;border:1px solid #dde2ef;border-radius:8px;padding:10px;">${safeHtml(JSON.stringify(layout.sections || [], null, 2))}</pre>`;
-    card.querySelector("button").addEventListener("click", () => {
+      <div class="sa-layout-preview-wrap">${buildPulseFormsLayoutPreview(layout)}</div>`;
+    card.querySelector(".sa-layout-select-btn").addEventListener("click", () => {
       const activeLayout = {
         sections: (layout.sections || []).map(({ id, title, type, placement, fields }) => ({ id, title, type, placement, fields: fields || [] })),
         generatedAt: Date.now()
@@ -1923,9 +1960,10 @@ pulseformsLayoutGenerateBtn?.addEventListener("click", async () => {
   if (status) { status.textContent = "Generando opciones con IA..."; status.style.color = "#888"; }
   if (panel) panel.style.display = "none";
   try {
+    const customPrompt = document.getElementById("pulseformsLayoutPrompt")?.value.trim() || "";
     const data = await apiRequest("/api/pulseforms/generate-layouts", {
       method: "POST",
-      body: JSON.stringify({ campaignId })
+      body: JSON.stringify({ campaignId, customPrompt })
     });
     if (!data.ok || !data.layouts?.length) throw new Error(data.error || "No layouts returned");
     if (panel) panel.style.display = "block";
