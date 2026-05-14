@@ -50,6 +50,8 @@ const summaryagenticAnalyzeResult = document.getElementById("summaryagenticAnaly
 const summaryagenticAddFromAnalysis = document.getElementById("summaryagenticAddFromAnalysis");
 const pulseformsSourcesList = document.getElementById("pulseformsSourcesList");
 const pulseformsAddSourceButton = document.getElementById("pulseformsAddSource");
+const pulseformsFieldsList = document.getElementById("pulseformsFieldsList");
+const pulseformsAddFieldButton = document.getElementById("pulseformsAddField");
 const pulseformsImportToggle = document.getElementById("pulseformsImportToggle");
 const pulseformsImportForm = document.getElementById("pulseformsImportForm");
 const pulseformsAnalyzeBtn = document.getElementById("pulseformsAnalyzeBtn");
@@ -455,6 +457,151 @@ function renderPulseFormsDataSources(sources) {
   if (!pulseformsSourcesList) return;
   pulseformsSourcesList.innerHTML = "";
   (sources || []).forEach((src) => addPulseFormsSourceCard(src));
+}
+
+function normalizePulseFormsFieldId(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function renderPulseFormsFields(fields = []) {
+  if (!pulseformsFieldsList) return;
+  pulseformsFieldsList.innerHTML = "";
+  (fields || []).forEach((field) => addPulseFormsFieldRow(field));
+}
+
+function addPulseFormsFieldRow(field = {}) {
+  if (!pulseformsFieldsList) return;
+  const row = document.createElement("div");
+  row.className = "sa-source-card";
+  row.style.padding = "12px";
+  row.innerHTML = `
+    <div class="sa-source-body" style="display:grid;">
+      <div class="sa-source-field">
+        <label>Field ID</label>
+        <input class="pf-form-field-id" type="text" value="${escapeHtml(field.id || "")}" placeholder="phone" />
+      </div>
+      <div class="sa-source-field">
+        <label>Label</label>
+        <input class="pf-form-field-label" type="text" value="${escapeHtml(field.label || "")}" placeholder="Phone number" />
+      </div>
+      <div class="sa-source-field">
+        <label>Type</label>
+        <select class="pf-form-field-type">
+          <option value="text"${(field.type || "text") === "text" ? " selected" : ""}>Text</option>
+          <option value="textarea"${field.type === "textarea" ? " selected" : ""}>Textarea</option>
+          <option value="number"${field.type === "number" ? " selected" : ""}>Number</option>
+          <option value="phone"${field.type === "phone" ? " selected" : ""}>Phone</option>
+          <option value="email"${field.type === "email" ? " selected" : ""}>Email</option>
+          <option value="date"${field.type === "date" ? " selected" : ""}>Date</option>
+          <option value="select"${field.type === "select" ? " selected" : ""}>Select</option>
+          <option value="checkbox"${field.type === "checkbox" ? " selected" : ""}>Checkbox</option>
+        </select>
+      </div>
+      <div class="sa-source-field">
+        <label>Options</label>
+        <input class="pf-form-field-options" type="text" value="${escapeHtml(field.options || "")}" placeholder="Only for select: A, B, C" />
+      </div>
+      <div class="sa-source-field">
+        <label><input class="pf-form-field-required" type="checkbox"${field.required ? " checked" : ""} /> Required</label>
+      </div>
+      <div class="sa-source-field">
+        <button type="button" class="sa-source-remove">Remove field</button>
+      </div>
+    </div>`;
+  const idInput = row.querySelector(".pf-form-field-id");
+  const labelInput = row.querySelector(".pf-form-field-label");
+  labelInput?.addEventListener("blur", () => {
+    if (idInput && !idInput.value.trim()) {
+      idInput.value = normalizePulseFormsFieldId(labelInput.value);
+      refreshPulseFormsMappingOptions();
+      markDirty();
+    }
+  });
+  row.querySelector(".sa-source-remove")?.addEventListener("click", () => {
+    row.remove();
+    refreshPulseFormsMappingOptions();
+    markDirty();
+  });
+  row.querySelectorAll("input, select").forEach((el) => {
+    el.addEventListener("input", () => { refreshPulseFormsMappingOptions(); markDirty(); });
+    el.addEventListener("change", () => { refreshPulseFormsMappingOptions(); markDirty(); });
+  });
+  pulseformsFieldsList.appendChild(row);
+}
+
+function readPulseFormsFields() {
+  if (!pulseformsFieldsList) return [];
+  return Array.from(pulseformsFieldsList.querySelectorAll(".sa-source-card")).map((row) => {
+    const label = row.querySelector(".pf-form-field-label")?.value.trim() || "";
+    const rawId = row.querySelector(".pf-form-field-id")?.value.trim() || label;
+    return {
+      id: normalizePulseFormsFieldId(rawId),
+      label,
+      type: row.querySelector(".pf-form-field-type")?.value || "text",
+      required: row.querySelector(".pf-form-field-required")?.checked === true,
+      options: row.querySelector(".pf-form-field-options")?.value.trim() || ""
+    };
+  }).filter((field) => field.id && field.label);
+}
+
+function getPulseFormsFieldOptions(selected = "") {
+  const fieldsList = readPulseFormsFields();
+  const options = ['<option value="">Select form field...</option>'];
+  fieldsList.forEach((field) => {
+    const label = `${field.label} (${field.id})`;
+    options.push(`<option value="${escapeHtml(field.id)}"${field.id === selected ? " selected" : ""}>${escapeHtml(label)}</option>`);
+  });
+  return options.join("");
+}
+
+function addPulseFormsMappingRow(container, formField = "", crmField = "") {
+  if (!container) return;
+  const row = document.createElement("div");
+  row.className = "sa-kv-row pf-mapping-row";
+  row.innerHTML = `
+    <select class="pf-map-form-field">${getPulseFormsFieldOptions(formField)}</select>
+    <input type="text" class="pf-map-crm-field" placeholder="CRM/API field, e.g. phone_work" value="${escapeHtml(crmField)}" />
+    <button type="button" class="sa-kv-remove" title="Remove">✕</button>
+  `;
+  row.querySelector(".sa-kv-remove")?.addEventListener("click", () => {
+    row.remove();
+    markDirty();
+  });
+  row.querySelectorAll("input, select").forEach((el) => {
+    el.addEventListener("input", markDirty);
+    el.addEventListener("change", markDirty);
+  });
+  container.appendChild(row);
+}
+
+function renderPulseFormsMappingRows(container, mappings = {}) {
+  if (!container) return;
+  container.innerHTML = "";
+  const pairs = Array.isArray(mappings)
+    ? mappings.map((item) => [item.formField || item.source || "", item.crmField || item.target || ""])
+    : Object.entries(mappings || {});
+  pairs.forEach(([formField, crmField]) => addPulseFormsMappingRow(container, formField, crmField));
+}
+
+function readPulseFormsMappings(container) {
+  if (!container) return {};
+  return Array.from(container.querySelectorAll(".pf-mapping-row")).reduce((acc, row) => {
+    const formField = row.querySelector(".pf-map-form-field")?.value.trim() || "";
+    const crmField = row.querySelector(".pf-map-crm-field")?.value.trim() || "";
+    if (formField && crmField) acc[formField] = crmField;
+    return acc;
+  }, {});
+}
+
+function refreshPulseFormsMappingOptions() {
+  document.querySelectorAll(".pf-map-form-field").forEach((select) => {
+    const selected = select.value;
+    select.innerHTML = getPulseFormsFieldOptions(selected);
+  });
 }
 
 function addHeaderRow(container, key = "", value = "") {
@@ -1189,6 +1336,12 @@ function addPulseFormsSourceCard(src = {}) {
         <textarea class="sa-field-description" rows="2" placeholder="Ej: Consulta contactos en Sugar CRM por telefono.">${escapeHtml(src.description || "")}</textarea>
       </div>
       <div class="sa-source-field sa-source-field--full">
+        <label>Field homologation</label>
+        <span class="admin-field-note">Mapea campos PulseForms contra los campos esperados por este CRM/API.</span>
+        <div class="pf-mapping-rows" style="margin-top:8px;"></div>
+        <button type="button" class="pf-add-mapping-btn">+ Add mapping</button>
+      </div>
+      <div class="sa-source-field sa-source-field--full">
         <label><input class="sa-field-enabled" type="checkbox"${src.enabled !== false ? " checked" : ""} /> Enabled</label>
       </div>
     </div>`;
@@ -1214,8 +1367,11 @@ function addPulseFormsSourceCard(src = {}) {
     Object.entries(headers).forEach(([k, v]) => addHeaderRow(headersWrap, k, v));
   } catch {}
   parseAdminFixedParams(src.fixedParams || "").forEach(([k, v]) => addParamRow(paramsWrap, k, v));
+  const mappingWrap = card.querySelector(".pf-mapping-rows");
+  renderPulseFormsMappingRows(mappingWrap, src.fieldMappings || {});
   card.querySelector(".sa-add-header-btn").addEventListener("click", () => { addHeaderRow(headersWrap); markDirty(); });
   card.querySelector(".sa-add-param-btn").addEventListener("click", () => { addParamRow(paramsWrap); markDirty(); });
+  card.querySelector(".pf-add-mapping-btn").addEventListener("click", () => { addPulseFormsMappingRow(mappingWrap); markDirty(); });
   pulseformsSourcesList.appendChild(card);
 }
 
@@ -1301,7 +1457,8 @@ function readPulseFormsDataSources() {
     bodyTemplate: card.querySelector(".sa-field-body")?.value.trim() || "",
     enabled: card.querySelector(".sa-field-enabled")?.checked !== false,
     fixedParams: readParamsKv(card.querySelector(".sa-params-kv")),
-    description: card.querySelector(".sa-field-description")?.value.trim() || ""
+    description: card.querySelector(".sa-field-description")?.value.trim() || "",
+    fieldMappings: readPulseFormsMappings(card.querySelector(".pf-mapping-rows"))
   })).filter((s) => s.url);
 }
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1427,6 +1584,12 @@ summaryagenticAddFromAnalysis?.addEventListener("click", () => {
 
 pulseformsAddSourceButton?.addEventListener("click", () => {
   addPulseFormsSourceCard({});
+  markDirty();
+});
+
+pulseformsAddFieldButton?.addEventListener("click", () => {
+  addPulseFormsFieldRow({});
+  refreshPulseFormsMappingOptions();
   markDirty();
 });
 
@@ -2149,6 +2312,7 @@ function fillForm(campaign) {
   if (fields.pulseformsAiModel) fields.pulseformsAiModel.value = pf.aiModel || "";
   if (fields.pulseformsAiApiKey) fields.pulseformsAiApiKey.value = campaign.pulseformsAiApiKey || "";
   if (fields.pulseformsAiPrompt) fields.pulseformsAiPrompt.value = pf.aiPrompt || "";
+  renderPulseFormsFields(pf.formFields || []);
   renderPulseFormsDataSources(pf.dataSources || []);
   const pfLayoutEl = document.getElementById("pulseformsActiveLayout");
   if (pfLayoutEl) pfLayoutEl.value = JSON.stringify(pf.activeLayout || null);
@@ -2332,6 +2496,7 @@ function readForm() {
       aiProvider: fields.pulseformsAiProvider?.value || "claude",
       aiModel: fields.pulseformsAiModel?.value.trim() || "",
       aiPrompt: fields.pulseformsAiPrompt?.value.trim() || "",
+      formFields: readPulseFormsFields(),
       dataSources: readPulseFormsDataSources(),
       activeLayout: (() => {
         try { return JSON.parse(document.getElementById("pulseformsActiveLayout")?.value || "null"); } catch { return null; }
@@ -2563,6 +2728,12 @@ function applyDefaultUiValues() {
   if (fields.pulseformsAiModel) fields.pulseformsAiModel.value = "";
   if (fields.pulseformsAiApiKey) fields.pulseformsAiApiKey.value = "";
   if (fields.pulseformsAiPrompt) fields.pulseformsAiPrompt.value = "";
+  renderPulseFormsFields([
+    { id: "first_name", label: "First name", type: "text", required: false },
+    { id: "last_name", label: "Last name", type: "text", required: false },
+    { id: "phone", label: "Phone", type: "phone", required: true },
+    { id: "email", label: "Email", type: "email", required: false }
+  ]);
   renderPulseFormsDataSources([
     {
       id: crypto.randomUUID(),
@@ -2574,7 +2745,13 @@ function applyDefaultUiValues() {
       bodyTemplate: "",
       fixedParams: "",
       enabled: true,
-      description: "Consulta contactos de Sugar CRM por telefono."
+      description: "Consulta contactos de Sugar CRM por telefono.",
+      fieldMappings: {
+        first_name: "first_name",
+        last_name: "last_name",
+        phone: "phone_work",
+        email: "email1"
+      }
     }
   ]);
   const pfLayoutEl = document.getElementById("pulseformsActiveLayout");
@@ -2959,6 +3136,7 @@ function buildWorkitemPreview(config) {
 function buildPulseFormsPreview(config) {
   const pf = config.pulseforms || {};
   const sources = pf.dataSources || [];
+  const formFields = pf.formFields || [];
   return `
     <main style="padding:22px;font-family:Manrope,sans-serif;background:#f7f5f0;min-height:100%;">
       <section style="background:#fff;border:1px solid #d7deec;border-radius:12px;padding:20px;box-shadow:0 10px 24px rgba(32,42,90,.08);">
@@ -2967,10 +3145,17 @@ function buildPulseFormsPreview(config) {
         <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;">
           <div style="border:1px solid #d7deec;border-radius:9px;padding:12px;background:#fbfcff;"><strong>AI Provider</strong><br>${escapeHtml(pf.aiProvider || "claude")}</div>
           <div style="border:1px solid #d7deec;border-radius:9px;padding:12px;background:#fbfcff;"><strong>Sources</strong><br>${sources.length}</div>
+          <div style="border:1px solid #d7deec;border-radius:9px;padding:12px;background:#fbfcff;"><strong>Form fields</strong><br>${formFields.length}</div>
           ${sources.slice(0, 4).map((src) => `
             <div style="border:1px solid #d7deec;border-radius:9px;padding:12px;background:#fbfcff;">
               <strong>${escapeHtml(src.name || "CRM source")}</strong><br>
-              <span style="color:#667085;">${escapeHtml(src.mode || "query")} · ${escapeHtml(src.method || "GET")}</span>
+              <span style="color:#667085;">${escapeHtml(src.mode || "query")} · ${escapeHtml(src.method || "GET")} · ${Object.keys(src.fieldMappings || {}).length} mappings</span>
+            </div>
+          `).join("")}
+          ${formFields.slice(0, 6).map((field) => `
+            <div style="border:1px solid #d7deec;border-radius:9px;padding:12px;background:#fff;">
+              <strong>${escapeHtml(field.label || field.id)}</strong><br>
+              <span style="color:#667085;">${escapeHtml(field.id || "")} · ${escapeHtml(field.type || "text")}${field.required ? " · required" : ""}</span>
             </div>
           `).join("")}
         </div>

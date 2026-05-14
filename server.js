@@ -2699,11 +2699,12 @@ async function handlePulseFormsGenerateLayouts(req, res) {
 
     const sources = (pf.dataSources || []).map((s) => ({
       id: s.id, name: s.name, mode: s.mode, method: s.method, url: s.url,
-      description: s.description, bodyTemplate: s.bodyTemplate
+      description: s.description, bodyTemplate: s.bodyTemplate, fieldMappings: s.fieldMappings || {}
     }));
+    const formFields = pf.formFields || [];
     const systemPrompt = `You are a UX designer for a CRM integration widget called PulseForms. Generate 3 layout options for a widget that can query or submit information to Sugar CRM or another CRM.
 Return ONLY valid JSON: {"layouts":[{"id":"layout_1","name":"...","description":"...","sections":[{"id":"...","title":"...","type":"form|results|actions|status|notes","placement":"main|side","fields":["..."]}]}]}`;
-    const rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, systemPrompt, JSON.stringify({ mode: pf.mode, sources }, null, 2));
+    const rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, systemPrompt, JSON.stringify({ mode: pf.mode, formFields, sources }, null, 2));
     try {
       const cleaned = rawText.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
       const parsed = JSON.parse(cleaned);
@@ -4378,6 +4379,7 @@ function normalizePulseFormsConfig(input) {
     aiProvider: VALID_PROVIDERS.includes(src.aiProvider) ? src.aiProvider : "claude",
     aiModel: String(src.aiModel || "").trim(),
     aiPrompt: String(src.aiPrompt || "").trim(),
+    formFields: normalizePulseFormsFields(src.formFields || []),
     dataSources: normalizePulseFormsDataSources(src.dataSources || []),
     activeLayout: Array.isArray(src.activeLayout?.sections) && src.activeLayout.sections.length
       ? { sections: src.activeLayout.sections.map((s) => ({
@@ -4389,6 +4391,28 @@ function normalizePulseFormsConfig(input) {
         })), generatedAt: src.activeLayout.generatedAt || null }
       : null
   };
+}
+
+function normalizePulseFormsFields(fields) {
+  if (!Array.isArray(fields)) return [];
+  const VALID_TYPES = ["text", "textarea", "number", "phone", "email", "date", "select", "checkbox"];
+  return fields
+    .map((field) => {
+      const id = String(field.id || field.name || field.label || "")
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "");
+      const label = String(field.label || field.name || field.id || "").trim();
+      return {
+        id,
+        label,
+        type: VALID_TYPES.includes(String(field.type || "text")) ? String(field.type || "text") : "text",
+        required: field.required === true,
+        options: String(field.options || "").trim()
+      };
+    })
+    .filter((field) => field.id && field.label);
 }
 
 function normalizePulseFormsDataSources(sources) {
@@ -4406,7 +4430,8 @@ function normalizePulseFormsDataSources(sources) {
       bodyTemplate: String(src.bodyTemplate || "").trim(),
       enabled: src.enabled !== false,
       fixedParams: String(src.fixedParams || "").trim(),
-      description: String(src.description || "").trim()
+      description: String(src.description || "").trim(),
+      fieldMappings: sanitizeStringMapping(src.fieldMappings || {})
     }))
     .filter((src) => src.url);
 }
