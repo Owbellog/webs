@@ -4839,13 +4839,17 @@ function normalizePulseFormsConfig(input) {
     formFields: normalizePulseFormsFields(src.formFields || []),
     dataSources: normalizePulseFormsDataSources(src.dataSources || []),
     activeLayout: Array.isArray(src.activeLayout?.sections) && src.activeLayout.sections.length
-      ? { sections: src.activeLayout.sections.map((s) => ({
-          id: String(s.id || ""),
-          title: String(s.title || ""),
-          type: String(s.type || "form"),
-          placement: String(s.placement || "main"),
-          fields: Array.isArray(s.fields) ? s.fields : []
-        })), generatedAt: src.activeLayout.generatedAt || null }
+      ? {
+          layoutStyle: ["tabs", "cards"].includes(src.activeLayout.layoutStyle) ? src.activeLayout.layoutStyle : "cards",
+          sections: src.activeLayout.sections.map((s) => ({
+            id: String(s.id || ""),
+            title: String(s.title || ""),
+            type: String(s.type || "form"),
+            placement: String(s.placement || "main"),
+            fields: Array.isArray(s.fields) ? s.fields : []
+          })),
+          generatedAt: src.activeLayout.generatedAt || null
+        }
       : null
   };
 }
