@@ -2724,12 +2724,17 @@ Rules: avoid duplicate existing fields, use stable snake_case ids, prefer practi
     }, null, 2);
 
     const rawText = await callAiForPulseFormsFieldDiscovery(aiProvider, aiApiKey, aiModel, systemPrompt, contextText, files);
-    let parsed;
-    try {
-      const cleaned = rawText.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
-      parsed = JSON.parse(cleaned);
-    } catch {
-      sendJson(res, 502, { error: "AI returned invalid field JSON", raw: rawText.slice(0, 500) });
+    let parsed = parsePulseFormsFieldDiscovery(rawText);
+    if (!parsed) {
+      const repairPrompt = `Convert the following response into valid JSON only.
+Expected shape:
+{"fields":[{"id":"snake_case_id","label":"Human label","type":"text|textarea|number|phone|email|date|select|checkbox","required":true|false,"options":"","reason":"short reason"}],"explanation":"short summary"}
+Return only JSON.`;
+      const repairedText = await callAiForSummary(aiProvider, aiApiKey, aiModel, repairPrompt, rawText.slice(0, 12000));
+      parsed = parsePulseFormsFieldDiscovery(repairedText);
+    }
+    if (!parsed) {
+      sendJson(res, 502, { error: "AI returned invalid field JSON", raw: rawText.slice(0, 1000) });
       return;
     }
     const normalizedFields = normalizePulseFormsFields(parsed.fields || []).map((field, index) => ({
@@ -3119,6 +3124,68 @@ function parseSummarySections(rawText) {
   } catch { /* ignore */ }
 
   return null;
+}
+
+function parsePulseFormsFieldDiscovery(rawText) {
+  if (!rawText) return null;
+  const candidates = buildJsonParseCandidates(rawText);
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (Array.isArray(parsed)) return { fields: parsed, explanation: "" };
+      if (Array.isArray(parsed?.fields)) return parsed;
+      if (Array.isArray(parsed?.formFields)) {
+        return { fields: parsed.formFields, explanation: parsed.explanation || parsed.summary || "" };
+      }
+      if (Array.isArray(parsed?.suggestedFields)) {
+        return { fields: parsed.suggestedFields, explanation: parsed.explanation || parsed.summary || "" };
+      }
+    } catch { /* try next */ }
+  }
+  return null;
+}
+
+function buildJsonParseCandidates(rawText) {
+  const text = String(rawText || "").trim();
+  const candidates = [];
+  const addCandidate = (value) => {
+    const trimmed = String(value || "").trim().replace(/,\s*([}\]])/g, "$1");
+    if (trimmed && !candidates.includes(trimmed)) candidates.push(trimmed);
+  };
+  addCandidate(text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, ""));
+
+  const fencedMatches = text.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi);
+  for (const match of fencedMatches) addCandidate(match[1]);
+
+  const objectCandidate = extractBalancedJson(text, "{", "}");
+  if (objectCandidate) addCandidate(objectCandidate);
+  const arrayCandidate = extractBalancedJson(text, "[", "]");
+  if (arrayCandidate) addCandidate(arrayCandidate);
+  return candidates;
+}
+
+function extractBalancedJson(text, openChar, closeChar) {
+  const start = text.indexOf(openChar);
+  if (start === -1) return "";
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i += 1) {
+    const char = text[i];
+    if (inString) {
+      if (escaped) { escaped = false; continue; }
+      if (char === "\\") { escaped = true; continue; }
+      if (char === "\"") inString = false;
+      continue;
+    }
+    if (char === "\"") { inString = true; continue; }
+    if (char === openChar) depth += 1;
+    if (char === closeChar) {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return "";
 }
 
 async function callAiForSummary(provider, apiKey, model, systemPrompt, contextText) {
