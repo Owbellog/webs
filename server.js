@@ -2804,9 +2804,9 @@ Rules (strictly follow):
 3. fields: use ONLY field IDs from the formFields list. Every field must appear in exactly one section.
 4. Output raw JSON only. Do not write any other text before or after the JSON object.`;
     const rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, systemPrompt, JSON.stringify({ mode: pf.mode, formFields, sources }, null, 2));
+    let cleaned = rawText;
     try {
       // Extract outermost JSON object by finding first { and balancing braces
-      let cleaned = rawText;
       const startIdx = rawText.indexOf("{");
       if (startIdx !== -1) {
         let depth = 0, endIdx = -1;
@@ -2818,9 +2818,9 @@ Rules (strictly follow):
       }
       const parsed = JSON.parse(cleaned);
       sendJson(res, 200, { ok: true, layouts: Array.isArray(parsed.layouts) ? parsed.layouts : [] });
-    } catch {
-      // Return 200 so the client can read the raw field
-      sendJson(res, 200, { ok: false, error: "AI returned invalid layout JSON", raw: rawText.slice(0, 800) });
+    } catch (parseErr) {
+      console.error("[pulseforms] layout JSON parse failed:", parseErr.message, "\ncleaned:", cleaned.slice(0, 500));
+      sendJson(res, 200, { ok: false, error: `Parse error: ${parseErr.message}`, raw: cleaned.slice(0, 1200) });
     }
   } catch (error) {
     sendJson(res, 500, { error: `PulseForms layout generation failed: ${error.message}` });
