@@ -797,6 +797,16 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/pulseforms/query") {
+    await handlePulseFormsQuery(req, res, url);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/pulseforms/submit") {
+    await handlePulseFormsSubmit(req, res);
+    return;
+  }
+
   // Public admin auth routes (no session required)
   if (req.method === "POST" && url.pathname === "/api/admin/login") {
     await handleAdminLogin(req, res);
@@ -881,6 +891,7 @@ async function handleConfig(req, res, url) {
         workitemApiUrl: config.workitemApiUrl,
         allowedKbIds: config.allowedKbIds,
         wieland: { visibleTabs, listButtons },
+        pulseforms: publicPulseFormsConfig(config.pulseforms || {}),
         ui: config.ui
       },
       request: {
@@ -2787,6 +2798,131 @@ Return ONLY valid JSON: {"layouts":[{"id":"layout_1","name":"...","description":
   } catch (error) {
     sendJson(res, 500, { error: `PulseForms layout generation failed: ${error.message}` });
   }
+}
+
+async function handlePulseFormsQuery(req, res, url) {
+  try {
+    const campaignId = String(url.searchParams.get("campaign") || "").trim();
+    if (!campaignId) { sendJson(res, 400, { error: "Missing ?campaign= parameter." }); return; }
+
+    const campaigns = await getEffectiveCampaigns();
+    const config = campaigns.find((c) => c.id === campaignId);
+    if (!config) { sendJson(res, 404, { error: `Campaign "${campaignId}" not found.` }); return; }
+
+    const pf = config.pulseforms || {};
+    if (pf.enabled === false) { sendJson(res, 400, { error: "PulseForms is not enabled for this campaign." }); return; }
+
+    const querySources = (pf.dataSources || []).filter((s) => s.enabled !== false && s.mode !== "submit" && s.url);
+
+    const identifiers = {};
+    for (const [k, v] of url.searchParams.entries()) {
+      if (k !== "campaign") identifiers[k] = v;
+    }
+
+    const settled = await Promise.allSettled(
+      querySources.map((source) => fetchSummaryDataSource(source, identifiers))
+    );
+
+    const values = {};
+    const sources = querySources.map((source, i) => {
+      const result = settled[i];
+      if (result.status === "fulfilled") {
+        const mappings = source.fieldMappings || {};
+        for (const [formFieldId, crmField] of Object.entries(mappings)) {
+          if (!(formFieldId in values)) {
+            const val = extractDeepValue(result.value, crmField);
+            if (val !== undefined && val !== null) values[formFieldId] = String(val);
+          }
+        }
+        return { id: source.id, name: source.name, ok: true };
+      }
+      return { id: source.id, name: source.name, ok: false, error: result.reason?.message || "Failed" };
+    });
+
+    sendJson(res, 200, { ok: true, values, sources, queriedAt: Date.now() });
+  } catch (error) {
+    sendJson(res, 500, { ok: false, error: error.message });
+  }
+}
+
+async function handlePulseFormsSubmit(req, res) {
+  try {
+    let body;
+    try { body = await readJson(req); } catch { sendJson(res, 400, { error: "Invalid JSON body" }); return; }
+
+    const campaignId = String(body.campaign || "").trim();
+    if (!campaignId) { sendJson(res, 400, { error: "Missing campaign" }); return; }
+
+    const campaigns = await getEffectiveCampaigns();
+    const config = campaigns.find((c) => c.id === campaignId);
+    if (!config) { sendJson(res, 404, { error: `Campaign "${campaignId}" not found.` }); return; }
+
+    const pf = config.pulseforms || {};
+    const submitSources = (pf.dataSources || []).filter((s) => s.enabled !== false && s.mode === "submit" && s.url);
+    if (!submitSources.length) { sendJson(res, 400, { error: "No submit data sources configured for this campaign." }); return; }
+
+    const values = body.values && typeof body.values === "object" ? body.values : {};
+    const identifiers = {
+      ...(body.phone ? { phone: body.phone } : {}),
+      ...(body.customer_id ? { customer_id: body.customer_id } : {}),
+      ...values
+    };
+
+    const settled = await Promise.allSettled(
+      submitSources.map((source) => fetchSummaryDataSource(source, identifiers))
+    );
+
+    const sources = submitSources.map((source, i) => {
+      const result = settled[i];
+      return result.status === "fulfilled"
+        ? { id: source.id, name: source.name, ok: true }
+        : { id: source.id, name: source.name, ok: false, error: result.reason?.message || "Failed" };
+    });
+
+    const allOk = sources.every((s) => s.ok);
+    sendJson(res, 200, { ok: allOk, sources });
+  } catch (error) {
+    sendJson(res, 500, { ok: false, error: error.message });
+  }
+}
+
+function extractDeepValue(data, fieldPath) {
+  if (!data || !fieldPath) return undefined;
+  const path = String(fieldPath).trim();
+
+  // Direct key in a plain object
+  if (typeof data === "object" && !Array.isArray(data) && path in data) return data[path];
+
+  // Dot-notation traversal
+  const parts = path.split(".");
+  let cur = data;
+  for (const part of parts) {
+    if (cur === null || cur === undefined) return undefined;
+    cur = Array.isArray(cur) ? cur[0]?.[part] : cur[part];
+  }
+  if (cur !== undefined && cur !== null) return cur;
+
+  // Search inside first element of common wrapper arrays
+  for (const key of ["records", "data", "results", "items", "contacts", "entries"]) {
+    if (Array.isArray(data[key]) && data[key].length > 0 && path in data[key][0]) {
+      return data[key][0][path];
+    }
+  }
+
+  // If data itself is an array, look in first element
+  if (Array.isArray(data) && data.length > 0 && path in data[0]) return data[0][path];
+
+  return undefined;
+}
+
+function publicPulseFormsConfig(pf) {
+  return {
+    enabled: pf.enabled !== false,
+    mode: pf.mode || "query",
+    formFields: pf.formFields || [],
+    sourceCount: (pf.dataSources || []).filter((s) => s.enabled !== false).length,
+    activeLayout: pf.activeLayout || null
+  };
 }
 
 function parseFixedParams(fixedParamsStr) {
