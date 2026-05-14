@@ -1967,6 +1967,7 @@ function renderPulseFormsLayoutCards(layouts) {
       <div class="sa-layout-preview-wrap">${buildPulseFormsLayoutPreview(layout)}</div>`;
     card.querySelector(".sa-layout-select-btn").addEventListener("click", () => {
       const activeLayout = {
+        layoutStyle: layout.layoutStyle || "cards",
         sections: (layout.sections || []).map(({ id, title, type, placement, fields }) => ({ id, title, type, placement, fields: fields || [] })),
         generatedAt: Date.now()
       };
