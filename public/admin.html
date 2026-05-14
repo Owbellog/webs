@@ -1027,6 +1027,42 @@
                 </details>
 
                 <details class="admin-subsection" open>
+                  <summary>JSON Field Import <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
+                    <p class="admin-field-note" style="margin:0 0 8px;">
+                      Sube o pega un JSON con los campos del formulario. Estructura aceptada:
+                    </p>
+                    <div class="admin-field admin-field--full">
+                      <pre style="white-space:pre-wrap;margin:0;padding:12px;border:1px solid #d7deec;border-radius:8px;background:#fbfcff;font-size:.78rem;"><code>{
+  "fields": [
+    {
+      "id": "phone",
+      "label": "Phone",
+      "type": "phone",
+      "required": true,
+      "options": "",
+      "reason": "Primary customer phone"
+    }
+  ]
+}</code></pre>
+                      <span class="admin-field-note">Tambien se acepta un array directo <code>[{...}]</code>, o claves <code>formFields</code> / <code>suggestedFields</code>. Tipos validos: <code>text</code>, <code>textarea</code>, <code>number</code>, <code>phone</code>, <code>email</code>, <code>date</code>, <code>select</code>, <code>checkbox</code>. Para <code>select</code>, usa <code>options</code> separado por comas.</span>
+                    </div>
+                    <div class="admin-field admin-field--full">
+                      <label for="pulseformsJsonFieldsFile">JSON file</label>
+                      <input id="pulseformsJsonFieldsFile" type="file" accept=".json,application/json" />
+                    </div>
+                    <div class="admin-field admin-field--full">
+                      <label for="pulseformsJsonFieldsText">Paste JSON</label>
+                      <textarea id="pulseformsJsonFieldsText" rows="8" placeholder='{"fields":[{"id":"phone","label":"Phone","type":"phone","required":true}]}'></textarea>
+                    </div>
+                    <div class="admin-field admin-field--full" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                      <button type="button" class="primary" id="pulseformsImportJsonFieldsBtn">Cargar campos desde JSON</button>
+                      <span id="pulseformsJsonFieldsStatus" class="admin-field-note" style="margin:0;"></span>
+                    </div>
+                  </div>
+                </details>
+
+                <details class="admin-subsection" open>
                   <summary>Data Sources <span class="chevron">▼</span></summary>
                   <div class="admin-section-grid admin-subsection-grid">
                     <p class="admin-field-note" style="margin:0 0 8px;">
