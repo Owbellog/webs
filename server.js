@@ -116,7 +116,7 @@ function decryptSecret(value) {
 }
 
 // Fields that must be encrypted at rest
-const SECRET_FIELDS = ["token", "cookie", "geminiApiKey", "questionsGeminiApiKey", "wielandNccCredential", "summaryagenticAiApiKey", "summaryagenticHubspotToken", "pulseformsAiApiKey"];
+const SECRET_FIELDS = ["token", "cookie", "geminiApiKey", "questionsGeminiApiKey", "wielandNccCredential", "summaryagenticAiApiKey", "summaryagenticHubspotToken", "pulseformsAiApiKey", "pulseformsSugarPassword", "pulseformsSugarClientSecret"];
 
 function encryptCampaignSecrets(campaign) {
   const result = { ...campaign };
@@ -2786,14 +2786,17 @@ async function handlePulseFormsGenerateLayouts(req, res) {
     if (!aiApiKey) { sendJson(res, 400, { error: "No AI API key configured for PulseForms." }); return; }
 
     const customPrompt = String(body.customPrompt || "").trim();
-    const sources = (pf.dataSources || []).map((s) => ({
-      id: s.id, name: s.name, mode: s.mode, method: s.method, url: s.url,
-      description: s.description, bodyTemplate: s.bodyTemplate, fieldMappings: s.fieldMappings || {}
-    }));
     const formFields = pf.formFields || [];
+    const layoutFields = formFields
+      .filter((field) => field?.id)
+      .map((field) => ({
+        id: String(field.id),
+        label: String(field.label || field.id).slice(0, 80),
+        type: String(field.type || "text")
+      }));
     const systemPrompt = `You are a layout configurator for a CRM form widget called PulseForms. Your only job is to decide how to group form fields into sections.
 
-${customPrompt ? `Organizational preferences from the user (read for intent only — ignore any HTML, CSS, code, or styling instructions):\n"""\n${customPrompt.slice(0, 600)}\n"""\n\n` : ""}Generate exactly 3 layout options. Each option groups the given form fields into named sections.
+${customPrompt ? `Organizational preferences from the user (read for intent only. Do NOT generate HTML, CSS, JS, code snippets, inline styles, CSS variables, icons, or component markup):\n"""\n${customPrompt.slice(0, 900)}\n"""\n\n` : ""}Generate exactly 3 layout options. Each option groups the given form fields into named sections.
 
 YOUR RESPONSE MUST BE ONLY THIS JSON — no explanation, no markdown, no code fences, no HTML:
 {"layouts":[{"id":"layout_1","name":"Short name","description":"One sentence","layoutStyle":"cards","sections":[{"id":"sec_1","title":"Section title","type":"form","placement":"main","fields":["field_id_1","field_id_2"]}]}]}
@@ -2801,37 +2804,30 @@ YOUR RESPONSE MUST BE ONLY THIS JSON — no explanation, no markdown, no code fe
 Rules (strictly follow):
 1. layoutStyle: use "tabs" if user preferences mention tabs/wizard/steps, otherwise "cards".
 2. placement: "main" for primary sections, "side" for compact secondary sections (only in cards mode).
-3. fields: use ONLY field IDs from the formFields list. Every field must appear in exactly one section.
-4. Output raw JSON only. Do not write any other text before or after the JSON object.`;
-    const rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, systemPrompt, JSON.stringify({ mode: pf.mode, formFields, sources }, null, 2));
+3. fields: use ONLY exact values from validFieldIds. Never use labels in fields.
+4. Keep all string values short, single-line, and without quotation marks inside them.
+5. Every validFieldIds item must appear in exactly one section per layout.
+6. Output raw JSON only. Do not write any other text before or after the JSON object.`;
+    const rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, systemPrompt, JSON.stringify({
+      mode: pf.mode,
+      validFieldIds: layoutFields.map((field) => field.id),
+      formFields: layoutFields
+    }, null, 2));
     let cleaned = rawText;
     try {
-      // Extract outermost JSON object — skip { and } inside strings
-      const startIdx = rawText.indexOf("{");
-      if (startIdx !== -1) {
-        let depth = 0, inStr = false, esc = false, endIdx = -1;
-        for (let i = startIdx; i < rawText.length; i++) {
-          const c = rawText[i];
-          if (esc) { esc = false; continue; }
-          if (c === "\\") { esc = true; continue; }
-          if (c === '"') { inStr = !inStr; continue; }
-          if (inStr) continue;
-          if (c === "{") depth++;
-          else if (c === "}") { depth--; if (depth === 0) { endIdx = i; break; } }
-        }
-        if (endIdx > startIdx) cleaned = rawText.slice(startIdx, endIdx + 1);
-      }
-
-      // Repair common AI mistakes before parsing
-      const repaired = cleaned
-        .replace(/,\s*([}\]])/g, "$1")           // trailing commas
-        .replace(/"(\s*)\n(\s*)"/g, '",\n$2"');  // missing commas between strings
-
-      const parsed = JSON.parse(repaired);
-      sendJson(res, 200, { ok: true, layouts: Array.isArray(parsed.layouts) ? parsed.layouts : [] });
+      const layouts = parsePulseFormsLayouts(rawText, formFields);
+      if (!layouts.length) throw new Error("No valid layouts found in AI response");
+      sendJson(res, 200, { ok: true, layouts });
     } catch (parseErr) {
+      cleaned = extractBalancedJson(rawText, "{", "}") || rawText;
       console.error("[pulseforms] layout JSON parse failed:", parseErr.message, "\ncleaned:", cleaned.slice(0, 500));
-      sendJson(res, 200, { ok: false, error: `Parse error: ${parseErr.message}`, raw: cleaned.slice(0, 1200) });
+      const fallbackLayouts = buildPulseFormsFallbackLayouts(formFields, customPrompt);
+      sendJson(res, 200, {
+        ok: true,
+        layouts: fallbackLayouts,
+        warning: `AI returned invalid layout JSON, generated safe fallback layouts instead: ${parseErr.message}`,
+        raw: cleaned.slice(0, 1200)
+      });
     }
   } catch (error) {
     sendJson(res, 500, { error: `PulseForms layout generation failed: ${error.message}` });
@@ -2875,12 +2871,14 @@ async function handlePulseFormsQuery(req, res, url) {
     const pf = config.pulseforms || {};
     if (pf.enabled === false) { sendJson(res, 400, { error: "PulseForms is not enabled for this campaign." }); return; }
 
-    const querySources = (pf.dataSources || []).filter((s) => s.enabled !== false && s.mode !== "submit" && s.url);
-
     const identifiers = {};
     for (const [k, v] of url.searchParams.entries()) {
       if (k !== "campaign") identifiers[k] = v;
     }
+
+    const querySources = (pf.dataSources || []).filter((s) => s.enabled !== false && s.mode !== "submit" && s.url);
+    const sugarConnection = buildPulseFormsSugarConnection(config);
+    const sugarQueryEnabled = sugarConnection.enabled && sugarConnection.queryEnabled;
 
     const settled = await Promise.allSettled(
       querySources.map((source) => fetchSummaryDataSource(source, identifiers))
@@ -2902,6 +2900,16 @@ async function handlePulseFormsQuery(req, res, url) {
       return { id: source.id, name: source.name, ok: false, error: result.reason?.message || "Failed" };
     });
 
+    if (sugarQueryEnabled) {
+      try {
+        const sugarValues = await queryPulseFormsSugar(sugarConnection, identifiers);
+        Object.assign(values, sugarValues);
+        sources.push({ id: "sugar-crm", name: "Sugar CRM", ok: true });
+      } catch (error) {
+        sources.push({ id: "sugar-crm", name: "Sugar CRM", ok: false, error: error.message });
+      }
+    }
+
     sendJson(res, 200, { ok: true, values, sources, queriedAt: Date.now() });
   } catch (error) {
     sendJson(res, 500, { ok: false, error: error.message });
@@ -2922,17 +2930,30 @@ async function handlePulseFormsSubmit(req, res) {
 
     const pf = config.pulseforms || {};
     const submitSources = (pf.dataSources || []).filter((s) => s.enabled !== false && s.mode === "submit" && s.url);
-    if (!submitSources.length) { sendJson(res, 400, { error: "No submit data sources configured for this campaign." }); return; }
+    const sugarConnection = buildPulseFormsSugarConnection(config);
+    const sugarSubmitEnabled = sugarConnection.enabled && sugarConnection.submitEnabled;
+    if (!submitSources.length && !sugarSubmitEnabled) { sendJson(res, 400, { error: "No submit data sources configured for this campaign." }); return; }
 
     const values = body.values && typeof body.values === "object" ? body.values : {};
-    const identifiers = {
+    const baseIdentifiers = {
       ...(body.phone ? { phone: body.phone } : {}),
       ...(body.customer_id ? { customer_id: body.customer_id } : {}),
       ...values
     };
 
     const settled = await Promise.allSettled(
-      submitSources.map((source) => fetchSummaryDataSource(source, identifiers))
+      submitSources.map((source) => {
+        const mappedValues = buildPulseFormsSubmitMappedValues(values, source.fieldMappings || {});
+        const sourceWithBody = {
+          ...source,
+          bodyTemplate: source.bodyTemplate || (
+            ["POST", "PATCH"].includes(String(source.method || "").toUpperCase()) && Object.keys(mappedValues).length
+              ? JSON.stringify(mappedValues)
+              : ""
+          )
+        };
+        return fetchSummaryDataSource(sourceWithBody, { ...baseIdentifiers, ...mappedValues });
+      })
     );
 
     const sources = submitSources.map((source, i) => {
@@ -2942,11 +2963,32 @@ async function handlePulseFormsSubmit(req, res) {
         : { id: source.id, name: source.name, ok: false, error: result.reason?.message || "Failed" };
     });
 
+    if (sugarSubmitEnabled) {
+      try {
+        const sugarResult = await submitPulseFormsSugar(sugarConnection, values);
+        sources.push({ id: "sugar-crm", name: "Sugar CRM", ok: true, recordId: sugarResult.id || sugarResult._id || "" });
+      } catch (error) {
+        sources.push({ id: "sugar-crm", name: "Sugar CRM", ok: false, error: error.message });
+      }
+    }
+
     const allOk = sources.every((s) => s.ok);
     sendJson(res, 200, { ok: allOk, sources });
   } catch (error) {
     sendJson(res, 500, { ok: false, error: error.message });
   }
+}
+
+function buildPulseFormsSubmitMappedValues(values = {}, mappings = {}) {
+  const output = {};
+  for (const [formFieldId, targetField] of Object.entries(mappings || {})) {
+    const key = String(targetField || "").trim();
+    if (!key) continue;
+    const value = values?.[formFieldId];
+    if (value === undefined || value === null) continue;
+    output[key] = value;
+  }
+  return output;
 }
 
 function extractDeepValue(data, fieldPath) {
@@ -2978,12 +3020,108 @@ function extractDeepValue(data, fieldPath) {
   return undefined;
 }
 
+function buildPulseFormsSugarConnection(config) {
+  const sugar = config?.pulseforms?.sugar || {};
+  return {
+    enabled: sugar.enabled === true,
+    baseUrl: String(sugar.baseUrl || "").trim().replace(/\/+$/g, ""),
+    username: String(sugar.username || "").trim(),
+    password: String(config.pulseformsSugarPassword || "").trim(),
+    clientId: String(sugar.clientId || "sugar").trim() || "sugar",
+    clientSecret: String(config.pulseformsSugarClientSecret || "").trim(),
+    platform: String(sugar.platform || "base").trim() || "base",
+    queryEnabled: sugar.queryEnabled !== false,
+    queryModule: String(sugar.queryModule || "Contacts").trim() || "Contacts",
+    queryField: String(sugar.queryField || "phone_work").trim() || "phone_work",
+    queryParam: String(sugar.queryParam || "phone").trim() || "phone",
+    submitEnabled: sugar.submitEnabled !== false,
+    submitModule: String(sugar.submitModule || "Leads").trim() || "Leads",
+    fieldMappings: sugar.fieldMappings || {}
+  };
+}
+
+function assertPulseFormsSugarConnection(connection) {
+  if (!connection.baseUrl) throw new Error("Sugar CRM base URL is missing.");
+  if (!connection.username) throw new Error("Sugar CRM username is missing.");
+  if (!connection.password) throw new Error("Sugar CRM password is missing.");
+}
+
+async function getPulseFormsSugarToken(connection) {
+  assertPulseFormsSugarConnection(connection);
+  const response = await fetch(`${connection.baseUrl}/rest/v11/oauth2/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      grant_type: "password",
+      client_id: connection.clientId || "sugar",
+      client_secret: connection.clientSecret || "",
+      username: connection.username,
+      password: connection.password,
+      platform: connection.platform || "base"
+    })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.access_token) {
+    throw new Error(`Sugar OAuth failed (${response.status}): ${payload.error_message || payload.error_description || payload.error || "No access token"}`);
+  }
+  return payload.access_token;
+}
+
+async function fetchPulseFormsSugar(connection, method, path, body = null) {
+  const token = await getPulseFormsSugarToken(connection);
+  const response = await fetch(`${connection.baseUrl}${path}`, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      "OAuth-Token": token
+    },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(`Sugar API failed (${response.status}): ${payload.error_message || payload.error_description || payload.error || "Request failed"}`);
+  }
+  return payload;
+}
+
+async function queryPulseFormsSugar(connection, identifiers = {}) {
+  const queryValue = identifiers[connection.queryParam] || identifiers.phone || identifiers.customer_id || "";
+  if (!queryValue) throw new Error(`Missing Sugar lookup value. Expected URL parameter "${connection.queryParam}".`);
+  const filter = new URLSearchParams();
+  filter.set(`filter[0][${connection.queryField}][$equals]`, queryValue);
+  filter.set("max_num", "1");
+  const result = await fetchPulseFormsSugar(
+    connection,
+    "GET",
+    `/rest/v11/${encodeURIComponent(connection.queryModule)}/filter?${filter.toString()}`
+  );
+  const record = Array.isArray(result.records) ? result.records[0] : result;
+  const values = {};
+  for (const [formFieldId, sugarField] of Object.entries(connection.fieldMappings || {})) {
+    const value = extractDeepValue(record, sugarField);
+    if (value !== undefined && value !== null) values[formFieldId] = String(value);
+  }
+  return values;
+}
+
+async function submitPulseFormsSugar(connection, values = {}) {
+  const mappedValues = buildPulseFormsSubmitMappedValues(values, connection.fieldMappings || {});
+  const payload = Object.keys(mappedValues).length ? mappedValues : values;
+  if (!Object.keys(payload).length) throw new Error("No values available to send to Sugar CRM.");
+  return fetchPulseFormsSugar(
+    connection,
+    "POST",
+    `/rest/v11/${encodeURIComponent(connection.submitModule)}`,
+    payload
+  );
+}
+
 function publicPulseFormsConfig(pf) {
   return {
     enabled: pf.enabled !== false,
     mode: pf.mode || "query",
     formFields: pf.formFields || [],
-    sourceCount: (pf.dataSources || []).filter((s) => s.enabled !== false).length,
+    sourceCount: (pf.dataSources || []).filter((s) => s.enabled !== false).length + (pf.sugar?.enabled === true ? 1 : 0),
     activeLayout: pf.activeLayout || null
   };
 }
@@ -3039,8 +3177,8 @@ async function fetchSummaryDataSource(source, identifiers) {
     signal: AbortSignal.timeout(8000)
   };
 
-  if (method === "POST" && source.bodyTemplate) {
-    fetchOptions.body = interpolateSummaryTemplate(source.bodyTemplate, merged);
+  if (["POST", "PATCH"].includes(method) && source.bodyTemplate) {
+    fetchOptions.body = interpolateSummaryBodyTemplate(source.bodyTemplate, merged);
   }
 
   const response = await fetch(resolvedUrl, fetchOptions);
@@ -3102,6 +3240,17 @@ function interpolateSummaryTemplate(template, identifiers) {
       return encodeURIComponent(identifiers[k] ?? "");
     }
     return match; // leave unreplaced if key not found
+  });
+}
+
+function interpolateSummaryBodyTemplate(template, identifiers) {
+  const dateVars = buildDateVars(identifiers);
+  return String(template || "").replace(/\{\{([^}]+)\}\}/g, (match, key) => {
+    const k = key.trim();
+    if (Object.prototype.hasOwnProperty.call(dateVars, k)) return dateVars[k];
+    if (k === "customer_id" || k === "customerId") return identifiers.customerId || identifiers.customer_id || "";
+    if (Object.prototype.hasOwnProperty.call(identifiers, k)) return identifiers[k] ?? "";
+    return match;
   });
 }
 
@@ -3342,6 +3491,139 @@ function parsePulseFormsFieldDiscovery(rawText) {
     } catch { /* try next */ }
   }
   return null;
+}
+
+function parsePulseFormsLayouts(rawText, formFields = []) {
+  const fieldLookup = buildPulseFormsFieldLookup(formFields);
+  const fieldIds = new Set(fieldLookup.ids);
+  const candidates = buildJsonParseCandidates(rawText);
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      const layouts = Array.isArray(parsed?.layouts) ? parsed.layouts : Array.isArray(parsed) ? parsed : [];
+      const normalized = normalizePulseFormsGeneratedLayouts(layouts, fieldLookup);
+      if (normalized.length) return normalized;
+    } catch { /* try next */ }
+  }
+  return [];
+}
+
+function buildPulseFormsFieldLookup(formFields = []) {
+  const ids = [];
+  const aliasToId = new Map();
+  const addAlias = (alias, id) => {
+    const key = normalizePulseFormsFieldAlias(alias);
+    if (key && !aliasToId.has(key)) aliasToId.set(key, id);
+  };
+
+  for (const field of formFields || []) {
+    const id = String(field?.id || "").trim();
+    if (!id) continue;
+    ids.push(id);
+    addAlias(id, id);
+    addAlias(field.label, id);
+    addAlias(field.name, id);
+  }
+
+  return { ids, aliasToId };
+}
+
+function normalizePulseFormsFieldAlias(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function resolvePulseFormsFieldId(value, lookup) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (lookup.aliasToId.has(raw)) return lookup.aliasToId.get(raw);
+  return lookup.aliasToId.get(normalizePulseFormsFieldAlias(raw)) || "";
+}
+
+function normalizePulseFormsGeneratedLayouts(layouts, fieldLookup) {
+  const fieldIds = new Set(fieldLookup?.ids || []);
+  if (!Array.isArray(layouts) || !fieldIds.size) return [];
+  return layouts
+    .map((layout, index) => {
+      const used = new Set();
+      const sections = Array.isArray(layout?.sections) ? layout.sections : [];
+      const cleanSections = sections
+        .map((section, sectionIndex) => {
+          const fields = Array.isArray(section?.fields)
+            ? section.fields
+                .map((id) => resolvePulseFormsFieldId(id, fieldLookup))
+                .filter((id) => fieldIds.has(id) && !used.has(id))
+            : [];
+          fields.forEach((id) => used.add(id));
+          return {
+            id: String(section?.id || `section_${sectionIndex + 1}`).replace(/[^\w-]/g, "_"),
+            title: String(section?.title || `Section ${sectionIndex + 1}`).replace(/\s+/g, " ").trim().slice(0, 80),
+            type: "form",
+            placement: section?.placement === "side" ? "side" : "main",
+            fields
+          };
+        })
+        .filter((section) => section.fields.length);
+
+      const missing = [...fieldIds].filter((id) => !used.has(id));
+      if (missing.length) {
+        cleanSections.push({
+          id: "additional_fields",
+          title: "Additional fields",
+          type: "form",
+          placement: "main",
+          fields: missing
+        });
+      }
+
+      if (!cleanSections.length) return null;
+      return {
+        id: String(layout?.id || `layout_${index + 1}`).replace(/[^\w-]/g, "_"),
+        name: String(layout?.name || `Layout ${index + 1}`).replace(/\s+/g, " ").trim().slice(0, 60),
+        description: String(layout?.description || "Organizes form fields into logical sections.").replace(/\s+/g, " ").trim().slice(0, 140),
+        layoutStyle: layout?.layoutStyle === "tabs" ? "tabs" : "cards",
+        sections: cleanSections
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 3);
+}
+
+function buildPulseFormsFallbackLayouts(formFields = [], customPrompt = "") {
+  const fields = (formFields || []).filter((field) => field?.id);
+  const wantsTabs = /\b(tab|tabs|wizard|step|steps|paso|pestañ|navegaci[oó]n)\b/i.test(customPrompt || "");
+  const chunks = splitPulseFormsFields(fields, wantsTabs ? 3 : 4);
+  const titleSets = wantsTabs
+    ? [["Basic information", "Contact details", "Additional information"], ["Customer", "Request", "Follow up"], ["Details", "Preferences", "Confirmation"]]
+    : [["Primary information", "Contact details", "Additional information", "Internal fields"], ["Customer profile", "Request details", "CRM fields", "Follow up"], ["Lead information", "Communication", "Qualification", "Notes"]];
+
+  return titleSets.map((titles, layoutIndex) => ({
+    id: `fallback_${layoutIndex + 1}`,
+    name: wantsTabs ? `Tabs option ${layoutIndex + 1}` : `Cards option ${layoutIndex + 1}`,
+    description: wantsTabs ? "Groups fields into a guided tab flow." : "Groups fields into clear card sections.",
+    layoutStyle: wantsTabs ? "tabs" : "cards",
+    sections: chunks.map((chunk, sectionIndex) => ({
+      id: `section_${sectionIndex + 1}`,
+      title: titles[sectionIndex] || `Section ${sectionIndex + 1}`,
+      type: "form",
+      placement: !wantsTabs && sectionIndex === chunks.length - 1 ? "side" : "main",
+      fields: chunk.map((field) => field.id)
+    })).filter((section) => section.fields.length)
+  }));
+}
+
+function splitPulseFormsFields(fields, targetGroups) {
+  const cleanFields = fields || [];
+  if (!cleanFields.length) return [];
+  const groupCount = Math.max(1, Math.min(targetGroups, cleanFields.length));
+  const groups = Array.from({ length: groupCount }, () => []);
+  cleanFields.forEach((field, index) => groups[index % groupCount].push(field));
+  return groups.filter((group) => group.length);
 }
 
 function buildJsonParseCandidates(rawText) {
@@ -4303,6 +4585,8 @@ function normalizeCampaign(input) {
     summaryagenticWarmToken: String(input.summaryagenticWarmToken || "").trim(),
     summaryagentic: normalizeSummaryAgenticConfig(input.summaryagentic || {}),
     pulseformsAiApiKey: String(input.pulseformsAiApiKey || "").trim(),
+    pulseformsSugarPassword: String(input.pulseformsSugarPassword || "").trim(),
+    pulseformsSugarClientSecret: String(input.pulseformsSugarClientSecret || "").trim(),
     pulseforms: normalizePulseFormsConfig(input.pulseforms || {}),
     apiAccessToken: String(input.apiAccessToken || "").trim(),
     ui: normalizeUiConfig(input.ui || input)
@@ -4850,6 +5134,7 @@ function normalizePulseFormsConfig(input) {
     aiProvider: VALID_PROVIDERS.includes(src.aiProvider) ? src.aiProvider : "claude",
     aiModel: String(src.aiModel || "").trim(),
     aiPrompt: String(src.aiPrompt || "").trim(),
+    sugar: normalizePulseFormsSugarConfig(src.sugar || {}),
     formFields: normalizePulseFormsFields(src.formFields || []),
     dataSources: normalizePulseFormsDataSources(src.dataSources || []),
     activeLayout: Array.isArray(src.activeLayout?.sections) && src.activeLayout.sections.length
@@ -4865,6 +5150,27 @@ function normalizePulseFormsConfig(input) {
           generatedAt: src.activeLayout.generatedAt || null
         }
       : null
+  };
+}
+
+function normalizePulseFormsSugarConfig(input) {
+  const src = input || {};
+  const cleanModule = (value, fallback) => String(value || fallback)
+    .trim()
+    .replace(/[^A-Za-z0-9_]/g, "") || fallback;
+  return {
+    enabled: src.enabled === true,
+    baseUrl: String(src.baseUrl || "").trim().replace(/\/+$/g, ""),
+    username: String(src.username || "").trim(),
+    clientId: String(src.clientId || "sugar").trim() || "sugar",
+    platform: String(src.platform || "base").trim() || "base",
+    queryEnabled: src.queryEnabled !== false,
+    queryModule: cleanModule(src.queryModule, "Contacts"),
+    queryField: String(src.queryField || "phone_work").trim() || "phone_work",
+    queryParam: String(src.queryParam || "phone").trim() || "phone",
+    submitEnabled: src.submitEnabled !== false,
+    submitModule: cleanModule(src.submitModule, "Leads"),
+    fieldMappings: sanitizeStringMapping(src.fieldMappings || {})
   };
 }
 

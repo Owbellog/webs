@@ -1068,6 +1068,74 @@
                 </details>
 
                 <details class="admin-subsection" open>
+                  <summary>Sugar CRM Connection <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
+                    <p class="admin-field-note" style="margin:0 0 8px;">
+                      Configura la conexion OAuth de Sugar CRM. Usa el consumer key de Sugar, normalmente <code>sugar</code>, y la URL base de tu instancia.
+                    </p>
+                    <div class="admin-field">
+                      <label><input id="pulseformsSugarEnabled" type="checkbox" /> Enable Sugar CRM</label>
+                      <span class="admin-field-note">Cuando esta activo, PulseForms puede consultar y enviar informacion a Sugar sin exponer credenciales en el widget.</span>
+                    </div>
+                    <div class="admin-field">
+                      <label for="pulseformsSugarBaseUrl">Sugar base URL</label>
+                      <input id="pulseformsSugarBaseUrl" type="url" placeholder="https://crm.example.com" />
+                    </div>
+                    <div class="admin-field">
+                      <label for="pulseformsSugarUsername">Username</label>
+                      <input id="pulseformsSugarUsername" type="text" autocomplete="off" placeholder="user@example.com" />
+                    </div>
+                    <div class="admin-field">
+                      <label for="pulseformsSugarPassword">Password</label>
+                      <input id="pulseformsSugarPassword" type="password" autocomplete="off" placeholder="Sugar password" />
+                    </div>
+                    <div class="admin-field">
+                      <label for="pulseformsSugarClientId">Consumer key / client ID</label>
+                      <input id="pulseformsSugarClientId" type="text" placeholder="sugar" />
+                    </div>
+                    <div class="admin-field">
+                      <label for="pulseformsSugarClientSecret">Client secret</label>
+                      <input id="pulseformsSugarClientSecret" type="password" autocomplete="off" placeholder="Optional" />
+                    </div>
+                    <div class="admin-field">
+                      <label for="pulseformsSugarPlatform">Platform</label>
+                      <input id="pulseformsSugarPlatform" type="text" placeholder="base" />
+                    </div>
+                    <div class="admin-field">
+                      <label><input id="pulseformsSugarQueryEnabled" type="checkbox" checked /> Enable lookup</label>
+                      <span class="admin-field-note">Consulta un registro en Sugar y precarga los campos del formulario.</span>
+                    </div>
+                    <div class="admin-field">
+                      <label for="pulseformsSugarQueryModule">Lookup module</label>
+                      <input id="pulseformsSugarQueryModule" type="text" placeholder="Contacts" />
+                    </div>
+                    <div class="admin-field">
+                      <label for="pulseformsSugarQueryField">Lookup field</label>
+                      <input id="pulseformsSugarQueryField" type="text" placeholder="phone_work" />
+                    </div>
+                    <div class="admin-field">
+                      <label for="pulseformsSugarQueryParam">URL parameter to search</label>
+                      <input id="pulseformsSugarQueryParam" type="text" placeholder="phone" />
+                      <span class="admin-field-note">Ejemplo: <code>pulseforms.html?campaign=x&amp;phone=+19092502944</code>.</span>
+                    </div>
+                    <div class="admin-field">
+                      <label><input id="pulseformsSugarSubmitEnabled" type="checkbox" checked /> Enable submit</label>
+                      <span class="admin-field-note">Envia el formulario al modulo configurado.</span>
+                    </div>
+                    <div class="admin-field">
+                      <label for="pulseformsSugarSubmitModule">Submit module</label>
+                      <input id="pulseformsSugarSubmitModule" type="text" placeholder="Leads" />
+                    </div>
+                    <div class="admin-field admin-field--full">
+                      <label>Field mapping</label>
+                      <span class="admin-field-note">Homologa cada campo de PulseForms con el campo real de Sugar, por ejemplo <code>phone</code> → <code>phone_work</code>.</span>
+                      <div class="sa-kv-list pf-mapping-rows" id="pulseformsSugarMappingRows" style="margin-top:8px;"></div>
+                      <button type="button" class="secondary" id="pulseformsSugarAddMapping" style="margin-top:8px;">+ Add mapping</button>
+                    </div>
+                  </div>
+                </details>
+
+                <details class="admin-subsection" open>
                   <summary>Data Sources <span class="chevron">▼</span></summary>
                   <div class="admin-section-grid admin-subsection-grid">
                     <p class="admin-field-note" style="margin:0 0 8px;">
@@ -1141,6 +1209,14 @@
                     </div>
                     <div class="admin-field admin-field--full" id="pulseformsLayoutGeneratePanel" style="display:none;">
                       <div id="pulseformsLayoutCards" class="sa-layout-cards"></div>
+                    </div>
+                    <div class="admin-field admin-field--full">
+                      <button type="button" class="secondary" id="pulseformsLayoutCodeBtn">Generar codigo HTML del layout</button>
+                      <span class="admin-field-note">Puedes usarlo como base para personalizar una pagina propia.</span>
+                    </div>
+                    <div class="admin-field admin-field--full">
+                      <label for="pulseformsLayoutCode">Codigo generado</label>
+                      <textarea id="pulseformsLayoutCode" rows="10" style="font-family:monospace;font-size:.76rem;" placeholder="Selecciona o genera un layout y luego pulsa Generar codigo HTML del layout."></textarea>
                     </div>
                     <input type="hidden" id="pulseformsActiveLayout" value="null" />
                   </div>

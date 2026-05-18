@@ -67,6 +67,8 @@ const pulseformsAnalyzeBtn = document.getElementById("pulseformsAnalyzeBtn");
 const pulseformsAnalyzeResult = document.getElementById("pulseformsAnalyzeResult");
 const pulseformsAddFromAnalysis = document.getElementById("pulseformsAddFromAnalysis");
 const pulseformsLayoutGenerateBtn = document.getElementById("pulseformsLayoutGenerateBtn");
+const pulseformsSugarMappingRows = document.getElementById("pulseformsSugarMappingRows");
+const pulseformsSugarAddMappingButton = document.getElementById("pulseformsSugarAddMapping");
 
 const DEFAULT_WIELAND_WIDGET_TO_CONTACT_MAP = {
   firstName: "firstName",
@@ -259,7 +261,20 @@ const fields = {
   pulseformsAiProvider: document.getElementById("pulseformsAiProvider"),
   pulseformsAiModel: document.getElementById("pulseformsAiModel"),
   pulseformsAiApiKey: document.getElementById("pulseformsAiApiKey"),
-  pulseformsAiPrompt: document.getElementById("pulseformsAiPrompt")
+  pulseformsAiPrompt: document.getElementById("pulseformsAiPrompt"),
+  pulseformsSugarEnabled: document.getElementById("pulseformsSugarEnabled"),
+  pulseformsSugarBaseUrl: document.getElementById("pulseformsSugarBaseUrl"),
+  pulseformsSugarUsername: document.getElementById("pulseformsSugarUsername"),
+  pulseformsSugarPassword: document.getElementById("pulseformsSugarPassword"),
+  pulseformsSugarClientId: document.getElementById("pulseformsSugarClientId"),
+  pulseformsSugarClientSecret: document.getElementById("pulseformsSugarClientSecret"),
+  pulseformsSugarPlatform: document.getElementById("pulseformsSugarPlatform"),
+  pulseformsSugarQueryEnabled: document.getElementById("pulseformsSugarQueryEnabled"),
+  pulseformsSugarQueryModule: document.getElementById("pulseformsSugarQueryModule"),
+  pulseformsSugarQueryField: document.getElementById("pulseformsSugarQueryField"),
+  pulseformsSugarQueryParam: document.getElementById("pulseformsSugarQueryParam"),
+  pulseformsSugarSubmitEnabled: document.getElementById("pulseformsSugarSubmitEnabled"),
+  pulseformsSugarSubmitModule: document.getElementById("pulseformsSugarSubmitModule")
 };
 
 const state = {
@@ -1742,6 +1757,11 @@ pulseformsAddFieldButton?.addEventListener("click", () => {
   markDirty();
 });
 
+pulseformsSugarAddMappingButton?.addEventListener("click", () => {
+  addPulseFormsMappingRow(pulseformsSugarMappingRows);
+  markDirty();
+});
+
 pulseformsAnalyzeFieldsBtn?.addEventListener("click", async () => {
   const files = pulseformsFieldFiles?.files;
   if (!files || !files.length) { alert("Selecciona al menos un archivo."); return; }
@@ -1879,6 +1899,138 @@ function renderPulseFormsActiveLayout(layout) {
     badge.style.color = "#888";
     info.textContent = "";
   }
+  updatePulseFormsLayoutCode();
+}
+
+function getPulseFormsActiveLayout() {
+  try {
+    const raw = document.getElementById("pulseformsActiveLayout")?.value || "null";
+    const parsed = JSON.parse(raw);
+    return parsed?.sections?.length ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildPulseFormsLayoutCode(layout, fields) {
+  const cleanFields = Array.isArray(fields) ? fields : [];
+  const fieldMap = Object.fromEntries(cleanFields.map((field) => [field.id, field]));
+  const safeId = (value) => String(value || "").replace(/[^\w-]/g, "_");
+  const renderInput = (field) => {
+    const id = safeId(field.id);
+    const label = safeHtml(field.label || field.id);
+    const required = field.required ? " required" : "";
+    if (field.type === "textarea") return `<label class="pf-field pf-field--full"><span>${label}</span><textarea name="${id}"${required}></textarea></label>`;
+    if (field.type === "select") {
+      const options = String(field.options || "").split(",").map((opt) => opt.trim()).filter(Boolean);
+      return `<label class="pf-field"><span>${label}</span><select name="${id}"${required}><option value="">Select</option>${options.map((opt) => `<option>${safeHtml(opt)}</option>`).join("")}</select></label>`;
+    }
+    if (field.type === "checkbox") return `<label class="pf-check"><input type="checkbox" name="${id}" /> <span>${label}</span></label>`;
+    const typeMap = { phone: "tel", email: "email", number: "number", date: "date" };
+    return `<label class="pf-field"><span>${label}</span><input type="${typeMap[field.type] || "text"}" name="${id}"${required} /></label>`;
+  };
+  const sections = (layout?.sections || []).map((section, index) => ({
+    title: section.title || `Section ${index + 1}`,
+    fields: (section.fields || []).map((id) => fieldMap[id]).filter(Boolean)
+  })).filter((section) => section.fields.length);
+  const tabs = layout?.layoutStyle === "tabs" && sections.length > 1;
+  const sectionHtml = sections.map((section, index) => `
+      <section class="pf-section${tabs ? index === 0 ? " is-active" : "" : ""}" data-panel="${index}">
+        <div class="pf-card">
+          <h2>${safeHtml(section.title)}</h2>
+          <div class="pf-grid">
+            ${section.fields.map(renderInput).join("\n            ")}
+          </div>
+        </div>
+        ${tabs ? `<div class="pf-actions">
+          <button type="button" data-prev${index === 0 ? " disabled" : ""}>Previous</button>
+          ${index === sections.length - 1 ? '<button type="submit">Submit</button>' : '<button type="button" data-next>Next</button>'}
+        </div>` : ""}
+      </section>`).join("\n");
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PulseForms</title>
+  <style>
+    :root {
+      --color-background-primary: #ffffff;
+      --color-background-secondary: #f8fafc;
+      --color-text-primary: #172554;
+      --color-text-secondary: #667085;
+      --color-border-secondary: #d7deec;
+      --color-border-tertiary: #edf1f7;
+      --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    body { margin: 0; font-family: var(--font-sans); background: var(--color-background-secondary); color: var(--color-text-primary); }
+    .pf-shell { max-width: 960px; margin: 0 auto; padding: 24px; }
+    .pf-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    .pf-tab { border: .5px solid var(--color-border-secondary); background: var(--color-background-secondary); color: var(--color-text-secondary); padding: 10px 14px; border-radius: 10px; cursor: pointer; }
+    .pf-tab.is-active { background: var(--color-background-primary); color: var(--color-text-primary); }
+    .pf-progress { height: 6px; background: var(--color-border-tertiary); border-radius: 99px; overflow: hidden; margin-bottom: 16px; }
+    .pf-progress span { display: block; height: 100%; width: ${tabs ? Math.round(100 / sections.length) : 100}%; background: var(--color-text-primary); }
+    .pf-section { ${tabs ? "display: none;" : ""} margin-bottom: 16px; }
+    .pf-section.is-active { display: block; }
+    .pf-card { border: .5px solid var(--color-border-secondary); border-radius: 16px; padding: 1rem 1.25rem; background: var(--color-background-primary); }
+    .pf-card h2 { margin: 0 0 14px; color: var(--color-text-secondary); text-transform: uppercase; font-size: 11px; letter-spacing: .04em; }
+    .pf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+    .pf-field, .pf-check { display: flex; flex-direction: column; gap: 6px; color: var(--color-text-secondary); font-size: 13px; }
+    .pf-field--full { grid-column: 1 / -1; }
+    input, select, textarea { font: inherit; color: var(--color-text-primary); background: var(--color-background-primary); border: .5px solid var(--color-border-secondary); border-radius: 10px; padding: 10px 12px; }
+    textarea { min-height: 96px; }
+    .pf-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+    button { font: inherit; border: .5px solid var(--color-border-secondary); border-radius: 10px; padding: 10px 14px; background: var(--color-background-primary); color: var(--color-text-primary); cursor: pointer; }
+    button:disabled { color: var(--color-text-secondary); cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <main class="pf-shell">
+    ${tabs ? `<div class="pf-progress"><span id="pfProgress"></span></div>
+    <nav class="pf-tabs" aria-label="Form sections">
+      ${sections.map((section, index) => `<button type="button" class="pf-tab${index === 0 ? " is-active" : ""}" data-tab="${index}">${safeHtml(section.title)}</button>`).join("\n      ")}
+    </nav>` : ""}
+    <form id="pulseForm">
+${sectionHtml}
+      ${tabs ? "" : '<button type="submit">Submit</button>'}
+    </form>
+  </main>
+  <script>
+    const tabs = [...document.querySelectorAll("[data-tab]")];
+    const panels = [...document.querySelectorAll("[data-panel]")];
+    const progress = document.getElementById("pfProgress");
+    function showTab(index) {
+      tabs.forEach((tab, i) => tab.classList.toggle("is-active", i === index));
+      panels.forEach((panel, i) => panel.classList.toggle("is-active", i === index));
+      if (progress) progress.style.width = Math.round(((index + 1) / Math.max(panels.length, 1)) * 100) + "%";
+    }
+    tabs.forEach((tab) => tab.addEventListener("click", () => showTab(Number(tab.dataset.tab))));
+    document.addEventListener("click", (event) => {
+      const active = panels.findIndex((panel) => panel.classList.contains("is-active"));
+      if (event.target.matches("[data-next]")) showTab(Math.min(active + 1, panels.length - 1));
+      if (event.target.matches("[data-prev]")) showTab(Math.max(active - 1, 0));
+    });
+    document.getElementById("pulseForm").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+      console.log("Submit values", values);
+    });
+  </script>
+</body>
+</html>`;
+}
+
+function updatePulseFormsLayoutCode(force = false) {
+  const codeEl = document.getElementById("pulseformsLayoutCode");
+  if (!codeEl) return;
+  const layout = getPulseFormsActiveLayout();
+  if (!layout) {
+    if (force) codeEl.value = "";
+    return;
+  }
+  if (!force && codeEl.value.trim()) return;
+  codeEl.value = buildPulseFormsLayoutCode(layout, readPulseFormsFields());
 }
 
 function buildPulseFormsLayoutPreview(layout) {
@@ -2003,7 +2155,13 @@ pulseformsLayoutGenerateBtn?.addEventListener("click", async () => {
     }
     if (panel) panel.style.display = "block";
     renderPulseFormsLayoutCards(data.layouts);
-    if (status) { status.textContent = `${data.layouts.length} opciones generadas.`; status.style.color = "#15803d"; }
+    if (status) {
+      status.textContent = data.warning
+        ? `${data.layouts.length} opciones generadas con fallback seguro. ${data.warning}`
+        : `${data.layouts.length} opciones generadas.`;
+      status.style.color = data.warning ? "#b45309" : "#15803d";
+      status.style.whiteSpace = "pre-wrap";
+    }
   } catch (err) {
     if (status) { status.textContent = `Error: ${err.message}`; status.style.color = "#dc2626"; status.style.whiteSpace = "pre-wrap"; }
   } finally {
@@ -2017,6 +2175,10 @@ document.getElementById("pulseformsLayoutClearBtn")?.addEventListener("click", (
   if (el) el.value = "null";
   renderPulseFormsActiveLayout(null);
   markDirty();
+});
+
+document.getElementById("pulseformsLayoutCodeBtn")?.addEventListener("click", () => {
+  updatePulseFormsLayoutCode(true);
 });
 
 const SUMMARY_AGENTIC_DEFAULT_PROMPT = `You are an intelligent assistant for a BPO call center agent.
@@ -2611,7 +2773,22 @@ function fillForm(campaign) {
   if (fields.pulseformsAiModel) fields.pulseformsAiModel.value = pf.aiModel || "";
   if (fields.pulseformsAiApiKey) fields.pulseformsAiApiKey.value = campaign.pulseformsAiApiKey || "";
   if (fields.pulseformsAiPrompt) fields.pulseformsAiPrompt.value = pf.aiPrompt || "";
+  const sugar = pf.sugar || {};
+  if (fields.pulseformsSugarEnabled) fields.pulseformsSugarEnabled.checked = sugar.enabled === true;
+  if (fields.pulseformsSugarBaseUrl) fields.pulseformsSugarBaseUrl.value = sugar.baseUrl || "";
+  if (fields.pulseformsSugarUsername) fields.pulseformsSugarUsername.value = sugar.username || "";
+  if (fields.pulseformsSugarPassword) fields.pulseformsSugarPassword.value = campaign.pulseformsSugarPassword || "";
+  if (fields.pulseformsSugarClientId) fields.pulseformsSugarClientId.value = sugar.clientId || "sugar";
+  if (fields.pulseformsSugarClientSecret) fields.pulseformsSugarClientSecret.value = campaign.pulseformsSugarClientSecret || "";
+  if (fields.pulseformsSugarPlatform) fields.pulseformsSugarPlatform.value = sugar.platform || "base";
+  if (fields.pulseformsSugarQueryEnabled) fields.pulseformsSugarQueryEnabled.checked = sugar.queryEnabled !== false;
+  if (fields.pulseformsSugarQueryModule) fields.pulseformsSugarQueryModule.value = sugar.queryModule || "Contacts";
+  if (fields.pulseformsSugarQueryField) fields.pulseformsSugarQueryField.value = sugar.queryField || "phone_work";
+  if (fields.pulseformsSugarQueryParam) fields.pulseformsSugarQueryParam.value = sugar.queryParam || "phone";
+  if (fields.pulseformsSugarSubmitEnabled) fields.pulseformsSugarSubmitEnabled.checked = sugar.submitEnabled !== false;
+  if (fields.pulseformsSugarSubmitModule) fields.pulseformsSugarSubmitModule.value = sugar.submitModule || "Leads";
   renderPulseFormsFields(pf.formFields || []);
+  renderPulseFormsMappingRows(pulseformsSugarMappingRows, sugar.fieldMappings || {});
   renderPulseFormsDataSources(pf.dataSources || []);
   const pfLayoutEl = document.getElementById("pulseformsActiveLayout");
   if (pfLayoutEl) pfLayoutEl.value = JSON.stringify(pf.activeLayout || null);
@@ -2789,12 +2966,28 @@ function readForm() {
       })()
     },
     pulseformsAiApiKey: fields.pulseformsAiApiKey?.value.trim() || "",
+    pulseformsSugarPassword: fields.pulseformsSugarPassword?.value.trim() || "",
+    pulseformsSugarClientSecret: fields.pulseformsSugarClientSecret?.value.trim() || "",
     pulseforms: {
       enabled: fields.pulseformsEnabled?.checked !== false,
       mode: fields.pulseformsMode?.value || "query",
       aiProvider: fields.pulseformsAiProvider?.value || "claude",
       aiModel: fields.pulseformsAiModel?.value.trim() || "",
       aiPrompt: fields.pulseformsAiPrompt?.value.trim() || "",
+      sugar: {
+        enabled: fields.pulseformsSugarEnabled?.checked === true,
+        baseUrl: fields.pulseformsSugarBaseUrl?.value.trim() || "",
+        username: fields.pulseformsSugarUsername?.value.trim() || "",
+        clientId: fields.pulseformsSugarClientId?.value.trim() || "sugar",
+        platform: fields.pulseformsSugarPlatform?.value.trim() || "base",
+        queryEnabled: fields.pulseformsSugarQueryEnabled?.checked !== false,
+        queryModule: fields.pulseformsSugarQueryModule?.value.trim() || "Contacts",
+        queryField: fields.pulseformsSugarQueryField?.value.trim() || "phone_work",
+        queryParam: fields.pulseformsSugarQueryParam?.value.trim() || "phone",
+        submitEnabled: fields.pulseformsSugarSubmitEnabled?.checked !== false,
+        submitModule: fields.pulseformsSugarSubmitModule?.value.trim() || "Leads",
+        fieldMappings: readPulseFormsMappings(pulseformsSugarMappingRows)
+      },
       formFields: readPulseFormsFields(),
       dataSources: readPulseFormsDataSources(),
       activeLayout: (() => {
@@ -3027,12 +3220,31 @@ function applyDefaultUiValues() {
   if (fields.pulseformsAiModel) fields.pulseformsAiModel.value = "";
   if (fields.pulseformsAiApiKey) fields.pulseformsAiApiKey.value = "";
   if (fields.pulseformsAiPrompt) fields.pulseformsAiPrompt.value = "";
+  if (fields.pulseformsSugarEnabled) fields.pulseformsSugarEnabled.checked = false;
+  if (fields.pulseformsSugarBaseUrl) fields.pulseformsSugarBaseUrl.value = "";
+  if (fields.pulseformsSugarUsername) fields.pulseformsSugarUsername.value = "";
+  if (fields.pulseformsSugarPassword) fields.pulseformsSugarPassword.value = "";
+  if (fields.pulseformsSugarClientId) fields.pulseformsSugarClientId.value = "sugar";
+  if (fields.pulseformsSugarClientSecret) fields.pulseformsSugarClientSecret.value = "";
+  if (fields.pulseformsSugarPlatform) fields.pulseformsSugarPlatform.value = "base";
+  if (fields.pulseformsSugarQueryEnabled) fields.pulseformsSugarQueryEnabled.checked = true;
+  if (fields.pulseformsSugarQueryModule) fields.pulseformsSugarQueryModule.value = "Contacts";
+  if (fields.pulseformsSugarQueryField) fields.pulseformsSugarQueryField.value = "phone_work";
+  if (fields.pulseformsSugarQueryParam) fields.pulseformsSugarQueryParam.value = "phone";
+  if (fields.pulseformsSugarSubmitEnabled) fields.pulseformsSugarSubmitEnabled.checked = true;
+  if (fields.pulseformsSugarSubmitModule) fields.pulseformsSugarSubmitModule.value = "Leads";
   renderPulseFormsFields([
     { id: "first_name", label: "First name", type: "text", required: false },
     { id: "last_name", label: "Last name", type: "text", required: false },
     { id: "phone", label: "Phone", type: "phone", required: true },
     { id: "email", label: "Email", type: "email", required: false }
   ]);
+  renderPulseFormsMappingRows(pulseformsSugarMappingRows, {
+    first_name: "first_name",
+    last_name: "last_name",
+    phone: "phone_work",
+    email: "email1"
+  });
   renderPulseFormsDataSources([
     {
       id: crypto.randomUUID(),

@@ -14,6 +14,7 @@ const appBase     = new URL(".", window.location.href);
 
 const pfBody       = document.getElementById("pfBody");
 const pfTitle      = document.getElementById("pfTitle");
+const pfSubtitle   = document.getElementById("pfSubtitle");
 const pfBadge      = document.getElementById("pfBadge");
 const pfSourcesRow = document.getElementById("pfSourcesRow");
 const pfRefreshBtn = document.getElementById("pfRefreshBtn");
@@ -54,6 +55,20 @@ function renderSourceDots(sources) {
   ).join("");
 }
 
+function iconForSection(section, index = 0) {
+  const text = `${section?.title || ""} ${section?.id || ""}`.toLowerCase();
+  if (/contact|customer|basic|name|account|cliente|cuenta/.test(text)) return "ti-user";
+  if (/tool|technical|spec|product|assessment|detalle|t[eé]cnico/.test(text)) return "ti-tool";
+  if (/note|summary|description|additional|extra|info|nota/.test(text)) return "ti-list-details";
+  const icons = ["ti-user", "ti-tool", "ti-list-details", "ti-file-description", "ti-database"];
+  return icons[index % icons.length];
+}
+
+function isMissingRequiredValue(value, field) {
+  if (field?.type === "checkbox") return value !== "true" && value !== true;
+  return !String(value ?? "").trim();
+}
+
 // ── Form rendering ────────────────────────────────────────────────────────────
 function renderFormField(field, prefilled = false) {
   const cls = prefilled ? " pf-prefilled" : "";
@@ -91,10 +106,10 @@ function renderFormField(field, prefilled = false) {
   }
 
   return `
-    <div class="pf-field${fullClass}" data-field-id="${esc(field.id)}">
-      <label class="pf-label" for="pf-f-${esc(field.id)}">${esc(field.label)} ${req}</label>
+    <label class="pf-field${fullClass}" data-field-id="${esc(field.id)}" for="pf-f-${esc(field.id)}">
+      <span class="pf-label">${esc(field.label)} ${req}</span>
       ${input}
-    </div>`;
+    </label>`;
 }
 
 function renderFormWithTabs(pf, layout, prefilled, mode, canSubmit) {
@@ -102,12 +117,12 @@ function renderFormWithTabs(pf, layout, prefilled, mode, canSubmit) {
   const sections = layout.sections;
   const fieldMap = Object.fromEntries(formFields.map((f) => [f.id, f]));
   const total = sections.length;
-  const modeLabelMap = { query: "Consulta", submit: "Envío", both: "Consulta y envío" };
+  const modeLabelMap = { query: "Query", submit: "Submit", both: "Query and submit" };
   const modeLabel = modeLabelMap[mode] || mode;
   const modeBadge = `<span class="pf-mode-badge pf-mode-badge--${esc(mode)}">${esc(modeLabel)}</span>`;
 
   const tabNav = sections.map((s, i) =>
-    `<button type="button" class="pf-tab-btn${i === 0 ? " pf-tab-btn--active" : ""}" data-tab="${i}">${esc(s.title || s.id || `Paso ${i + 1}`)}</button>`
+    `<button type="button" class="tab-btn${i === 0 ? " is-active" : ""}" data-tab="${i}"><i class="ti ${iconForSection(s, i)}" aria-hidden="true"></i><span>${esc(s.title || s.id || `Step ${i + 1}`)}</span></button>`
   ).join("");
 
   const panels = sections.map((s, i) => {
@@ -116,46 +131,47 @@ function renderFormWithTabs(pf, layout, prefilled, mode, canSubmit) {
     const fieldsHtml = sectionFields.map((f) => renderFormField(f, prefilled && f.id in state.values)).join("");
     const isLast = i === total - 1;
     const footer = `
-      <div class="pf-tabs-footer">
-        <button type="button" class="pf-tabs-footer-prev"${i === 0 ? " disabled" : ""}>← Anterior</button>
+      <div class="pf-actions">
+        <button type="button" class="pf-btn pf-tabs-footer-prev"${i === 0 ? " disabled" : ""}><i class="ti ti-arrow-left" aria-hidden="true"></i> Previous</button>
         ${isLast && canSubmit
-          ? `<button type="submit" class="pf-tabs-footer-submit" id="pfSubmitBtn">Enviar información →</button>`
+          ? `<button type="submit" class="pf-submit-btn" id="pfSubmitBtn"><i class="ti ti-send" aria-hidden="true"></i> Submit</button>`
           : !isLast
-          ? `<button type="button" class="pf-tabs-footer-next">Siguiente →</button>`
+          ? `<button type="button" class="pf-btn pf-btn-primary pf-tabs-footer-next">Next <i class="ti ti-arrow-right" aria-hidden="true"></i></button>`
           : ""}
       </div>`;
     return `
-      <div class="pf-tab-panel${i === 0 ? " pf-tab-panel--active" : ""}" data-panel="${i}">
+      <section class="pf-section${i === 0 ? " is-active" : ""}" data-panel="${i}">
         <div class="pf-card">
-          <div class="pf-card-head"><h3>${esc(s.title || s.id || "")}</h3></div>
-          <div class="pf-card-body">
-            <div class="pf-form${hasTwoCols ? " pf-form--2col" : ""}">
+          <div class="section-header"><i class="ti ${iconForSection(s, i)}" aria-hidden="true"></i>${esc(s.title || s.id || "")}</div>
+          <div class="pf-grid">
               ${fieldsHtml || '<span style="color:#aab0bf;font-size:.8rem;">Sin campos asignados</span>'}
-            </div>
           </div>
         </div>
         ${footer}
-      </div>`;
+      </section>`;
   }).join("");
 
   pfBody.innerHTML = `
-    <div class="pf-layout-mode-bar">${modeBadge}</div>
-    <div class="pf-tabs-progress">
-      <div class="pf-tabs-progress-bar" id="pfProgressBar" style="width:${Math.round(100 / total)}%"></div>
+    <div class="prog-row">
+      <span class="prog-label" id="progLabel">Step 1 of ${total}</span>
+      <div class="prog-track"><div class="prog-fill" id="pfProgressBar" style="width:${Math.round(100 / total)}%"></div></div>
     </div>
-    <div class="pf-tabs-nav">${tabNav}</div>
+    <nav class="tab-nav" aria-label="Form sections">${tabNav}</nav>
     <form id="pfForm" novalidate>${panels}</form>
     <div id="pfStatusArea"></div>
+    <div>${modeBadge}</div>
     ${prefilled ? `<div class="pf-timestamp" id="pfTimestamp"></div>` : ""}`;
 
   let current = 0;
 
   function goToTab(idx) {
     if (idx < 0 || idx >= total) return;
-    pfBody.querySelectorAll(".pf-tab-panel").forEach((p, i) => p.classList.toggle("pf-tab-panel--active", i === idx));
-    pfBody.querySelectorAll(".pf-tab-btn").forEach((b, i) => b.classList.toggle("pf-tab-btn--active", i === idx));
+    pfBody.querySelectorAll(".pf-section").forEach((p, i) => p.classList.toggle("is-active", i === idx));
+    pfBody.querySelectorAll(".tab-btn").forEach((b, i) => b.classList.toggle("is-active", i === idx));
     const bar = document.getElementById("pfProgressBar");
     if (bar) bar.style.width = `${Math.round((idx + 1) / total * 100)}%`;
+    const label = document.getElementById("progLabel");
+    if (label) label.textContent = `Step ${idx + 1} of ${total}`;
     current = idx;
     notifyHeight();
   }
@@ -163,15 +179,15 @@ function renderFormWithTabs(pf, layout, prefilled, mode, canSubmit) {
   function validateTab(idx) {
     const s = sections[idx];
     const required = (s.fields || []).map((id) => fieldMap[id]).filter((f) => f?.required);
-    const missing = required.filter((f) => !state.values[f.id]?.trim());
+    const missing = required.filter((f) => isMissingRequiredValue(state.values[f.id], f));
     if (missing.length) {
-      showStatus("error", "Campos requeridos", `Completa: ${missing.map((f) => f.label).join(", ")}`);
+      showStatus("error", "Required fields", `Complete: ${missing.map((f) => f.label).join(", ")}`);
       return false;
     }
     return true;
   }
 
-  pfBody.querySelectorAll(".pf-tab-btn").forEach((btn) => {
+  pfBody.querySelectorAll(".tab-btn").forEach((btn) => {
     btn.addEventListener("click", () => goToTab(Number(btn.dataset.tab)));
   });
   pfBody.querySelectorAll(".pf-tabs-footer-next").forEach((btn) => {
@@ -189,11 +205,11 @@ function renderForm(pf, prefilled = false) {
   const formFields = pf.formFields || [];
   const mode = pf.mode || "query";
   const canSubmit = mode === "submit" || mode === "both";
-  const modeLabelMap = { query: "Consulta", submit: "Envío", both: "Consulta y envío" };
+  const modeLabelMap = { query: "Query", submit: "Submit", both: "Query and submit" };
   const modeLabel = modeLabelMap[mode] || mode;
   const modeBadge = `<span class="pf-mode-badge pf-mode-badge--${esc(mode)}">${esc(modeLabel)}</span>`;
   const submitBtn = canSubmit
-    ? `<button type="submit" class="pf-submit-btn" id="pfSubmitBtn">Enviar información</button>`
+    ? `<button type="submit" class="pf-submit-btn" id="pfSubmitBtn"><i class="ti ti-send" aria-hidden="true"></i> Submit</button>`
     : "";
 
   const layout = pf.activeLayout;
@@ -214,11 +230,9 @@ function renderForm(pf, prefilled = false) {
       const fieldsHtml = sectionFields.map((f) => renderFormField(f, prefilled && f.id in state.values)).join("");
       return `
         <div class="pf-card">
-          <div class="pf-card-head"><h3>${esc(section.title || section.id || "")}</h3></div>
-          <div class="pf-card-body">
-            <div class="pf-form${hasTwoCols ? " pf-form--2col" : ""}">
+          <div class="section-header"><i class="ti ${iconForSection(section)}" aria-hidden="true"></i>${esc(section.title || section.id || "")}</div>
+          <div class="pf-grid">
               ${fieldsHtml}
-            </div>
           </div>
         </div>`;
     };
@@ -227,9 +241,9 @@ function renderForm(pf, prefilled = false) {
     const sideSections = layout.sections.filter((s) => s.placement === "side");
 
     const unassignedHtml = unassigned.length
-      ? `<div class="pf-card"><div class="pf-card-body"><div class="pf-form${unassigned.length >= 3 ? " pf-form--2col" : ""}">
+      ? `<div class="pf-card"><div class="section-header"><i class="ti ti-list-details" aria-hidden="true"></i>Additional information</div><div class="pf-grid">
            ${unassigned.map((f) => renderFormField(f, prefilled && f.id in state.values)).join("")}
-         </div></div></div>`
+         </div></div>`
       : "";
 
     let bodyHtml;
@@ -244,27 +258,25 @@ function renderForm(pf, prefilled = false) {
     }
 
     pfBody.innerHTML = `
-      <div class="pf-layout-mode-bar">${modeBadge}</div>
       <form id="pfForm" novalidate>
         ${bodyHtml}
         ${submitBtn ? `<div class="pf-submit-wrap">${submitBtn}</div>` : ""}
       </form>
       <div id="pfStatusArea"></div>
+      <div>${modeBadge}</div>
       ${prefilled ? `<div class="pf-timestamp" id="pfTimestamp"></div>` : ""}`;
   } else {
-    const hasTwoCols = formFields.length >= 3;
     const fieldsHtml = formFields.map((f) => renderFormField(f, prefilled && f.id in state.values)).join("");
     pfBody.innerHTML = `
       <div class="pf-card">
-        <div class="pf-card-head"><h3>${modeBadge}</h3></div>
-        <div class="pf-card-body">
-          <form class="pf-form${hasTwoCols ? " pf-form--2col" : ""}" id="pfForm" novalidate>
+        <div class="section-header"><i class="ti ti-list-details" aria-hidden="true"></i>Information</div>
+          <form class="pf-grid" id="pfForm" novalidate>
             ${fieldsHtml}
             ${submitBtn ? `<div class="pf-field pf-field--full">${submitBtn}</div>` : ""}
           </form>
-        </div>
       </div>
       <div id="pfStatusArea"></div>
+      <div>${modeBadge}</div>
       ${prefilled ? `<div class="pf-timestamp" id="pfTimestamp"></div>` : ""}`;
   }
 
@@ -274,7 +286,7 @@ function renderForm(pf, prefilled = false) {
 
 function setTimestamp(ts) {
   const el = document.getElementById("pfTimestamp");
-  if (el && ts) el.textContent = `Consultado ${new Date(ts).toLocaleTimeString()}`;
+  if (el && ts) el.textContent = `Queried ${new Date(ts).toLocaleTimeString()}`;
 }
 
 // ── Form events ───────────────────────────────────────────────────────────────
@@ -308,15 +320,15 @@ function wireFormEvents(pf) {
     });
 
     // Basic required validation
-    const missing = (pf.formFields || []).filter((f) => f.required && !formData[f.id]?.trim());
+    const missing = (pf.formFields || []).filter((f) => f.required && isMissingRequiredValue(formData[f.id], f));
     if (missing.length) {
-      showStatus("error", "Campos requeridos", `Completa: ${missing.map((f) => f.label).join(", ")}`);
+      showStatus("error", "Required fields", `Complete: ${missing.map((f) => f.label).join(", ")}`);
       return;
     }
 
     state.submitting = true;
     submitBtn.disabled = true;
-    submitBtn.textContent = "Enviando…";
+    submitBtn.innerHTML = '<i class="ti ti-loader" aria-hidden="true"></i> Sending...';
 
     try {
       const result = await apiFetch("/api/pulseforms/submit", {
@@ -332,17 +344,17 @@ function wireFormEvents(pf) {
       renderSourceDots(result.sources || []);
 
       if (result.ok) {
-        showStatus("ok", "Información enviada", "Los datos se guardaron correctamente en el CRM.");
+        showStatus("ok", "Information sent", "The data was saved successfully in the CRM.");
       } else {
         const errors = (result.sources || []).filter((s) => !s.ok).map((s) => s.error || s.name).join("; ");
-        showStatus("error", "Error al enviar", errors || "Uno o más destinos fallaron.");
+        showStatus("error", "Submit error", errors || "One or more destinations failed.");
       }
     } catch (err) {
-      showStatus("error", "Error al enviar", err.message);
+      showStatus("error", "Submit error", err.message);
     } finally {
       state.submitting = false;
       submitBtn.disabled = false;
-      submitBtn.textContent = "Enviar información";
+      submitBtn.innerHTML = '<i class="ti ti-send" aria-hidden="true"></i> Submit';
       notifyHeight();
     }
   });
@@ -359,7 +371,7 @@ function showStatus(type, title, detail) {
 }
 
 // ── Loading / Error ───────────────────────────────────────────────────────────
-function renderLoading(msg = "Cargando formulario…") {
+function renderLoading(msg = "Loading form...") {
   pfBody.innerHTML = `
     <div class="pf-loading">
       <div class="pf-spinner"></div>
@@ -370,7 +382,7 @@ function renderLoading(msg = "Cargando formulario…") {
 function renderError(msg) {
   pfBody.innerHTML = `
     <div class="pf-error-full">
-      <strong>No se pudo cargar PulseForms</strong>${esc(msg)}
+      <strong>PulseForms could not be loaded</strong>${esc(msg)}
     </div>`;
   notifyHeight();
 }
@@ -410,6 +422,7 @@ const DEMO_VALUES = {
 function loadDemo() {
   pfBadge.textContent = "+15551234567";
   pfBadge.hidden = false;
+  if (pfSubtitle) pfSubtitle.textContent = "Sugar CRM integration";
   renderSourceDots([{ id: "crm", name: "Sugar CRM (demo)", ok: true }]);
   pfRefreshBtn.hidden = false;
   state.config = DEMO_CONFIG;
@@ -427,7 +440,7 @@ async function load() {
   pfBadge.textContent = displayId;
   pfBadge.hidden = false;
 
-  renderLoading("Cargando configuración…");
+  renderLoading("Loading configuration...");
 
   // 1. Fetch pulseforms config (dedicated endpoint — no token/kbIds required)
   let pf;
@@ -442,6 +455,7 @@ async function load() {
 
     const campaignName = configData.campaign?.name || "PulseForms";
     pfTitle.textContent = campaignName;
+    if (pfSubtitle) pfSubtitle.textContent = "CRM integration";
     document.title = campaignName;
   } catch (err) {
     renderError(err.message);
@@ -453,7 +467,7 @@ async function load() {
 
   // 2. If query mode and we have an identifier, pre-fill
   if (needsQuery) {
-    renderLoading("Consultando CRM…");
+    renderLoading("Consulting CRM...");
     try {
       const params = new URLSearchParams({ campaign: campaignId });
       if (phone) params.set("phone", phone);
@@ -468,7 +482,7 @@ async function load() {
       // Query failed — still show empty form
       renderSourceDots([]);
       renderForm(pf, false);
-      showStatus("error", "No se pudo consultar el CRM", err.message);
+      showStatus("error", "CRM query failed", err.message);
     }
   } else {
     renderForm(pf, false);
