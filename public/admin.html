@@ -19,11 +19,36 @@
         <div class="admin-user-bar" id="adminUserBar" hidden>
           <span class="admin-user-name" id="adminUserName"></span>
           <span class="admin-user-role" id="adminUserRole"></span>
+          <button type="button" id="changePasswordToggle" class="admin-logout-btn">Change password</button>
           <button type="button" id="logoutButton" class="admin-logout-btn">Sign out</button>
         </div>
       </header>
 
       <p class="admin-status" id="adminStatus"></p>
+
+      <section class="admin-password-panel" id="changePasswordPanel" hidden>
+        <div class="admin-password-card">
+          <h2>Change password</h2>
+          <div class="admin-password-grid">
+            <label>
+              Current password
+              <input id="currentPassword" type="password" autocomplete="current-password" />
+            </label>
+            <label>
+              New password
+              <input id="newPasswordSelf" type="password" autocomplete="new-password" />
+            </label>
+            <label>
+              Confirm new password
+              <input id="newPasswordSelfConfirm" type="password" autocomplete="new-password" />
+            </label>
+          </div>
+          <div class="admin-actions" style="padding:0;margin-top:12px;">
+            <button type="button" id="saveSelfPasswordButton">Save password</button>
+            <button type="button" id="cancelSelfPasswordButton" class="secondary">Cancel</button>
+          </div>
+        </div>
+      </section>
 
       <section class="admin-empty" id="adminLockedMessage">
         Checking session…

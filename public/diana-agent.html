@@ -8,6 +8,14 @@
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html{height:100%}
 body{font-family:"Avenir","Avenir Next","Nunito Sans","Segoe UI",Arial,sans-serif;background:#f0f2f5;height:100%;max-height:100vh;display:flex;flex-direction:column;font-size:13px;color:#1B2A37;overflow:hidden}
+body.auth-pending .app-header,body.auth-pending .app-body{display:none}
+.agent-auth-gate{position:fixed;inset:0;background:#f0f2f5;display:flex;align-items:center;justify-content:center;padding:24px;z-index:9999}
+.agent-auth-gate[hidden]{display:none}
+.agent-auth-card{width:min(420px,100%);background:#fff;border:1px solid #e0e6ec;border-radius:14px;box-shadow:0 16px 40px rgba(15,23,42,.12);padding:22px;text-align:center}
+.agent-auth-icon{width:44px;height:44px;border-radius:12px;background:#e6f3fb;color:#0077C8;display:inline-flex;align-items:center;justify-content:center;margin-bottom:14px}
+.agent-auth-title{font-size:17px;font-weight:900;color:#1B2A37;margin-bottom:6px}
+.agent-auth-message{font-size:13px;line-height:1.5;color:#64748b}
+.agent-auth-card.error .agent-auth-icon{background:#fee2e2;color:#dc2626}
 
 /* ── Header ── */
 .app-header{background:#fff;border-bottom:1px solid #e0e6ec;padding:0 24px;height:56px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;gap:16px}
@@ -193,7 +201,16 @@ body{font-family:"Avenir","Avenir Next","Nunito Sans","Segoe UI",Arial,sans-seri
 @keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
-<body>
+<body class="auth-pending">
+<div class="agent-auth-gate" id="agentAuthGate">
+  <div class="agent-auth-card" id="agentAuthCard">
+    <div class="agent-auth-icon">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/><path d="m9 12 2 2 4-4"/></svg>
+    </div>
+    <div class="agent-auth-title" id="agentAuthTitle">Validando sesión del agente</div>
+    <div class="agent-auth-message" id="agentAuthMessage">Espera un momento mientras validamos el token de NCC.</div>
+  </div>
+</div>
 
 <!-- ═══════════ HEADER ═══════════ -->
 <header class="app-header">
@@ -502,9 +519,11 @@ body{font-family:"Avenir","Avenir Next","Nunito Sans","Segoe UI",Arial,sans-seri
 <script>
 // ── Config ────────────────────────────────────────────────────────
 const _p          = new URLSearchParams(location.search);
+const _hp         = new URLSearchParams(location.hash.replace(/^#/, ""));
 const BASE_URL    = _p.get("base")       || _p.get("baseUrl")    || "";
 const WORKITEM_ID = _p.get("workitemid") || _p.get("workitemId") || "";
 const CAMPAIGN_ID = _p.get("campaign")   || "";
+const AGENT_TOKEN = String(window.DIANA_AGENT_TOKEN || document.currentScript?.dataset.agentToken || _hp.get("agentToken") || _hp.get("agent_token") || "");
 
 let TRANSCRIPT_POLL      = 10_000;  // overridden by campaign config
 const CHECKLIST_POLL     = 30_000;
@@ -519,6 +538,53 @@ let callMetaSet     = false;
 let transcriptTimer = null;
 let checklistTimer  = null;
 let callEnded       = false;
+
+function apiUrl(path) {
+  return `${BASE_URL}${path}`;
+}
+
+function showAuthError(text) {
+  const card = document.getElementById("agentAuthCard");
+  const title = document.getElementById("agentAuthTitle");
+  const message = document.getElementById("agentAuthMessage");
+  if (card) card.classList.add("error");
+  if (title) title.textContent = "Sesión de agente requerida";
+  if (message) message.textContent = text;
+  document.body.classList.add("auth-pending");
+}
+
+async function validateAgentToken() {
+  if (!AGENT_TOKEN.trim()) {
+    showAuthError("Falta agentToken. Abre este widget con #agentToken=<TOKEN>.");
+    return false;
+  }
+  try {
+    const res = await fetch(apiUrl("/api/pulseforms/agent-session"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ token: AGENT_TOKEN, campaign: CAMPAIGN_ID })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false || data.active !== true) {
+      throw new Error(data.error || "El token del agente no está activo.");
+    }
+    document.getElementById("agentAuthGate")?.setAttribute("hidden", "");
+    document.body.classList.remove("auth-pending");
+    window.AGENT_SESSION = data.session || {};
+    return true;
+  } catch (error) {
+    showAuthError(error.message || "No se pudo validar el token del agente.");
+    return false;
+  }
+}
+
+function authorizedFetch(url, options = {}) {
+  const headers = new Headers(options.headers || {});
+  headers.set("x-thrio-token", AGENT_TOKEN);
+  headers.set("x-agent-token", AGENT_TOKEN);
+  return fetch(url, { ...options, headers });
+}
 
 // ── Init call title from URL param ────────────────────────────────
 if (WORKITEM_ID) {
@@ -548,7 +614,7 @@ function stopPolling(reason) {
   if (nextStepTimer)   { clearInterval(nextStepTimer);   nextStepTimer   = null; }
   if (timerInterval)   { clearInterval(timerInterval);   timerInterval   = null; }
   const bar = document.querySelector(".call-status-bar");
-  if (bar) bar.innerHTML = `<span style="color:#e74c3c;font-weight:700">● Llamada finalizada</span>&nbsp;&nbsp;${reason ? "— " + reason : ""}`;
+  if (bar) bar.innerHTML = `<span style="color:#e74c3c;font-weight:700">● Llamada finalizada</span>&nbsp;&nbsp;${reason ? "— " + esc(reason) : ""}`;
 }
 
 // ── Transcript + Sentiment polling ────────────────────────────────
@@ -556,7 +622,7 @@ async function fetchTranscript() {
   if (!CAMPAIGN_ID || !WORKITEM_ID || callEnded) return;
   document.getElementById("transcriptSpinner").style.display = "block";
   try {
-    const res = await fetch(`${BASE_URL}/api/workitem?campaign=${enc(CAMPAIGN_ID)}&workitemid=${enc(WORKITEM_ID)}`, { cache:"no-store" });
+    const res = await authorizedFetch(apiUrl(`/api/workitem?campaign=${enc(CAMPAIGN_ID)}&workitemid=${enc(WORKITEM_ID)}`), { cache:"no-store" });
     if (!res.ok) {
       // Si falla y no hay mensajes aún, reintenta en 3s
       if (lastMsgCount === 0) setTimeout(fetchTranscript, 3000);
@@ -564,12 +630,6 @@ async function fetchTranscript() {
     }
     const data = await res.json();
     if (!data.ok) return;
-    // Check state — stop polling if no longer active
-    const state = (data.summary?.state || "").toLowerCase();
-    if (state && state !== "active") {
-      stopPolling(state);
-      return;
-    }
     // Adjust poll intervals from campaign config (first call only)
     if (!callMetaSet) {
       const srvTranscript = data.campaign?.transcriptRefreshSeconds;
@@ -591,6 +651,12 @@ async function fetchTranscript() {
     setCallMeta(data);
     renderTranscript(data.transcript || []);
     renderSentiment(data.messages || []);
+    // Render the final payload before stopping; ended workitems can still carry the last transcript/sentiment.
+    const state = (data.summary?.state || "").toLowerCase();
+    if (state && state !== "active") {
+      stopPolling(state);
+      return;
+    }
   } catch(_) {}
   finally { document.getElementById("transcriptSpinner").style.display = "none"; }
 }
@@ -688,7 +754,7 @@ let lastClientQCount = 0;
 async function fetchClientQuestions() {
   if (!CAMPAIGN_ID || !WORKITEM_ID || callEnded) return;
   try {
-    const res = await fetch(`${BASE_URL}/api/client-questions?campaign=${enc(CAMPAIGN_ID)}&workitemid=${enc(WORKITEM_ID)}`, { cache:"no-store" });
+    const res = await authorizedFetch(apiUrl(`/api/client-questions?campaign=${enc(CAMPAIGN_ID)}&workitemid=${enc(WORKITEM_ID)}`), { cache:"no-store" });
     if (!res.ok) return;
     const data = await res.json();
     if (!data.ok) return;
@@ -717,7 +783,7 @@ function renderClientQuestions(questions) {
 function renderSentiment(messages) {
   const scores = messages.map(m => Number(m?.sentiment?.score || 0)).filter(Number.isFinite);
   if (!scores.length) return;
-  const avg = scores.reduce((a,b) => a+b, 0) / scores.length;
+  const avg = computeOverallSentimentScore(scores);
 
   // Sentiment bar always visible
   const chip = document.getElementById("sentimentChip");
@@ -741,12 +807,33 @@ function renderSentiment(messages) {
   }
 }
 
+function computeOverallSentimentScore(scores) {
+  if (!scores.length) return 0;
+  const clamped = scores.map(score => Math.max(-1, Math.min(1, Number(score) || 0)));
+  const average = clamped.reduce((sum, value) => sum + value, 0) / clamped.length;
+  const minimum = Math.min(...clamped);
+  const maximum = Math.max(...clamped);
+  const negativeShare = clamped.filter(value => value <= -0.35).length / clamped.length;
+  const positiveShare = clamped.filter(value => value >= 0.35).length / clamped.length;
+
+  if (minimum <= -0.85 && average <= -0.05) {
+    return Math.max(-1, average * 0.45 + minimum * 0.75);
+  }
+  if (negativeShare >= 0.25 && average < 0) {
+    return Math.max(-1, average * 0.65 + minimum * 0.45);
+  }
+  if (positiveShare >= 0.25 && average > 0) {
+    return Math.min(1, average * 0.65 + maximum * 0.45);
+  }
+  return average;
+}
+
 // ── Checklist polling ─────────────────────────────────────────────
 async function fetchChecklist() {
   if (!CAMPAIGN_ID || !WORKITEM_ID || callEnded) return;
   document.getElementById("checklistSpinner").style.display = "block";
   try {
-    const res = await fetch(`${BASE_URL}/api/questions-check?campaign=${enc(CAMPAIGN_ID)}&workitemid=${enc(WORKITEM_ID)}`, { cache:"no-store" });
+    const res = await authorizedFetch(apiUrl(`/api/questions-check?campaign=${enc(CAMPAIGN_ID)}&workitemid=${enc(WORKITEM_ID)}`), { cache:"no-store" });
     if (!res.ok) return;
     const data = await res.json();
     if (!data.ok) return;
@@ -782,7 +869,7 @@ function renderChecklist(questions) {
 async function loadCopilotConfig() {
   if (!CAMPAIGN_ID) return;
   try {
-    const res = await fetch(`${BASE_URL}/api/config?campaign=${enc(CAMPAIGN_ID)}${WORKITEM_ID ? "&workitemid=" + enc(WORKITEM_ID) : ""}`);
+    const res = await authorizedFetch(apiUrl(`/api/config?campaign=${enc(CAMPAIGN_ID)}${WORKITEM_ID ? "&workitemid=" + enc(WORKITEM_ID) : ""}`));
     const data = await res.json();
     if (data.configured && data.request) copilotConfig = data.request;
   } catch(_) {}
@@ -814,7 +901,7 @@ async function askDiana(message) {
   body.scrollTop = body.scrollHeight;
 
   try {
-    const res = await fetch(`${BASE_URL}/api/prediction`, {
+    const res = await authorizedFetch(apiUrl(`/api/prediction`), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -894,7 +981,7 @@ function fillForm(ticket) {
 async function loadTicket() {
   if (!CAMPAIGN_ID || !WORKITEM_ID) return;
   try {
-    const res = await fetch(`${BASE_URL}/api/ticket?campaign=${enc(CAMPAIGN_ID)}&workitemid=${enc(WORKITEM_ID)}`);
+    const res = await authorizedFetch(apiUrl(`/api/ticket?campaign=${enc(CAMPAIGN_ID)}&workitemid=${enc(WORKITEM_ID)}`));
     const data = await res.json();
     if (data.ok && data.ticket) fillForm(data.ticket);
   } catch(_) {}
@@ -905,7 +992,7 @@ async function saveForm() {
   const btn   = document.querySelector(".btn-save");
   if (btn) { btn.disabled = true; btn.style.opacity = ".6"; }
   try {
-    const res = await fetch(`${BASE_URL}/api/ticket`, {
+    const res = await authorizedFetch(apiUrl(`/api/ticket`), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(getFormData())
@@ -939,7 +1026,7 @@ async function fetchNextStep() {
   if (!CAMPAIGN_ID || !WORKITEM_ID || callEnded) return;
   document.getElementById("nextStepSpinner").style.display = "block";
   try {
-    const res = await fetch(`${BASE_URL}/api/agent-next-step?campaign=${enc(CAMPAIGN_ID)}&workitemid=${enc(WORKITEM_ID)}`, { cache:"no-store" });
+    const res = await authorizedFetch(apiUrl(`/api/agent-next-step?campaign=${enc(CAMPAIGN_ID)}&workitemid=${enc(WORKITEM_ID)}`), { cache:"no-store" });
     if (!res.ok) return;
     const data = await res.json();
     if (!data.ok) return;
@@ -954,39 +1041,50 @@ function renderNextStep(ns) {
   if (!ns.actionTitle && !ns.actionDetail) { body.innerHTML = '<div style="font-size:11px;color:#94a3b8;text-align:center">Sin guía disponible aún.</div>'; return; }
 
   const urgCls = ns.urgency === "high" ? "high" : ns.urgency === "medium" ? "medium" : "low";
-  const chips = Array.isArray(ns.quickActions) ? ns.quickActions.map(a =>
-    `<span class="ns-chip" onclick="sendToDiana('${esc(a.label||a)}')">${esc(a.label||a)}</span>`
-  ).join("") : "";
+  const quickActions = Array.isArray(ns.quickActions) ? ns.quickActions.map(a => String(a?.label || a || "")) : [];
+  const chips = quickActions.map((label, index) =>
+    `<span class="ns-chip" data-action="quick" data-index="${index}">${esc(label)}</span>`
+  ).join("");
 
   const phrase = ns.suggestedPhrase || "";
-  const escapedPhrase = phrase.replace(/'/g, "\\'");
 
   body.innerHTML = `
     <div class="ns-action">${esc(ns.actionTitle || "")}</div>
     <div class="ns-detail">${esc(ns.actionDetail || "")}</div>
     ${phrase ? `<div class="ns-phrase-label">Frase sugerida — clic para enviar a NIA</div>
-    <div class="ns-phrase" onclick="sendToDiana('${escapedPhrase}')">${esc(phrase)}</div>` : ""}
+    <div class="ns-phrase" data-action="phrase">${esc(phrase)}</div>` : ""}
     ${chips ? `<div class="ns-chips">${chips}</div>` : ""}
     <div class="ns-meta">
       <span class="ns-badge ${urgCls}">${esc(ns.urgency||"")}</span>
       ${ns.confidence ? `<span>${Math.round(ns.confidence)}% confianza</span>` : ""}
       ${ns.stage ? `<span>• ${esc(ns.stage)}</span>` : ""}
     </div>`;
+  body.querySelector('[data-action="phrase"]')?.addEventListener("click", () => sendToDiana(phrase));
+  body.querySelectorAll('[data-action="quick"]').forEach((item) => {
+    item.addEventListener("click", () => sendToDiana(quickActions[Number(item.dataset.index)] || ""));
+  });
 }
 
 // ── Init ──────────────────────────────────────────────────────────
-loadCopilotConfig();
-loadTicket();
-if (CAMPAIGN_ID && WORKITEM_ID) {
-  fetchTranscript();
-  fetchChecklist();
-  fetchClientQuestions();
-  fetchNextStep();
-  transcriptTimer = setInterval(fetchTranscript, TRANSCRIPT_POLL);
-  checklistTimer  = setInterval(fetchChecklist,  CHECKLIST_POLL);
-  nextStepTimer   = setInterval(fetchNextStep,   NEXT_STEP_POLL);
-  setTimeout(() => setInterval(fetchClientQuestions, CLIENT_QUESTIONS_POLL), 2000);
+async function initDianaWidget() {
+  const authorized = await validateAgentToken();
+  if (!authorized) return;
+
+  loadCopilotConfig();
+  loadTicket();
+  if (CAMPAIGN_ID && WORKITEM_ID) {
+    fetchTranscript();
+    fetchChecklist();
+    fetchClientQuestions();
+    fetchNextStep();
+    transcriptTimer = setInterval(fetchTranscript, TRANSCRIPT_POLL);
+    checklistTimer  = setInterval(fetchChecklist,  CHECKLIST_POLL);
+    nextStepTimer   = setInterval(fetchNextStep,   NEXT_STEP_POLL);
+    setTimeout(() => setInterval(fetchClientQuestions, CLIENT_QUESTIONS_POLL), 2000);
+  }
 }
+
+initDianaWidget();
 </script>
 </body>
 </html>

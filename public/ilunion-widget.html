@@ -920,13 +920,15 @@ function showCopilotThinking(show) {
 function showCopilotAnswer(text) {
   const toast = document.getElementById("copilotAnswerToast");
   const escaped = esc(text).replace(/\n\n+/g, "<br><br>").replace(/\n/g, "<br>");
-  const safeText = text.replace(/\\/g,"\\\\").replace(/'/g,"\\'");
   toast.innerHTML = `<div>${escaped}</div>
     <div class="copilot-answer-actions">
-      <button class="copilot-answer-btn" onclick="copyCopilotAnswer(this,'${safeText}')">Copiar</button>
-      <button class="copilot-answer-btn" onclick="useCopilotAnswer('${safeText}')">Usar en campo</button>
-      <button class="copilot-answer-btn" onclick="document.getElementById('copilotAnswerToast').classList.remove('visible')" style="margin-left:auto;color:#94a3b8">✕</button>
+      <button class="copilot-answer-btn" data-action="copy">Copiar</button>
+      <button class="copilot-answer-btn" data-action="use">Usar en campo</button>
+      <button class="copilot-answer-btn" data-action="close" style="margin-left:auto;color:#94a3b8">✕</button>
     </div>`;
+  toast.querySelector('[data-action="copy"]').addEventListener("click", (event) => copyCopilotAnswer(event.currentTarget, text));
+  toast.querySelector('[data-action="use"]').addEventListener("click", () => useCopilotAnswer(text));
+  toast.querySelector('[data-action="close"]').addEventListener("click", () => toast.classList.remove("visible"));
   toast.classList.add("visible");
 }
 

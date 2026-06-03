@@ -613,19 +613,17 @@ const BASE_URL         = _p.get("base")       || _p.get("baseUrl")    || "";
 const WORKITEM_ID      = _p.get("workitemid") || _p.get("workitemId") || "";
 const CAMPAIGN_ID      = _p.get("campaign")   || "";
 const CORRECTOR_API_ID = _p.get("correctorId")|| "69a6bcfb6ce3b458cbf93a97";
-const API_TOKEN        = _p.get("token")      || "";
+const API_TOKEN        = String(window.ILUNION_API_TOKEN || document.currentScript?.dataset.apiToken || "");
 
 // ── Helpers ───────────────────────────────────────────────────
-// Añade &token= a URLs de nuestro servidor para que use ese token con Thrio
 function withToken(url) {
-  if (!API_TOKEN) return url;
-  const sep = url.includes("?") ? "&" : "?";
-  return `${url}${sep}token=${encodeURIComponent(API_TOKEN)}`;
+  return url;
 }
 
-function proxyHeaders(includeContentType = true) {
+function proxyHeaders(includeContentType = true, includeAuth = false) {
   const headers = {};
   if (includeContentType) headers["Content-Type"] = "application/json";
+  if (includeAuth && API_TOKEN) headers["Authorization"] = "Bearer " + API_TOKEN;
   return headers;
 }
 
@@ -673,7 +671,7 @@ async function callTTS(text, voice) {
   try {
     const res = await fetch(url, {
       method: "POST",
-      headers: proxyHeaders(),
+      headers: proxyHeaders(true, true),
       body: JSON.stringify({ text, voiceName: voice })
     });
     if (!res.ok) throw new Error(`TTS error ${res.status}`);
@@ -793,7 +791,7 @@ async function fetchTranscript() {
   spinner.style.display = "block";
   try {
     const url = withToken(`${BASE_URL}/api/workitem?campaign=${encodeURIComponent(CAMPAIGN_ID)}&workitemid=${encodeURIComponent(WORKITEM_ID)}`);
-    const res = await fetch(url, { cache: "no-store", headers: proxyHeaders(false) });
+    const res = await fetch(url, { cache: "no-store", headers: proxyHeaders(false, true) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || "Error");
@@ -884,7 +882,7 @@ async function initCopilot() {
     try {
       const res = await fetch(withToken(`${BASE_URL}/api/prediction`), {
         method: "POST",
-        headers: proxyHeaders(),
+        headers: proxyHeaders(true, true),
         body: JSON.stringify({
           message: msg,
           campaignId: CAMPAIGN_ID,
@@ -927,13 +925,15 @@ function showCopilotThinking(show) {
 function showCopilotAnswer(text) {
   const toast = document.getElementById("copilotAnswerToast");
   const escaped = esc(text).replace(/\n\n+/g, "<br><br>").replace(/\n/g, "<br>");
-  const safeText = text.replace(/\\/g,"\\\\").replace(/'/g,"\\'");
   toast.innerHTML = `<div>${escaped}</div>
     <div class="copilot-answer-actions">
-      <button class="copilot-answer-btn" onclick="copyCopilotAnswer(this,'${safeText}')">Copiar</button>
-      <button class="copilot-answer-btn" onclick="useCopilotAnswer('${safeText}')">Usar en campo</button>
-      <button class="copilot-answer-btn" onclick="document.getElementById('copilotAnswerToast').classList.remove('visible')" style="margin-left:auto;color:#94a3b8">✕</button>
+      <button class="copilot-answer-btn" data-action="copy">Copiar</button>
+      <button class="copilot-answer-btn" data-action="use">Usar en campo</button>
+      <button class="copilot-answer-btn" data-action="close" style="margin-left:auto;color:#94a3b8">✕</button>
     </div>`;
+  toast.querySelector('[data-action="copy"]').addEventListener("click", (event) => copyCopilotAnswer(event.currentTarget, text));
+  toast.querySelector('[data-action="use"]').addEventListener("click", () => useCopilotAnswer(text));
+  toast.querySelector('[data-action="close"]').addEventListener("click", () => toast.classList.remove("visible"));
   toast.classList.add("visible");
 }
 

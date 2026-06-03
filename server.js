@@ -29,6 +29,10 @@ const HOST = process.env.HOST || "127.0.0.1";
 const DEFAULT_API_URL = process.env.THRIO_API_URL || "https://mancity.thrio.io/data/api/ai/prediction";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
 const CAMPAIGN_ENCRYPTION_SECRET = process.env.CAMPAIGN_ENCRYPTION_SECRET || ADMIN_PASSWORD;
+if (!process.env.CAMPAIGN_ENCRYPTION_SECRET && ADMIN_PASSWORD) {
+  console.warn("[security] CAMPAIGN_ENCRYPTION_SECRET is not set — falling back to ADMIN_PASSWORD. " +
+    "Set CAMPAIGN_ENCRYPTION_SECRET as an independent secret so rotating ADMIN_PASSWORD does not break encrypted campaign data.");
+}
 const ENCRYPTION_SALT = process.env.ENCRYPTION_SALT || "nextiq-campaigns-salt-v1";
 const FIRESTORE_PREFIX = sanitizeFirestorePrefix(process.env.FIRESTORE_PREFIX || "nextiq");
 const FIRESTORE_DATABASE_ID = String(process.env.FIRESTORE_DATABASE_ID || "").trim();
@@ -67,7 +71,12 @@ function getClientIp(req) {
     return req.socket.remoteAddress || "unknown";
   }
   const forwarded = req.headers["x-forwarded-for"];
-  if (forwarded) return forwarded.split(",")[0].trim();
+  if (forwarded) {
+    // Use the last IP — GCP's load balancer appends the real client IP at the end,
+    // so the first entry can be spoofed by the client to bypass rate limiting.
+    const ips = forwarded.split(",").map((s) => s.trim()).filter(Boolean);
+    return ips[ips.length - 1] || req.socket.remoteAddress || "unknown";
+  }
   return req.socket.remoteAddress || "unknown";
 }
 
@@ -260,6 +269,23 @@ function isValidCsrfToken(req, session) {
   const token = String(req.headers["x-csrf-token"] || "").trim();
   const expected = createCsrfToken(session);
   return Boolean(token && expected && constantTimeEqualString(token, expected));
+}
+
+function createWielandCsrfToken(session) {
+  if (!session?.sub || !session?.exp) return "";
+  return crypto.createHmac("sha256", getWielandSessionSecret())
+    .update(`csrf:${session.sub}:${session.exp}`)
+    .digest("hex");
+}
+
+function isValidWielandCsrfToken(req, session) {
+  const token = String(req.headers["x-csrf-token"] || "").trim();
+  const expected = createWielandCsrfToken(session);
+  return Boolean(token && expected && constantTimeEqualString(token, expected));
+}
+
+function isUnsafeMethod(method) {
+  return !["GET", "HEAD", "OPTIONS"].includes(String(method || "").toUpperCase());
 }
 
 function securityHeaders(extra = {}) {
@@ -585,8 +611,9 @@ async function handleWielandAuth(req, res, url) {
       sendJson(res, 401, { error: "NCC token has expired." }); return;
     }
 
-    // For token mode: validate by calling NCC API with the user's JWT
-    if (campaignAuthType === "token") {
+    // Validate by calling NCC API with the user's JWT. Decoding alone is not
+    // signature verification, so key/token modes must prove the token upstream.
+    if (campaignAuthType === "token" || campaignAuthType === "key") {
       const nccBase = `https://${campaign.domain}/data/api/types`;
       try {
         const testRes = await fetch(`${nccBase}/contact?pageSize=1`, {
@@ -599,7 +626,6 @@ async function handleWielandAuth(req, res, url) {
         sendJson(res, 502, { error: "Could not verify token with NCC." }); return;
       }
     }
-    // key mode: trust the JWT's own expiry
 
     userId = jwtPayload.sub || jwtPayload.userId || "ncc-user";
     username = jwtPayload.username || jwtPayload.sub || "ncc-user";
@@ -609,20 +635,21 @@ async function handleWielandAuth(req, res, url) {
   // Create Wieland session
   const sessionToken = createWielandSessionToken({ userId, username, tenantId });
   setWielandCookie(res, sessionToken);
+  const wielandSession = verifyWielandSessionToken(sessionToken);
   // Also return the token in the body so the client can store it in sessionStorage
   // (fallback for browsers that block third-party cookies in iframes)
-  sendJson(res, 200, { ok: true, sessionToken, user: { username, tenantId } });
+  sendJson(res, 200, { ok: true, sessionToken, csrfToken: createWielandCsrfToken(wielandSession), user: { username, tenantId } });
 }
 
 async function handleWielandMe(req, res, url) {
   const ws = getWielandSessionFromRequest(req) || getWielandUser(req);
   if (ws) {
-    sendJson(res, 200, { user: { username: ws.name || ws.username, tenantId: ws.tenant || ws.tenantId } });
+    sendJson(res, 200, { csrfToken: createWielandCsrfToken(ws), user: { username: ws.name || ws.username, tenantId: ws.tenant || ws.tenantId } });
     return;
   }
-  if (isAuthorizedAdmin(req)) {
-    const as = getSessionFromRequest(req);
-    sendJson(res, 200, { user: { username: as?.name || "admin" } });
+  const adminSession = getSessionFromRequest(req);
+  if (adminSession) {
+    sendJson(res, 200, { csrfToken: createCsrfToken(adminSession), user: { username: adminSession.name || "admin" } });
     return;
   }
   // If campaign uses nccAuthType=none, allow anonymous access
@@ -1069,7 +1096,7 @@ async function handleRequest(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/pulseforms/agent-session") {
-    await handlePulseFormsAgentSession(req, res);
+    await handlePulseFormsAgentSession(req, res, url);
     return;
   }
 
@@ -1366,7 +1393,12 @@ async function handleClientQuestions(req, res, url) {
     const useGemini = config?.ui?.questions?.clientQuestionsUseGemini !== false;
     let questions;
     if (useGemini) {
-      questions = await detectClientQuestionsWithGemini(clientMessages, config);
+      try {
+        questions = await detectClientQuestionsWithGemini(clientMessages, config);
+      } catch (error) {
+        console.warn(`[client-questions] Gemini failed for campaign "${config.id}", falling back to heuristic: ${error.message}`);
+        questions = detectClientQuestionsHeuristically(clientMessages);
+      }
     } else {
       questions = detectClientQuestionsHeuristically(clientMessages);
     }
@@ -1475,9 +1507,17 @@ async function handleQuestionsCheck(req, res, url) {
 
     const workitemData = await fetchWorkitem(config, workitemId);
     const messages = extractChecklistMessages(workitemData);
-    const results = config?.ui?.questions?.useGemini === false
-      ? analyzeChecklistHeuristically(messages, questions)
-      : await analyzeChecklistWithGemini(messages, questions, config, questionsConfig);
+    let results;
+    if (config?.ui?.questions?.useGemini === false) {
+      results = analyzeChecklistHeuristically(messages, questions);
+    } else {
+      try {
+        results = await analyzeChecklistWithGemini(messages, questions, config, questionsConfig);
+      } catch (error) {
+        console.warn(`[questions-check] Gemini failed for campaign "${config.id}", falling back to heuristic: ${error.message}`);
+        results = analyzeChecklistHeuristically(messages, questions);
+      }
+    }
 
     sendJson(res, 200, {
       ok: true,
@@ -3176,7 +3216,7 @@ Rules (strictly follow):
   }
 }
 
-async function handlePulseFormsAgentSession(req, res) {
+async function handlePulseFormsAgentSession(req, res, url) {
   let body;
   try { body = await readJson(req); } catch {
     sendJson(res, 400, { ok: false, active: false, error: "Invalid JSON body" });
@@ -3198,7 +3238,17 @@ async function handlePulseFormsAgentSession(req, res) {
   }
 
   try {
-    const upstream = await fetch("https://astonvilla.thrio.io/users/api/session", {
+    const campaignId = String(body.campaign || url.searchParams.get("campaign") || "").trim();
+    let domain = sanitizeDomain(body.domain || url.searchParams.get("domain") || "");
+    if (!domain && campaignId) {
+      try {
+        const config = await resolveCampaignConfigAsync({ campaignId });
+        domain = sanitizeDomain(config.domain);
+      } catch (_) {}
+    }
+    if (!domain) domain = "astonvilla.thrio.io";
+
+    const upstream = await fetch(`https://${domain}/users/api/session`, {
       method: "GET",
       headers: {
         "Authorization": rawToken,
@@ -3219,7 +3269,7 @@ async function handlePulseFormsAgentSession(req, res) {
       sendJson(res, 401, { ok: false, active: false, error: message });
       return;
     }
-    sendJson(res, 200, { ok: true, active: true, session });
+    sendJson(res, 200, { ok: true, active: true, domain, session });
   } catch (error) {
     sendJson(res, 502, { ok: false, active: false, error: "Agent session validation failed." });
   }
@@ -6426,6 +6476,7 @@ async function handleAdmin(req, res, url) {
       await writeCampaigns(campaigns);
       sendJson(res, 200, { ok: true, campaign: redactCampaignSecrets(campaignToSave) });
     } catch (error) {
+      console.error("[admin/campaigns] save error:", error.message, error.stack);
       sendJson(res, 400, { error: error.message });
     }
     return;
@@ -6646,9 +6697,17 @@ function getThrioTokenOverride(req) {
 
 // Aplica el token override al config si viene en el request
 function applyTokenOverride(config, req) {
+  if (!getSessionFromRequest(req)) return config;
   const override = getThrioTokenOverride(req);
   if (!override) return config;
-  return { ...config, token: override };
+  const domain = sanitizeDomain(config.domain);
+  const nextConfig = { ...config, token: override };
+  if (domain) {
+    nextConfig.workitemApiUrl = `https://${domain}/users/api/workitems`;
+    nextConfig.apiUrl = `https://${domain}/data/api/ai/prediction`;
+    nextConfig.agentChatApiUrl = `https://${domain}/chats/api/agent/chats`;
+  }
+  return nextConfig;
 }
 
 async function readCampaigns() {
@@ -7537,6 +7596,32 @@ function isAuthorizedAdmin(req) {
   }
 }
 
+function requireAdminSession(req, res) {
+  const session = getSessionFromRequest(req);
+  if (!session) {
+    sendJson(res, 401, { error: "Not authenticated." });
+    return null;
+  }
+  if (isUnsafeMethod(req.method) && !isValidCsrfToken(req, session)) {
+    sendJson(res, 403, { error: "Invalid CSRF token." });
+    return null;
+  }
+  return session;
+}
+
+async function isAuthorizedCampaignApi(req, url) {
+  if (getSessionFromRequest(req)) return true;
+  const campaignId = url.searchParams.get("campaign") || "";
+  if (!campaignId) return false;
+  const campaigns = await readCampaigns();
+  const campaign = campaigns.find((c) => c.id === campaignId);
+  const requiredToken = campaign?.apiAccessToken ? String(campaign.apiAccessToken).trim() : "";
+  if (!requiredToken) return false;
+  const auth = req.headers["authorization"] || "";
+  const provided = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+  return Boolean(provided && constantTimeEqualString(provided, requiredToken));
+}
+
 function sendJson(res, status, data) {
   const payload = JSON.stringify(sanitizeServerResponse(status, data));
   res.writeHead(status, securityHeaders({ "Content-Type": "application/json; charset=utf-8" }));
@@ -7784,6 +7869,10 @@ async function handleWorkitemHistory(req, res, url) {
       sendJson(res, 405, { ok: false, error: "Method not allowed" });
       return;
     }
+    if (!(await isAuthorizedCampaignApi(req, url))) {
+      sendJson(res, 401, { ok: false, error: "Unauthorized." });
+      return;
+    }
 
     const selection = readSelection(url.searchParams);
     const config = applyTokenOverride(await resolveCampaignConfigAsync(selection), req);
@@ -7813,7 +7902,7 @@ async function handleWorkitemHistory(req, res, url) {
     sendJson(res, 200, { ok: true, history });
   } catch (error) {
     const status = error.code === "CONFIG" ? 400 : 502;
-    sendJson(res, status, { ok: false, error: error.message });
+    sendJson(res, status, { ok: false, error: status === 400 ? error.message : "Failed to load workitem history." });
   }
 }
 
@@ -7821,6 +7910,10 @@ async function handleWorkitemDispositions(req, res, url) {
   try {
     if (req.method !== "GET") {
       sendJson(res, 405, { ok: false, error: "Method not allowed" });
+      return;
+    }
+    if (!(await isAuthorizedCampaignApi(req, url))) {
+      sendJson(res, 401, { ok: false, error: "Unauthorized." });
       return;
     }
 
@@ -7834,7 +7927,7 @@ async function handleWorkitemDispositions(req, res, url) {
     sendJson(res, 200, { ok: true, dispositions });
   } catch (error) {
     const status = error.code === "CONFIG" ? 400 : 502;
-    sendJson(res, status, { ok: false, error: error.message });
+    sendJson(res, status, { ok: false, error: status === 400 ? error.message : "Failed to load workitem dispositions." });
   }
 }
 
@@ -7888,8 +7981,12 @@ async function extractClientMessages(workitem, config) {
     return [];
   }
 
-  if (config.sentimentProvider === "gemini" && config?.ui?.sentiment?.useGemini !== false) {
-    return analyzeMessagesWithGemini(clientMessages, config);
+  if (config.sentimentProvider === "gemini" && config?.ui?.sentiment?.useGemini !== false && config.geminiApiKey) {
+    try {
+      return await analyzeMessagesWithGemini(clientMessages, config);
+    } catch (error) {
+      console.warn(`[sentiment] Gemini failed for campaign "${config.id}", falling back to heuristic: ${error.message}`);
+    }
   }
 
   return clientMessages.map((item) => ({
@@ -7899,41 +7996,104 @@ async function extractClientMessages(workitem, config) {
 }
 
 function extractRawClientMessages(workitem) {
-  const messages = Array.isArray(workitem?.transcriptionMessages) ? workitem.transcriptionMessages : [];
+  const messages = getTranscriptSourceMessages(workitem);
 
   return messages
-    .filter((item) => String(item?.type || "").toUpperCase() === "CLIENT")
+    .filter((item) => isClientTranscriptMessage(item))
     .map((item) => {
       return {
         id: String(item?.id || "").trim(),
-        text: String(item?.textMsg || "").trim(),
+        text: getTranscriptMessageText(item),
         fromId: String(item?.fromId || "").trim(),
-        timestamp: Number(item?.timestamp || 0)
+        timestamp: getTranscriptMessageTimestamp(item)
       };
     })
     .filter((item) => item.text);
 }
 
 function extractChecklistMessages(workitem) {
-  const messages = Array.isArray(workitem?.transcriptionMessages) ? workitem.transcriptionMessages : [];
+  const messages = getTranscriptSourceMessages(workitem);
 
   return messages
     .map((item) => {
-      const type = String(item?.type || "").trim().toUpperCase();
-      if (type !== "CLIENT" && type !== "USER") {
+      const type = getTranscriptMessageType(item);
+      const role = getTranscriptMessageRole(item);
+      if (!role) {
         return null;
       }
 
       return {
         id: String(item?.id || "").trim(),
-        text: String(item?.textMsg || "").trim(),
+        text: getTranscriptMessageText(item),
         fromId: String(item?.fromId || "").trim(),
-        timestamp: Number(item?.timestamp || 0),
-        role: type === "CLIENT" ? "client" : "agent",
+        timestamp: getTranscriptMessageTimestamp(item),
+        role,
         type
       };
     })
     .filter((item) => item && item.text);
+}
+
+function getTranscriptSourceMessages(workitem) {
+  const transcriptionMessages = Array.isArray(workitem?.transcriptionMessages) ? workitem.transcriptionMessages : [];
+  if (transcriptionMessages.length) {
+    return transcriptionMessages;
+  }
+
+  const chatMessages = Array.isArray(workitem?.chatMessages) ? workitem.chatMessages : [];
+  if (chatMessages.length) {
+    return chatMessages;
+  }
+
+  const messages = Array.isArray(workitem?.messages) ? workitem.messages : [];
+  if (messages.length) {
+    return messages;
+  }
+
+  return [];
+}
+
+function getTranscriptMessageType(item) {
+  return String(item?.type || item?.role || item?.senderType || item?.speaker || item?.source || "").trim().toUpperCase();
+}
+
+function getTranscriptMessageRole(item) {
+  const type = getTranscriptMessageType(item);
+  if (["CLIENT", "CUSTOMER", "CALLER", "CONTACT", "CONSUMER", "END_USER", "ENDUSER"].includes(type)) {
+    return "client";
+  }
+  if (["USER", "AGENT", "BOT", "ASSISTANT", "OPERATOR"].includes(type)) {
+    return "agent";
+  }
+  return "";
+}
+
+function isClientTranscriptMessage(item) {
+  return getTranscriptMessageRole(item) === "client";
+}
+
+function getTranscriptMessageText(item) {
+  return String(
+    item?.textMsg
+    || item?.text
+    || item?.message
+    || item?.body
+    || item?.content
+    || item?.transcript
+    || item?.utterance
+    || item?.phrase
+    || ""
+  ).trim();
+}
+
+function getTranscriptMessageTimestamp(item) {
+  const raw = item?.timestamp || item?.time || item?.createdAt || item?.dateCreated || item?.date_entered || 0;
+  const numeric = Number(raw);
+  if (Number.isFinite(numeric) && numeric > 0) {
+    return numeric;
+  }
+  const parsed = Date.parse(String(raw || ""));
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function extractAgentChatMessages(workitem) {
@@ -7941,17 +8101,18 @@ function extractAgentChatMessages(workitem) {
 
   return messages
     .map((item) => {
-      const type = String(item?.type || "").trim().toUpperCase();
-      if (type !== "CLIENT" && type !== "USER" && type !== "BOT") {
+      const type = getTranscriptMessageType(item);
+      const role = getTranscriptMessageRole(item);
+      if (!role) {
         return null;
       }
 
       return {
         id: String(item?.id || "").trim(),
-        text: String(item?.textMsg || "").trim(),
+        text: getTranscriptMessageText(item),
         fromId: String(item?.fromId || "").trim(),
-        timestamp: Number(item?.timestamp || 0),
-        role: type === "CLIENT" ? "client" : "agent",
+        timestamp: getTranscriptMessageTimestamp(item),
+        role,
         type
       };
     })
@@ -8116,30 +8277,183 @@ function summarizeQualityBoard(agents) {
   };
 }
 
+function normalizeSentimentText(text) {
+  return String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function scoreSentiment(text) {
-  const normalized = String(text || "").toLowerCase();
+  const normalized = normalizeSentimentText(text);
   const negativeSignals = [
     { pattern: "cancel", weight: -2.5 },
     { pattern: "cancelar", weight: -2.5 },
-    { pattern: "cancelación", weight: -2.5 },
+    { pattern: "cancelacion", weight: -2.5 },
+    { pattern: "quiero cancelar", weight: -2.8 },
+    { pattern: "quiero cancelar todo", weight: -3.0 },
+    { pattern: "quiero darlo de baja", weight: -2.8 },
+    { pattern: "quiero dar de baja", weight: -2.8 },
+    { pattern: "me quiero cambiar", weight: -2.2 },
+    { pattern: "me voy con otro proveedor", weight: -2.8 },
+    { pattern: "cambiar de proveedor", weight: -2.2 },
+    { pattern: "cerrar la cuenta", weight: -2.5 },
     { pattern: "dar de baja", weight: -2.6 },
     { pattern: "retirar el servicio", weight: -2.8 },
     { pattern: "no voy a seguir", weight: -2.5 },
     { pattern: "no creo que vaya a seguir", weight: -2.8 },
-    { pattern: "no quiero más inconvenientes", weight: -2.2 },
+    { pattern: "no quiero continuar", weight: -2.5 },
+    { pattern: "no quiero seguir", weight: -2.5 },
+    { pattern: "no quiero el servicio", weight: -2.5 },
+    { pattern: "no quiero mas inconvenientes", weight: -2.2 },
     { pattern: "no me vuelvan a llamar", weight: -2.4 },
     { pattern: "no me vuelvan a marcar", weight: -2.4 },
+    { pattern: "dejen de llamar", weight: -2.0 },
+    { pattern: "dejen de molestar", weight: -2.4 },
+    { pattern: "no me sirve", weight: -2.4 },
+    { pattern: "no sirve", weight: -2.4 },
+    { pattern: "no me funciona", weight: -2.4 },
+    { pattern: "no me esta funcionando", weight: -2.5 },
+    { pattern: "no me esta funcionando bien", weight: -2.8 },
+    { pattern: "no funciona", weight: -2.2 },
+    { pattern: "no funciona bien", weight: -2.5 },
+    { pattern: "no esta funcionando", weight: -2.5 },
+    { pattern: "no esta funcionando bien", weight: -2.7 },
+    { pattern: "sigue sin funcionar", weight: -2.6 },
+    { pattern: "sigo con el problema", weight: -2.2 },
+    { pattern: "no se soluciono", weight: -2.3 },
+    { pattern: "no quedo resuelto", weight: -2.2 },
+    { pattern: "no puedo", weight: -1.3 },
+    { pattern: "no puedo entrar", weight: -1.8 },
+    { pattern: "no puedo acceder", weight: -1.8 },
+    { pattern: "no puedo usar", weight: -1.9 },
+    { pattern: "no puedo conectarme", weight: -2.0 },
+    { pattern: "no puedo llamar", weight: -1.8 },
+    { pattern: "no puedo recibir", weight: -1.8 },
+    { pattern: "no deja", weight: -1.5 },
+    { pattern: "no me deja", weight: -1.8 },
+    { pattern: "no me deja entrar", weight: -2.0 },
+    { pattern: "no me deja acceder", weight: -2.0 },
+    { pattern: "me falla", weight: -1.8 },
+    { pattern: "esta fallando", weight: -1.8 },
+    { pattern: "sigue fallando", weight: -2.2 },
+    { pattern: "se cae", weight: -1.8 },
+    { pattern: "se cayo", weight: -1.9 },
+    { pattern: "se corta", weight: -1.7 },
+    { pattern: "se desconecta", weight: -1.8 },
+    { pattern: "esta lento", weight: -1.3 },
+    { pattern: "muy lento", weight: -1.5 },
+    { pattern: "lentitud", weight: -1.3 },
+    { pattern: "intermitente", weight: -1.4 },
+    { pattern: "sin servicio", weight: -2.2 },
+    { pattern: "sin conexion", weight: -2.0 },
+    { pattern: "sin linea", weight: -2.0 },
+    { pattern: "sin internet", weight: -2.0 },
+    { pattern: "sin tono", weight: -1.8 },
+    { pattern: "sin respuesta", weight: -1.8 },
+    { pattern: "sin solucion", weight: -2.2 },
+    { pattern: "sin resolver", weight: -2.1 },
+    { pattern: "me dejaron esperando", weight: -2.0 },
+    { pattern: "llevo esperando", weight: -1.8 },
+    { pattern: "mucho tiempo esperando", weight: -2.0 },
+    { pattern: "nadie responde", weight: -1.9 },
+    { pattern: "nadie contesta", weight: -1.8 },
+    { pattern: "nadie me ayuda", weight: -2.0 },
+    { pattern: "no me ayudan", weight: -2.0 },
+    { pattern: "no me han ayudado", weight: -2.0 },
+    { pattern: "no me solucionan", weight: -2.2 },
+    { pattern: "no me resuelven", weight: -2.2 },
+    { pattern: "no me dan solucion", weight: -2.2 },
     { pattern: "estoy enojado", weight: -2.8 },
     { pattern: "estoy molesto", weight: -2.5 },
     { pattern: "muy molesto", weight: -2.6 },
+    { pattern: "molestia", weight: -1.5 },
+    { pattern: "me molesta", weight: -1.7 },
+    { pattern: "me molesto", weight: -1.7 },
+    { pattern: "estoy disgustado", weight: -2.4 },
+    { pattern: "estoy irritado", weight: -2.3 },
+    { pattern: "estoy furioso", weight: -2.8 },
+    { pattern: "estoy inconforme", weight: -2.4 },
+    { pattern: "inconforme", weight: -2.0 },
+    { pattern: "insatisfecho", weight: -2.0 },
+    { pattern: "no estoy satisfecho", weight: -2.3 },
+    { pattern: "no estoy conforme", weight: -2.3 },
+    { pattern: "mala experiencia", weight: -2.2 },
+    { pattern: "peor experiencia", weight: -2.5 },
     { pattern: "desagradable", weight: -2.1 },
     { pattern: "lamentable", weight: -2.2 },
     { pattern: "descontento", weight: -2.2 },
+    { pattern: "mal servicio", weight: -2.2 },
+    { pattern: "servicio malo", weight: -2.2 },
+    { pattern: "servicio pesimo", weight: -2.6 },
+    { pattern: "servicio terrible", weight: -2.6 },
+    { pattern: "atencion mala", weight: -2.0 },
+    { pattern: "mala atencion", weight: -2.0 },
+    { pattern: "mala calidad", weight: -1.9 },
+    { pattern: "mala gestion", weight: -1.9 },
+    { pattern: "pesimo", weight: -2.4 },
     { pattern: "terrible", weight: -2.1 },
     { pattern: "horrible", weight: -2.1 },
+    { pattern: "fatal", weight: -2.1 },
+    { pattern: "decepcionado", weight: -2.0 },
+    { pattern: "decepcionante", weight: -2.0 },
+    { pattern: "vergonzoso", weight: -2.3 },
+    { pattern: "abusivo", weight: -2.2 },
+    { pattern: "estafa", weight: -2.5 },
+    { pattern: "fraude", weight: -2.5 },
+    { pattern: "reclamo", weight: -1.8 },
+    { pattern: "reclamacion", weight: -1.8 },
+    { pattern: "demanda", weight: -2.0 },
+    { pattern: "denuncia", weight: -2.1 },
+    { pattern: "supervisor", weight: -1.2 },
+    { pattern: "quiero hablar con supervisor", weight: -2.0 },
+    { pattern: "pasame con un supervisor", weight: -2.0 },
+    { pattern: "paseme con un supervisor", weight: -2.0 },
+    { pattern: "esto no es aceptable", weight: -2.3 },
+    { pattern: "inaceptable", weight: -2.3 },
+    { pattern: "no acepto", weight: -1.6 },
+    { pattern: "no corresponde", weight: -1.4 },
+    { pattern: "cobro indebido", weight: -2.2 },
+    { pattern: "cobro mal", weight: -1.8 },
+    { pattern: "me cobraron de mas", weight: -2.2 },
+    { pattern: "factura incorrecta", weight: -1.8 },
+    { pattern: "monto incorrecto", weight: -1.7 },
+    { pattern: "cargo no reconocido", weight: -2.2 },
+    { pattern: "costo alto", weight: -1.2 },
+    { pattern: "muy caro", weight: -1.3 },
+    { pattern: "demasiado caro", weight: -1.5 },
     { pattern: "awful", weight: -2.1 },
     { pattern: "terrible service", weight: -2.2 },
     { pattern: "bad service", weight: -2.1 },
+    { pattern: "poor service", weight: -2.1 },
+    { pattern: "unacceptable", weight: -2.3 },
+    { pattern: "disappointed", weight: -2.0 },
+    { pattern: "dissatisfied", weight: -2.0 },
+    { pattern: "supervisor", weight: -1.2 },
+    { pattern: "manager", weight: -1.1 },
+    { pattern: "refund", weight: -1.5 },
+    { pattern: "chargeback", weight: -2.0 },
+    { pattern: "overcharged", weight: -2.0 },
+    { pattern: "billing issue", weight: -1.8 },
+    { pattern: "not working", weight: -2.4 },
+    { pattern: "does not work", weight: -2.4 },
+    { pattern: "doesn't work", weight: -2.4 },
+    { pattern: "still not working", weight: -2.6 },
+    { pattern: "not fixed", weight: -2.2 },
+    { pattern: "not resolved", weight: -2.2 },
+    { pattern: "cannot access", weight: -1.8 },
+    { pattern: "can't access", weight: -1.8 },
+    { pattern: "cannot use", weight: -1.8 },
+    { pattern: "can't use", weight: -1.8 },
+    { pattern: "keeps failing", weight: -2.1 },
+    { pattern: "keeps disconnecting", weight: -2.0 },
+    { pattern: "no service", weight: -2.2 },
+    { pattern: "no connection", weight: -2.0 },
+    { pattern: "no response", weight: -1.8 },
+    { pattern: "no solution", weight: -2.1 },
+    { pattern: "waiting too long", weight: -1.8 },
     { pattern: "problem", weight: -1.2 },
     { pattern: "issue", weight: -1.2 },
     { pattern: "complaint", weight: -1.4 },
@@ -8162,23 +8476,67 @@ function scoreSentiment(text) {
     { pattern: "emergencia", weight: -1.4 },
     { pattern: "falla", weight: -1.5 },
     { pattern: "fallo", weight: -1.5 },
-    { pattern: "no funciona", weight: -2.2 },
+    { pattern: "averia", weight: -1.5 },
+    { pattern: "dañado", weight: -1.5 },
+    { pattern: "roto", weight: -1.5 },
+    { pattern: "bloqueado", weight: -1.4 },
+    { pattern: "bloqueada", weight: -1.4 },
+    { pattern: "caido", weight: -1.5 },
+    { pattern: "caida", weight: -1.5 },
+    { pattern: "error", weight: -1.1 },
     { pattern: "incidencia", weight: -1.0 }
   ];
   const positiveSignals = [
     { pattern: "good", weight: 1.2 },
     { pattern: "great", weight: 1.4 },
+    { pattern: "very good", weight: 1.5 },
     { pattern: "thanks", weight: 0.7 },
     { pattern: "thank you", weight: 0.8 },
+    { pattern: "appreciate", weight: 0.9 },
     { pattern: "perfect", weight: 1.4 },
     { pattern: "awesome", weight: 1.5 },
     { pattern: "excellent", weight: 1.6 },
+    { pattern: "amazing", weight: 1.5 },
+    { pattern: "helpful", weight: 1.1 },
+    { pattern: "worked", weight: 1.2 },
+    { pattern: "working now", weight: 1.4 },
+    { pattern: "fixed", weight: 1.4 },
     { pattern: "resolved", weight: 1.5 },
+    { pattern: "solved", weight: 1.5 },
+    { pattern: "satisfied", weight: 1.3 },
+    { pattern: "happy", weight: 1.2 },
+    { pattern: "all set", weight: 1.2 },
+    { pattern: "that works", weight: 1.2 },
     { pattern: "bien", weight: 0.9 },
+    { pattern: "muy bien", weight: 1.2 },
     { pattern: "gracias", weight: 0.6 },
+    { pattern: "muchas gracias", weight: 0.9 },
+    { pattern: "te agradezco", weight: 0.9 },
+    { pattern: "le agradezco", weight: 0.9 },
     { pattern: "perfecto", weight: 1.4 },
     { pattern: "excelente", weight: 1.6 },
     { pattern: "genial", weight: 1.4 },
+    { pattern: "maravilloso", weight: 1.5 },
+    { pattern: "estupendo", weight: 1.4 },
+    { pattern: "amable", weight: 0.9 },
+    { pattern: "me ayudo", weight: 1.2 },
+    { pattern: "me ayudaron", weight: 1.2 },
+    { pattern: "solucionado", weight: 1.5 },
+    { pattern: "solucion", weight: 0.9 },
+    { pattern: "ya funciona", weight: 1.5 },
+    { pattern: "ya me funciona", weight: 1.6 },
+    { pattern: "funciona bien", weight: 1.4 },
+    { pattern: "quedo listo", weight: 1.5 },
+    { pattern: "quedo resuelto", weight: 1.5 },
+    { pattern: "todo listo", weight: 1.3 },
+    { pattern: "todo correcto", weight: 1.3 },
+    { pattern: "todo claro", weight: 1.0 },
+    { pattern: "claro", weight: 0.5 },
+    { pattern: "de acuerdo", weight: 0.5 },
+    { pattern: "me sirve", weight: 1.0 },
+    { pattern: "satisfecho", weight: 1.3 },
+    { pattern: "contento", weight: 1.1 },
+    { pattern: "feliz", weight: 1.2 },
     { pattern: "resuelto", weight: 1.5 },
     { pattern: "ok", weight: 0.4 },
     { pattern: "vale", weight: 0.3 }
@@ -8198,15 +8556,28 @@ function scoreSentiment(text) {
     }
   }
 
+  if (/\bno\b.{0,40}\b(bien|perfecto|resuelto|solucionado|fixed|resolved)\b/.test(normalized)) {
+    score -= 1.4;
+  }
+  if (/\bsin\b.{0,35}\b(servicio|conexion|linea|internet|respuesta|solucion|resolver|tono|audio)\b/.test(normalized)) {
+    score -= 1.5;
+  }
+  if (/\b(otra vez|de nuevo|nuevamente)\b.{0,35}\b(falla|fallo|problema|error|cae|corta|desconecta)\b/.test(normalized)) {
+    score -= 1.4;
+  }
+  if (/\b(no|nunca)\b.{0,40}\b(atienden|contestan|responden|ayudan|solucionan|resuelven)\b/.test(normalized)) {
+    score -= 1.6;
+  }
+
   score = Math.max(-1, Math.min(1, score / 3));
 
   let color = "yellow";
   let label = "Neutral";
 
-  if (score <= -1) {
+  if (score <= -0.2) {
     color = "red";
     label = "Negative";
-  } else if (score >= 1) {
+  } else if (score >= 0.2) {
     color = "green";
     label = "Positive";
   }
@@ -9333,7 +9704,25 @@ async function handleWieland(req, res, url) {
   }
   const nccAuthType = campaign.wieland?.nccAuthType || "token";
 
-  // No auth required for Wieland routes — access controlled at the NCC/embed level
+  const wielandCookieSession = getWielandSessionFromRequest(req);
+  const wielandBearerToken = getWielandTokenFromHeader(req);
+  const wielandBearerSession = wielandBearerToken ? verifyWielandSessionToken(wielandBearerToken) : null;
+  const adminSession = getSessionFromRequest(req);
+  if (!wielandCookieSession && !wielandBearerSession && !adminSession) {
+    sendJson(res, 401, { error: "Not authenticated." });
+    return;
+  }
+  if (isUnsafeMethod(req.method)) {
+    if (wielandCookieSession && !isValidWielandCsrfToken(req, wielandCookieSession)) {
+      sendJson(res, 403, { error: "Invalid CSRF token." });
+      return;
+    }
+    if (!wielandCookieSession && adminSession && !isValidCsrfToken(req, adminSession)) {
+      sendJson(res, 403, { error: "Invalid CSRF token." });
+      return;
+    }
+  }
+
   const nccCredential = campaign.wielandNccCredential || (nccAuthType === "token" ? campaign.token : "");
   if (nccAuthType !== "none" && !nccCredential) {
     sendJson(res, 400, { error: `Campaign "${campaign.id}" has no NCC credentials configured. Add them in Admin.` });
@@ -11716,6 +12105,8 @@ async function resolveThrioDataConfig(campaignId) {
 }
 
 async function handleThrioData(req, res, url) {
+  if (!requireAdminSession(req, res)) return;
+
   const campaignId = url.searchParams.get("campaign") || "";
   let thrioConfig;
   try {
@@ -11738,7 +12129,7 @@ async function handleThrioData(req, res, url) {
       const data = await upstream.json();
       sendJson(res, upstream.status, data);
     } catch (e) {
-      sendJson(res, 502, { error: `Upstream error: ${e.message}` });
+      sendJson(res, 502, { error: "Failed to reach Thrio data API." });
     }
     return;
   }
@@ -11749,7 +12140,7 @@ async function handleThrioData(req, res, url) {
       const data = await upstream.json();
       sendJson(res, upstream.status, data);
     } catch (e) {
-      sendJson(res, 502, { error: `Upstream error: ${e.message}` });
+      sendJson(res, 502, { error: "Failed to reach Thrio data API." });
     }
     return;
   }
@@ -11760,7 +12151,7 @@ async function handleThrioData(req, res, url) {
       const data = await upstream.json();
       sendJson(res, upstream.status, data);
     } catch (e) {
-      sendJson(res, 502, { error: `Upstream error: ${e.message}` });
+      sendJson(res, 502, { error: "Failed to reach Thrio data API." });
     }
     return;
   }
@@ -11781,7 +12172,7 @@ async function handleThrioData(req, res, url) {
       const data = await upstream.json().catch(() => ({}));
       sendJson(res, upstream.status, Object.keys(data).length ? data : { ok: upstream.ok });
     } catch (e) {
-      sendJson(res, 502, { error: `Upstream error: ${e.message}` });
+      sendJson(res, 502, { error: "Failed to reach Thrio data API." });
     }
     return;
   }
@@ -11809,7 +12200,7 @@ async function handleThrioData(req, res, url) {
       const data = await upstream.json();
       sendJson(res, upstream.status, data);
     } catch (e) {
-      sendJson(res, 502, { error: `Upstream error: ${e.message}` });
+      sendJson(res, 502, { error: "Failed to reach Thrio data API." });
     }
     return;
   }
@@ -11837,7 +12228,7 @@ async function handleThrioData(req, res, url) {
       const data = await upstream.json().catch(() => ({}));
       sendJson(res, upstream.status, Object.keys(data).length ? data : { ok: upstream.ok });
     } catch (e) {
-      sendJson(res, 502, { error: `Upstream error: ${e.message}` });
+      sendJson(res, 502, { error: "Failed to reach Thrio data API." });
     }
     return;
   }

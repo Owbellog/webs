@@ -9,6 +9,12 @@
 
   const $ = (id) => document.getElementById(id);
   const appBase = new URL(".", window.location.href);
+  const historyApiToken = String(
+    window.NEXTIQ_HISTORY_API_TOKEN ||
+    document.currentScript?.dataset.apiToken ||
+    document.documentElement.dataset.historyApiToken ||
+    ""
+  ).trim();
 
   function setStatus(message, type) {
     const node = $("status");
@@ -22,9 +28,15 @@
     const url = new URL(normalizedPath, appBase);
     if (state.campaign) url.searchParams.set("campaign", state.campaign);
     if (state.domain) url.searchParams.set("domain", state.domain);
-    const token = params.get("token");
-    if (token) url.searchParams.set("token", token);
     return url;
+  }
+
+  function fetchApi(url) {
+    const options = {};
+    if (historyApiToken) {
+      options.headers = { Authorization: "Bearer " + historyApiToken };
+    }
+    return fetch(url, options);
   }
 
   function extractRecords(payload) {
@@ -238,7 +250,7 @@
     select.disabled = true;
     select.innerHTML = '<option value="">All</option>';
     try {
-      const response = await fetch(apiBase("/api/workitem-dispositions"));
+      const response = await fetchApi(apiBase("/api/workitem-dispositions"));
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload.ok === false) throw new Error(payload.error || "Disposition request failed.");
       const dispositions = extractDispositions(payload)
@@ -269,7 +281,7 @@
     if (button) button.disabled = true;
     setStatus("Loading workitem history...");
     try {
-      const response = await fetch(buildHistoryUrl());
+      const response = await fetchApi(buildHistoryUrl());
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload.ok === false) throw new Error(payload.error || "History request failed.");
       state.records = extractRecords(payload);
@@ -296,7 +308,7 @@
     try {
       const url = apiBase("/api/workitem-history/" + encodeURIComponent(id));
       url.searchParams.set("rangeType", $("rangeType")?.value === "custom" ? "thisMonth" : ($("rangeType")?.value || "today"));
-      const response = await fetch(url);
+      const response = await fetchApi(url);
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload.ok === false) throw new Error(payload.error || "Detail request failed.");
       renderDetail(payload);

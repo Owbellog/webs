@@ -141,6 +141,48 @@ body {
   color: var(--brand);
 }
 
+.admin-password-panel {
+  margin: -12px 0 18px;
+}
+
+.admin-password-card {
+  background: var(--panel-strong);
+  border: 1px solid var(--line-soft);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  padding: 18px;
+}
+
+.admin-password-card h2 {
+  margin: 0 0 14px;
+  font-size: 1rem;
+  color: var(--brand);
+}
+
+.admin-password-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.admin-password-grid label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.admin-password-grid input {
+  width: 100%;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--text);
+  background: white;
+}
+
 /* Users section */
 .admin-users-toolbar {
   display: flex;
@@ -488,6 +530,15 @@ body.embedded .composer {
 
   .brand {
     font-size: 1.7rem;
+  }
+
+  .admin-user-bar {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .admin-password-grid {
+    grid-template-columns: 1fr;
   }
 
   .campaign-badge {

@@ -4,6 +4,7 @@ const INELIGIBLE_PRIORITY = 9999;
 // ── Campaign param ────────────────────────────────────────────────────────────
 const appBase = new URL(".", window.location.href);
 const campaignId = new URLSearchParams(window.location.search).get("campaign") || "";
+let wielandCsrfToken = "";
 
 function buildUrl(pathname) {
   const p = pathname.startsWith("/") ? pathname.slice(1) : pathname;
@@ -17,10 +18,15 @@ function withCampaign(path) {
 
 // ── API ───────────────────────────────────────────────────────────────────────
 async function api(path, options = {}) {
+  const method = String(options.method || "GET").toUpperCase();
+  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+  if (!["GET", "HEAD", "OPTIONS"].includes(method) && wielandCsrfToken) {
+    headers["X-CSRF-Token"] = wielandCsrfToken;
+  }
   const res = await fetch(buildUrl(withCampaign(path)), {
     ...options,
     credentials: "include",
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) }
+    headers
   });
   const text = await res.text();
   let data;
@@ -34,6 +40,12 @@ async function api(path, options = {}) {
     const detail = detailSource ? ` — ${typeof detailSource === "string" ? detailSource : JSON.stringify(detailSource)}` : "";
     throw new Error(`[${res.status}] ${data.error || "Request failed."}${detail}`);
   }
+  return data;
+}
+
+async function loadAuthContext() {
+  const data = await api("/api/wieland/me");
+  wielandCsrfToken = data.csrfToken || "";
   return data;
 }
 
@@ -156,6 +168,14 @@ async function initCheck() {
     return false;
   }
   document.getElementById("campaignLabel").textContent = `— ${campaignId}`;
+  try {
+    await loadAuthContext();
+  } catch (err) {
+    const el = document.getElementById("initMessage");
+    el.textContent = "Not authenticated. Open this page from an authorized Wieland or Admin session.";
+    el.hidden = false;
+    return false;
+  }
   await loadCampaignUiConfig();
   document.getElementById("initMessage").hidden = true;
   document.getElementById("mainBody").hidden = false;

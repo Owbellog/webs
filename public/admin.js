@@ -315,6 +315,31 @@ const fields = {
   historyWidgetUrl: document.getElementById("historyWidgetUrl")
 };
 
+function createMissingAdminFieldFallback(key) {
+  return {
+    value: "",
+    checked: false,
+    disabled: false,
+    style: {},
+    classList: {
+      add() {},
+      remove() {},
+      toggle() {}
+    },
+    addEventListener() {},
+    removeEventListener() {},
+    setAttribute() {},
+    removeAttribute() {}
+  };
+}
+
+Object.entries(fields).forEach(([key, field]) => {
+  if (!field) {
+    console.warn(`[admin] Missing form field "${key}". Saving will use an empty fallback value.`);
+    fields[key] = createMissingAdminFieldFallback(key);
+  }
+});
+
 const state = {
   campaigns: [],
   selectedId: "",

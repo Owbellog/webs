@@ -240,7 +240,6 @@ function tokenSummary() {
 function buildApi(path) {
   const cleanPath = path.startsWith("/") ? path.slice(1) : path;
   const url = new URL(cleanPath, appBase);
-  url.searchParams.set("token", currentToken);
   if (currentDomain || domainInput.value.trim()) {
     url.searchParams.set("domain", currentDomain || domainInput.value.trim());
   }
@@ -248,10 +247,12 @@ function buildApi(path) {
 }
 
 async function request(path, options = {}) {
+  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+  if (currentToken) headers["x-ncc-token"] = currentToken;
   const response = await fetch(buildApi(path), {
     ...options,
     credentials: "include",
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) }
+    headers
   });
   const text = await response.text();
   let data;
