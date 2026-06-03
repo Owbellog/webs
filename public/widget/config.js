@@ -8,7 +8,7 @@
     CONTACT_LOOKUP_FIELD: "phone_work",
     OPPORTUNITY_MODULE: "Opportunities",
     MAX_FIELDS_PER_REQUEST: 100,
-    NCC_EVENT_ORIGIN: "*"
+    NCC_EVENT_ORIGIN: ""
   };
 
   window.PULSEFORMS_CONFIG = { ...defaults, ...(window.PULSEFORMS_CONFIG || {}) };

@@ -65,8 +65,8 @@
   }
 
   window.addEventListener("message", (event) => {
-    const allowedOrigin = window.PULSEFORMS_CONFIG?.NCC_EVENT_ORIGIN || "*";
-    if (allowedOrigin !== "*" && event.origin !== allowedOrigin) return;
+    const allowedOrigin = window.PULSEFORMS_CONFIG?.NCC_EVENT_ORIGIN || "";
+    if (!allowedOrigin || event.origin !== allowedOrigin) return;
     const message = event.data || {};
     const type = message.type || message.event || message.name;
     if (isCallStartedType(type)) ncc.handleCallStarted(message.payload || message.data || message);

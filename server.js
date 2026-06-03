@@ -17,12 +17,18 @@ const WIELAND_UPLOAD_LOGS_FILE = path.join(ROOT, "wieland-upload-logs.json");
 const WIDGET_STATE_FILE = path.join(ROOT, "widget-state.json");
 const WIDGET_DRAFT_FILE = path.join(ROOT, "widget-draft.json");
 
-loadEnv(path.join(ROOT, ".env"));
+const LOCAL_ENV_FILE = path.join(ROOT, ".env");
+const SHOULD_LOAD_LOCAL_ENV = process.env.LOAD_LOCAL_ENV === "true"
+  || (process.env.NODE_ENV !== "production" && process.env.LOAD_LOCAL_ENV !== "false");
+if (SHOULD_LOAD_LOCAL_ENV) {
+  loadEnv(LOCAL_ENV_FILE);
+}
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "127.0.0.1";
 const DEFAULT_API_URL = process.env.THRIO_API_URL || "https://mancity.thrio.io/data/api/ai/prediction";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
+const CAMPAIGN_ENCRYPTION_SECRET = process.env.CAMPAIGN_ENCRYPTION_SECRET || ADMIN_PASSWORD;
 const ENCRYPTION_SALT = process.env.ENCRYPTION_SALT || "nextiq-campaigns-salt-v1";
 const FIRESTORE_PREFIX = sanitizeFirestorePrefix(process.env.FIRESTORE_PREFIX || "nextiq");
 const FIRESTORE_DATABASE_ID = String(process.env.FIRESTORE_DATABASE_ID || "").trim();
@@ -46,14 +52,53 @@ const firestore = createFirestoreClient();
 const RATE_LIMIT_MAX_ATTEMPTS = 5;
 const RATE_LIMIT_BLOCK_MS = 15 * 60 * 1000; // 15 minutes
 const adminLoginAttempts = new Map(); // ip -> { count, blockedUntil }
+const apiRateBuckets = new Map(); // key -> { count, resetAt }
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const AI_RATE_LIMIT_MAX_REQUESTS = 30;
+const ADMIN_MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+const MAX_JSON_BODY_BYTES = Number(process.env.MAX_JSON_BODY_BYTES || 1024 * 1024);
+const TRUST_PROXY_HEADERS = String(process.env.TRUST_PROXY_HEADERS || "").toLowerCase() === "true";
+const ALLOW_LEGACY_ADMIN_AUTH = String(process.env.ALLOW_LEGACY_ADMIN_AUTH || "").toLowerCase() === "true";
+const MAX_RATE_LIMIT_KEYS = 20_000;
+const revokedSessionTokens = new Map(); // token -> expiresAtMs
 
 function getClientIp(req) {
+  if (!TRUST_PROXY_HEADERS) {
+    return req.socket.remoteAddress || "unknown";
+  }
   const forwarded = req.headers["x-forwarded-for"];
   if (forwarded) return forwarded.split(",")[0].trim();
   return req.socket.remoteAddress || "unknown";
 }
 
+function pruneRateLimitMaps() {
+  const now = Date.now();
+  for (const [ip, record] of adminLoginAttempts) {
+    if (!record?.blockedUntil || now >= record.blockedUntil) {
+      adminLoginAttempts.delete(ip);
+    }
+  }
+  for (const [key, record] of apiRateBuckets) {
+    if (!record?.resetAt || now >= record.resetAt) {
+      apiRateBuckets.delete(key);
+    }
+  }
+  for (const [token, expiresAt] of revokedSessionTokens) {
+    if (!expiresAt || now >= expiresAt) {
+      revokedSessionTokens.delete(token);
+    }
+  }
+  if (apiRateBuckets.size > MAX_RATE_LIMIT_KEYS) {
+    const overflow = apiRateBuckets.size - MAX_RATE_LIMIT_KEYS;
+    for (const key of apiRateBuckets.keys()) {
+      apiRateBuckets.delete(key);
+      if (apiRateBuckets.size <= MAX_RATE_LIMIT_KEYS - Math.max(overflow, 1000)) break;
+    }
+  }
+}
+
 function isAdminRateLimited(ip) {
+  pruneRateLimitMaps();
   const record = adminLoginAttempts.get(ip);
   if (!record) return false;
   if (Date.now() < record.blockedUntil) return true;
@@ -62,6 +107,7 @@ function isAdminRateLimited(ip) {
 }
 
 function recordFailedAdminAttempt(ip) {
+  pruneRateLimitMaps();
   const record = adminLoginAttempts.get(ip) || { count: 0, blockedUntil: 0 };
   record.count += 1;
   if (record.count >= RATE_LIMIT_MAX_ATTEMPTS) {
@@ -74,9 +120,192 @@ function clearAdminAttempts(ip) {
   adminLoginAttempts.delete(ip);
 }
 
+function isRequestRateLimited(key, maxRequests, windowMs = RATE_LIMIT_WINDOW_MS) {
+  pruneRateLimitMaps();
+  const now = Date.now();
+  const record = apiRateBuckets.get(key);
+  if (!record || now >= record.resetAt) {
+    apiRateBuckets.set(key, { count: 1, resetAt: now + windowMs });
+    return false;
+  }
+  record.count += 1;
+  apiRateBuckets.set(key, record);
+  return record.count > maxRequests;
+}
+
+function enforceRateLimit(req, res, scope, maxRequests = AI_RATE_LIMIT_MAX_REQUESTS) {
+  const key = `${scope}:${getClientIp(req)}`;
+  if (!isRequestRateLimited(key, maxRequests)) return false;
+  sendJson(res, 429, { error: "Too many requests. Try again later." });
+  return true;
+}
+
+function constantTimeEqualString(a, b) {
+  const left = crypto.createHash("sha256").update(String(a || ""), "utf8").digest();
+  const right = crypto.createHash("sha256").update(String(b || ""), "utf8").digest();
+  return crypto.timingSafeEqual(left, right);
+}
+
+function secretLooksPresent(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function redactSecret(value) {
+  return secretLooksPresent(value) ? "" : value;
+}
+
+function maskIdentifier(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (text.length <= 4) return "*".repeat(text.length);
+  return `${text.slice(0, 2)}***${text.slice(-2)}`;
+}
+
+function normalizeAllowedOrigin(value) {
+  const origin = String(value || "").trim();
+  return origin === "*" ? "" : origin;
+}
+
+function defaultCampaignOrigin(config) {
+  const domain = sanitizeDomain(config?.domain || "");
+  return domain ? `https://${domain}` : "";
+}
+
+function isValidCampaignId(value) {
+  return /^[a-z0-9_-]{1,80}$/i.test(String(value || ""));
+}
+
+function isBlockedOutboundIp(address) {
+  const version = net.isIP(address);
+  if (version === 4) {
+    const parts = address.split(".").map((part) => Number(part));
+    const [a, b] = parts;
+    return a === 0
+      || a === 10
+      || a === 127
+      || (a === 100 && b >= 64 && b <= 127)
+      || (a === 169 && b === 254)
+      || (a === 172 && b >= 16 && b <= 31)
+      || (a === 192 && b === 168)
+      || a >= 224;
+  }
+  if (version === 6) {
+    const normalized = address.toLowerCase();
+    return normalized === "::1"
+      || normalized === "::"
+      || normalized.startsWith("fc")
+      || normalized.startsWith("fd")
+      || normalized.startsWith("fe80:")
+      || normalized.startsWith("ff");
+  }
+  return true;
+}
+
+async function assertSafeOutboundUrl(value, label = "Outbound URL") {
+  let parsed;
+  try {
+    parsed = new URL(String(value || ""));
+  } catch {
+    throwConfig(`${label} is invalid.`);
+  }
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    throwConfig(`${label} must use http or https.`);
+  }
+  const hostname = parsed.hostname;
+  if (!hostname || hostname === "localhost" || hostname.endsWith(".localhost")) {
+    throwConfig(`${label} host is not allowed.`);
+  }
+  if (net.isIP(hostname)) {
+    if (isBlockedOutboundIp(hostname)) throwConfig(`${label} host is not allowed.`);
+    return parsed;
+  }
+  let records;
+  try {
+    records = await dns.lookup(hostname, { all: true });
+  } catch {
+    throwConfig(`${label} host could not be resolved.`);
+  }
+  if (!records.length || records.some((record) => isBlockedOutboundIp(record.address))) {
+    throwConfig(`${label} resolves to a private or unsafe address.`);
+  }
+  return parsed;
+}
+
+function redactCampaignSecrets(campaign) {
+  const result = { ...campaign };
+  for (const field of SECRET_FIELDS) {
+    if (field in result) result[field] = redactSecret(result[field]);
+  }
+  return result;
+}
+
+function preserveExistingCampaignSecrets(campaign, existing = {}) {
+  const result = { ...campaign };
+  for (const field of SECRET_FIELDS) {
+    if (!secretLooksPresent(result[field]) && secretLooksPresent(existing[field])) {
+      result[field] = existing[field];
+    }
+  }
+  return result;
+}
+
+function createCsrfToken(session) {
+  if (!session?.sub || !session?.exp) return "";
+  return crypto.createHmac("sha256", getSessionSecret())
+    .update(`csrf:${session.sub}:${session.exp}`)
+    .digest("hex");
+}
+
+function isValidCsrfToken(req, session) {
+  const token = String(req.headers["x-csrf-token"] || "").trim();
+  const expected = createCsrfToken(session);
+  return Boolean(token && expected && constantTimeEqualString(token, expected));
+}
+
+function securityHeaders(extra = {}) {
+  return {
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https:",
+    ...extra
+  };
+}
+
+function adminSecurityHeaders(extra = {}) {
+  return securityHeaders({
+    "X-Frame-Options": "SAMEORIGIN",
+    "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https:; frame-ancestors 'self'",
+    ...extra
+  });
+}
+
+function isKnownSafeServerError(message) {
+  const text = String(message || "");
+  return /^(AI returned|AI did not|AI generated|Could not verify token with NCC|Failed |Unable |Internal server error|Layout generation failed|PulseForms |Survey AI provider call failed|NCC did not return|TTS request failed)/.test(text);
+}
+
+function sanitizeServerResponse(status, data) {
+  if (status < 500 || !data || typeof data !== "object" || Array.isArray(data)) return data;
+  const sanitized = { ...data };
+  delete sanitized.details;
+  delete sanitized.raw;
+  if (Array.isArray(sanitized.steps)) {
+    sanitized.steps = sanitized.steps.map((step) => {
+      if (!step || typeof step !== "object") return step;
+      const copy = { ...step };
+      delete copy.response;
+      delete copy.payload;
+      return copy;
+    });
+  }
+  if (typeof sanitized.error === "string" && !isKnownSafeServerError(sanitized.error)) {
+    sanitized.error = "Internal server error.";
+  }
+  return sanitized;
+}
+
 // ── Encryption helpers ─────────────────────────────────────────────────────
-// AES-256-GCM. Key is derived from ADMIN_PASSWORD + ENCRYPTION_SALT using
-// PBKDF2 (100,000 iterations) so the raw password is never stored.
+// AES-256-GCM. Key is derived from CAMPAIGN_ENCRYPTION_SECRET +
+// ENCRYPTION_SALT using PBKDF2 (100,000 iterations) so raw secrets are never stored.
 // Encrypted values are stored as: "enc:v1:<iv>:<authTag>:<ciphertext>" (hex).
 // Plain-text values (legacy) are accepted on read for backward compatibility.
 
@@ -85,11 +314,11 @@ let _encryptionKey = null;
 
 function getEncryptionKey() {
   if (_encryptionKey) return _encryptionKey;
-  if (!ADMIN_PASSWORD) {
-    throw new Error("ADMIN_PASSWORD is required for campaign secret encryption.");
+  if (!CAMPAIGN_ENCRYPTION_SECRET) {
+    throw new Error("CAMPAIGN_ENCRYPTION_SECRET or ADMIN_PASSWORD is required for campaign secret encryption.");
   }
   _encryptionKey = crypto.pbkdf2Sync(
-    ADMIN_PASSWORD,
+    CAMPAIGN_ENCRYPTION_SECRET,
     ENCRYPTION_SALT,
     100_000,
     32,
@@ -126,7 +355,7 @@ function decryptSecret(value) {
 }
 
 // Fields that must be encrypted at rest
-const SECRET_FIELDS = ["token", "cookie", "geminiApiKey", "questionsGeminiApiKey", "wielandNccCredential", "summaryagenticAiApiKey", "summaryagenticHubspotToken", "pulseformsAiApiKey", "pulseformsSugarPassword", "pulseformsSugarClientSecret", "pulseformsWidgetStateReadToken"];
+const SECRET_FIELDS = ["token", "cookie", "apiAccessToken", "geminiApiKey", "questionsGeminiApiKey", "wielandNccCredential", "summaryagenticAiApiKey", "summaryagenticHubspotToken", "summaryagenticWarmToken", "pulseformsAiApiKey", "pulseformsSugarPassword", "pulseformsSugarClientSecret", "pulseformsWidgetStateReadToken"];
 
 function encryptCampaignSecrets(campaign) {
   const result = { ...campaign };
@@ -160,6 +389,7 @@ function createSessionToken(user) {
     name: normalized.username,
     role: normalized.role,
     permissions: normalized.permissions,
+    jti: crypto.randomBytes(16).toString("hex"),
     exp: Math.floor(Date.now() / 1000) + SESSION_EXPIRY_SECONDS
   })).toString("base64url");
   const sig = crypto.createHmac("sha256", getSessionSecret()).update(payload).digest("hex");
@@ -168,6 +398,7 @@ function createSessionToken(user) {
 
 function verifySessionToken(token) {
   if (!token || typeof token !== "string") return null;
+  if (revokedSessionTokens.has(token)) return null;
   const dot = token.lastIndexOf(".");
   if (dot === -1) return null;
   const payload = token.slice(0, dot);
@@ -193,6 +424,12 @@ function verifySessionToken(token) {
   }
 }
 
+function revokeSessionToken(token) {
+  const data = verifySessionToken(token);
+  if (!data?.exp) return;
+  revokedSessionTokens.set(token, data.exp * 1000);
+}
+
 function parseCookies(req) {
   const result = {};
   for (const part of (req.headers.cookie || "").split(";")) {
@@ -213,7 +450,10 @@ function setSessionCookie(res, token) {
   );
 }
 
-function clearSessionCookie(res) {
+function clearSessionCookie(res, req = null) {
+  if (req) {
+    revokeSessionToken(parseCookies(req)[SESSION_COOKIE_NAME]);
+  }
   res.setHeader("Set-Cookie",
     `${SESSION_COOKIE_NAME}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`
   );
@@ -356,7 +596,7 @@ async function handleWielandAuth(req, res, url) {
           sendJson(res, 401, { error: "NCC token is invalid or unauthorized." }); return;
         }
       } catch (err) {
-        sendJson(res, 502, { error: "Could not verify token with NCC.", details: err.message }); return;
+        sendJson(res, 502, { error: "Could not verify token with NCC." }); return;
       }
     }
     // key mode: trust the JWT's own expiry
@@ -507,6 +747,12 @@ function hasAdminPermission(session, permission) {
 
 // ── Admin auth route handlers (public — no session required) ───────────────
 async function handleAdminLogin(req, res) {
+  const ip = getClientIp(req);
+  if (isAdminRateLimited(ip)) {
+    sendJson(res, 429, { error: "Too many failed attempts. Try again in 15 minutes." });
+    return;
+  }
+
   let body;
   try { body = await readJson(req); } catch {
     sendJson(res, 400, { error: "Invalid JSON." });
@@ -525,16 +771,18 @@ async function handleAdminLogin(req, res) {
   }
   const user = users.find((u) => u.username === username);
   if (!user || !verifyPassword(password, user.passwordHash, user.passwordSalt)) {
+    recordFailedAdminAttempt(ip);
     sendJson(res, 401, { error: "Invalid username or password." });
     return;
   }
+  clearAdminAttempts(ip);
   const token = createSessionToken(user);
   setSessionCookie(res, token);
   sendJson(res, 200, { ok: true, user: publicUser(user) });
 }
 
-function handleAdminLogout(res) {
-  clearSessionCookie(res);
+function handleAdminLogout(req, res) {
+  clearSessionCookie(res, req);
   sendJson(res, 200, { ok: true });
 }
 
@@ -542,6 +790,7 @@ function handleAdminMe(req, res) {
   const session = getSessionFromRequest(req);
   if (!session) { sendJson(res, 401, { error: "Not authenticated." }); return; }
   sendJson(res, 200, {
+    csrfToken: createCsrfToken(session),
     user: {
       id: session.sub,
       username: session.name,
@@ -574,7 +823,7 @@ async function handleAdminSetup(req, res) {
     return;
   }
   const setupKey = String(body.setupKey || "").trim();
-  if (!ADMIN_PASSWORD || setupKey !== ADMIN_PASSWORD) {
+  if (!ADMIN_PASSWORD || !constantTimeEqualString(setupKey, ADMIN_PASSWORD)) {
     sendJson(res, 401, { error: "Invalid setup key." });
     return;
   }
@@ -637,7 +886,7 @@ async function checkWidgetApiToken(req, res, url) {
     if (!requiredToken) return true; // not configured → no restriction
     const auth = req.headers["authorization"] || "";
     const provided = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
-    if (provided !== requiredToken) {
+    if (!provided || !constantTimeEqualString(provided, requiredToken)) {
       sendJson(res, 401, { error: "Unauthorized: invalid or missing API token." });
       return false;
     }
@@ -738,31 +987,37 @@ async function handleRequest(req, res) {
   }
 
   if (req.method === "GET" && url.pathname === "/api/summaryagentic/summary") {
+    if (enforceRateLimit(req, res, url.pathname)) return;
     await handleSummaryAgenticSummary(req, res, url);
     return;
   }
 
   if (req.method === "POST" && url.pathname === "/api/summaryagentic/test-source") {
+    if (enforceRateLimit(req, res, url.pathname)) return;
     await handleSummaryAgenticTestSource(req, res);
     return;
   }
 
   if (req.method === "POST" && url.pathname === "/api/summaryagentic/analyze-url") {
+    if (enforceRateLimit(req, res, url.pathname)) return;
     await handleSummaryAgenticAnalyzeUrl(req, res);
     return;
   }
 
   if (req.method === "POST" && url.pathname === "/api/summaryagentic/suggest-fields") {
+    if (enforceRateLimit(req, res, url.pathname)) return;
     await handleSummaryAgenticSuggestFields(req, res);
     return;
   }
 
   if (req.method === "POST" && url.pathname === "/api/summaryagentic/widget-from-template") {
+    if (enforceRateLimit(req, res, url.pathname)) return;
     await handleSummaryAgenticWidgetFromTemplate(req, res);
     return;
   }
 
   if (req.method === "POST" && url.pathname === "/api/summaryagentic/widget-from-chat") {
+    if (enforceRateLimit(req, res, url.pathname)) return;
     await handleSummaryAgenticWidgetFromChat(req, res);
     return;
   }
@@ -778,31 +1033,37 @@ async function handleRequest(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/summaryagentic/hubspot-test") {
+    if (enforceRateLimit(req, res, url.pathname)) return;
     await handleSummaryAgenticHubspotTest(req, res);
     return;
   }
 
   if (req.method === "POST" && url.pathname === "/api/summaryagentic/generate-layouts") {
+    if (enforceRateLimit(req, res, url.pathname)) return;
     await handleSummaryAgenticGenerateLayouts(req, res);
     return;
   }
 
   if (req.method === "POST" && url.pathname === "/api/summaryagentic/warm") {
+    if (enforceRateLimit(req, res, url.pathname)) return;
     await handleSummaryAgenticWarm(req, res);
     return;
   }
 
   if (req.method === "POST" && url.pathname === "/api/pulseforms/analyze-url") {
+    if (enforceRateLimit(req, res, url.pathname)) return;
     await handlePulseFormsAnalyzeUrl(req, res);
     return;
   }
 
   if (req.method === "POST" && url.pathname === "/api/pulseforms/analyze-fields") {
+    if (enforceRateLimit(req, res, url.pathname)) return;
     await handlePulseFormsAnalyzeFields(req, res);
     return;
   }
 
   if (req.method === "POST" && url.pathname === "/api/pulseforms/generate-layouts") {
+    if (enforceRateLimit(req, res, url.pathname)) return;
     await handlePulseFormsGenerateLayouts(req, res);
     return;
   }
@@ -873,7 +1134,12 @@ async function handleRequest(req, res) {
     return;
   }
   if (req.method === "POST" && url.pathname === "/api/admin/logout") {
-    handleAdminLogout(res);
+    const session = getSessionFromRequest(req);
+    if (session && !isValidCsrfToken(req, session)) {
+      sendJson(res, 403, { error: "Invalid CSRF token." });
+      return;
+    }
+    handleAdminLogout(req, res);
     return;
   }
   if (req.method === "GET" && url.pathname === "/api/admin/me") {
@@ -947,7 +1213,7 @@ const server = http.createServer(handleRequest);
 async function handleConfig(req, res, url) {
   try {
     const selection = readSelection(url.searchParams);
-    const config = await resolveCampaignConfigAsync(selection);
+    const config = applyTokenOverride(await resolveCampaignConfigAsync(selection), req);
     const visibleTabs = normalizeWielandVisibleTabs(config.wieland?.visibleTabs || {});
     const listButtons = normalizeWielandListButtons(config.wieland?.listButtons || {});
 
@@ -1054,7 +1320,7 @@ async function handleSaveTicket(req, res, url) {
     sendJson(res, 200, { ok: true, docId });
   } catch (error) {
     const status = error.code === "CONFIG" ? 400 : 500;
-    sendJson(res, status, { ok: false, error: error.message });
+    sendJson(res, status, { ok: false, error: status === 400 ? error.message : "Failed to save ticket." });
   }
 }
 
@@ -1063,6 +1329,7 @@ async function handleGetTicket(req, res, url) {
     const campaignId = String(url.searchParams.get("campaign") || "").trim();
     const workitemId = String(url.searchParams.get("workitemid") || url.searchParams.get("workitemId") || "").trim();
     if (!campaignId || !workitemId) throwConfig("Missing campaign or workitemId.");
+    if (!isValidCampaignId(campaignId)) throwConfig("Invalid campaign format.");
 
     const docId = `${campaignId}_${workitemId}`;
     let ticket = null;
@@ -1074,7 +1341,7 @@ async function handleGetTicket(req, res, url) {
     sendJson(res, 200, { ok: true, ticket });
   } catch (error) {
     const status = error.code === "CONFIG" ? 400 : 500;
-    sendJson(res, status, { ok: false, error: error.message });
+    sendJson(res, status, { ok: false, error: status === 400 ? error.message : "Failed to load ticket." });
   }
 }
 
@@ -1087,7 +1354,7 @@ async function handleClientQuestions(req, res, url) {
 
     if (!workitemId) throwConfig("Missing workitem id.");
 
-    const config = await resolveCampaignConfigAsync(selection);
+    const config = applyTokenOverride(await resolveCampaignConfigAsync(selection), req);
     const workitemData = await fetchWorkitem(config, workitemId);
     const messages = extractChecklistMessages(workitemData);
     const clientMessages = messages.filter(m => m.role !== "agent");
@@ -1198,7 +1465,7 @@ async function handleQuestionsCheck(req, res, url) {
       throwConfig('Missing workitem id. Provide ?workitemid=... in the URL.');
     }
 
-    const config = await resolveCampaignConfigAsync(selection);
+    const config = applyTokenOverride(await resolveCampaignConfigAsync(selection), req);
     const questionsConfig = resolveQuestionsConfig(config);
     const questions = normalizeQuestionItems(questionsConfig.items || []);
 
@@ -1247,7 +1514,7 @@ async function handleAgentNextStep(req, res, url) {
       throwConfig('Missing workitem id. Provide ?workitemid=... in the URL.');
     }
 
-    const config = await resolveCampaignConfigAsync(selection);
+    const config = applyTokenOverride(await resolveCampaignConfigAsync(selection), req);
     const workitemData = await fetchWorkitem(config, workitemId);
     const transcriptMessages = extractChecklistMessages(workitemData);
     const clientMessages = await extractClientMessages(workitemData, config);
@@ -1448,8 +1715,7 @@ async function handleAgentChatWorkitem(req, res, url) {
   } catch (error) {
     const status = error.code === "CONFIG" ? 400 : 502;
     sendJson(res, status, {
-      error: status === 400 ? error.message : "Failed to load workitem conversation",
-      details: status === 400 ? undefined : error.message
+      error: status === 400 ? error.message : "Failed to load workitem conversation"
     });
   }
 }
@@ -1955,7 +2221,7 @@ async function handleSummaryAgenticWarm(req, res) {
 
     // Validate warm token
     const warmToken = config.summaryagenticWarmToken || "";
-    if (!warmToken || token !== warmToken) {
+    if (!warmToken || !constantTimeEqualString(token, warmToken)) {
       return sendJson(res, 401, { error: "Invalid warm token" });
     }
 
@@ -1973,10 +2239,10 @@ async function handleSummaryAgenticWarm(req, res) {
       sendJson(res, 200, { ok: true, status: "warmed" });
     } catch (err) {
       console.error("[summaryagentic:warm] generation error:", err.message);
-      sendJson(res, 500, { ok: false, error: err.message });
+      sendJson(res, 500, { ok: false, error: "Warm generation failed." });
     }
   } catch (error) {
-    sendJson(res, 500, { error: error.message });
+    sendJson(res, 500, { error: "Warm request failed." });
   }
 }
 
@@ -2018,7 +2284,8 @@ async function handleSummaryAgenticTestSource(req, res) {
 
     sendJson(res, 200, { ok: true, data, fields });
   } catch (error) {
-    sendJson(res, 502, { error: "Source test failed", details: error.message });
+    console.error("[summaryagentic:test-source] error:", error.message);
+    sendJson(res, 502, { error: "Source test failed." });
   }
 }
 
@@ -2092,7 +2359,8 @@ ${JSON.stringify(truncateSourceData(data, 5), null, 2)}`;
     try {
       rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, systemPrompt, userMsg);
     } catch (err) {
-      sendJson(res, 502, { error: `AI call failed: ${err.message}` });
+      console.error("[summaryagentic:suggest-fields] AI call failed:", err.message);
+      sendJson(res, 502, { error: "AI call failed." });
       return;
     }
 
@@ -2102,13 +2370,13 @@ ${JSON.stringify(truncateSourceData(data, 5), null, 2)}`;
       const parsed = JSON.parse(cleaned);
       suggestions = parsed.suggestions || [];
     } catch {
-      sendJson(res, 502, { error: "AI returned invalid JSON", raw: rawText.slice(0, 300) });
+      sendJson(res, 502, { error: "AI returned invalid JSON." });
       return;
     }
 
     sendJson(res, 200, { ok: true, suggestions });
   } catch (error) {
-    sendJson(res, 500, { error: `Suggest fields failed: ${error.message}` });
+    sendJson(res, 500, { error: "Suggest fields failed." });
   }
 }
 
@@ -2166,7 +2434,8 @@ ${JSON.stringify(truncateSourceData(data, 5), null, 2)}`;
     try {
       rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, "You are a widget designer for a call center agent dashboard. Return ONLY valid JSON, no markdown.", prompt);
     } catch (err) {
-      sendJson(res, 502, { error: `AI call failed: ${err.message}` });
+      console.error("[summaryagentic:widget-template] AI call failed:", err.message);
+      sendJson(res, 502, { error: "AI call failed." });
       return;
     }
 
@@ -2175,13 +2444,13 @@ ${JSON.stringify(truncateSourceData(data, 5), null, 2)}`;
       const cleaned = rawText.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
       suggestion = JSON.parse(cleaned);
     } catch {
-      sendJson(res, 502, { error: "AI returned invalid JSON", raw: rawText.slice(0, 300) });
+      sendJson(res, 502, { error: "AI returned invalid JSON." });
       return;
     }
 
     sendJson(res, 200, { ok: true, suggestion });
   } catch (error) {
-    sendJson(res, 500, { error: `Widget from template failed: ${error.message}` });
+    sendJson(res, 500, { error: "Widget from template failed." });
   }
 }
 
@@ -2229,7 +2498,8 @@ User request: ${message}`;
     try {
       rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, systemPrompt, userMsg);
     } catch (err) {
-      sendJson(res, 502, { error: `AI call failed: ${err.message}` });
+      console.error("[summaryagentic:widget-chat] AI call failed:", err.message);
+      sendJson(res, 502, { error: "AI call failed." });
       return;
     }
 
@@ -2238,13 +2508,13 @@ User request: ${message}`;
       const cleaned = rawText.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
       suggestion = JSON.parse(cleaned);
     } catch {
-      sendJson(res, 502, { error: "AI returned invalid JSON", raw: rawText.slice(0, 300) });
+      sendJson(res, 502, { error: "AI returned invalid JSON." });
       return;
     }
 
     sendJson(res, 200, { ok: true, suggestion });
   } catch (error) {
-    sendJson(res, 500, { error: `Widget from chat failed: ${error.message}` });
+    sendJson(res, 500, { error: "Widget from chat failed." });
   }
 }
 
@@ -2276,7 +2546,7 @@ async function handleSummaryAgenticSaveWidget(req, res) {
 
     sendJson(res, 200, { ok: true, library: campaign.summaryagentic.widgetLibrary });
   } catch (error) {
-    sendJson(res, 500, { error: `Save widget failed: ${error.message}` });
+    sendJson(res, 500, { error: "Save widget failed." });
   }
 }
 
@@ -2306,7 +2576,7 @@ async function handleSummaryAgenticDeleteWidget(req, res) {
 
     sendJson(res, 200, { ok: true });
   } catch (error) {
-    sendJson(res, 500, { error: `Delete widget failed: ${error.message}` });
+    sendJson(res, 500, { error: "Delete widget failed." });
   }
 }
 
@@ -2330,7 +2600,7 @@ async function handleSummaryAgenticHubspotTest(req, res) {
     }
     sendJson(res, 200, { ok: true });
   } catch (err) {
-    sendJson(res, 500, { error: err.message });
+    sendJson(res, 500, { error: "HubSpot test failed." });
   }
 }
 
@@ -2353,7 +2623,7 @@ async function fetchHubspotData(token, selectedObjects, identifiers) {
   const customerId = identifiers.customerId || "";
   if (!phone && !customerId) throw new Error("No phone or customer_id to search HubSpot.");
 
-  console.log("[hubspot] searching contact phone:", phone, "customerId:", customerId);
+  console.log("[hubspot] searching contact phone:", maskIdentifier(phone), "customerId:", maskIdentifier(customerId));
 
   // Build phone format variants (max 5 filterGroups allowed by HubSpot)
   const digits = phone.replace(/\D/g, "");
@@ -2376,7 +2646,7 @@ async function fetchHubspotData(token, selectedObjects, identifiers) {
     filters: [{ propertyName: "mobilephone", operator: "EQ", value: v }]
   }));
 
-  console.log("[hubspot] trying variants:", variantList.join(", "));
+  console.log("[hubspot] trying variants:", variantList.map(maskIdentifier).join(", "));
 
   let searchResult = await hs("POST", "/crm/v3/objects/contacts/search", {
     filterGroups,
@@ -2396,10 +2666,10 @@ async function fetchHubspotData(token, selectedObjects, identifiers) {
 
   const contact = searchResult.results?.[0];
   if (!contact) {
-    console.log("[hubspot] no contact found — phone variants:", [...phoneVariants].join(", "));
+    console.log("[hubspot] no contact found — variants:", phoneVariants.size);
     return [];
   }
-  console.log("[hubspot] found contact id:", contact.id, "phone:", contact.properties?.phone);
+  console.log("[hubspot] found contact id:", contact.id, "phone:", maskIdentifier(contact.properties?.phone));
 
   const contactId = contact.id;
   const sources = [];
@@ -2612,13 +2882,13 @@ Return ONLY compact JSON, no markdown, no explanation:
 
       if (!layouts?.length) throw new Error("No valid layouts found in AI response");
     } catch (err) {
-      sendJson(res, 500, { error: "AI returned invalid layout JSON: " + err.message, raw: rawText.slice(0, 500) });
+      sendJson(res, 502, { error: "AI returned invalid layout JSON." });
       return;
     }
 
     sendJson(res, 200, { ok: true, layouts });
   } catch (err) {
-    sendJson(res, 500, { error: err.message });
+    sendJson(res, 500, { error: "Layout generation failed." });
   }
 }
 
@@ -2687,7 +2957,8 @@ Return ONLY a valid JSON object (no markdown, no explanation outside the json) w
     try {
       rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, systemPrompt, userMsg);
     } catch (err) {
-      sendJson(res, 502, { error: `AI call failed: ${err.message}` });
+      console.error("[summaryagentic:analyze-url] AI call failed:", err.message);
+      sendJson(res, 502, { error: "AI call failed." });
       return;
     }
 
@@ -2697,7 +2968,7 @@ Return ONLY a valid JSON object (no markdown, no explanation outside the json) w
       const cleaned = rawText.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
       suggestion = JSON.parse(cleaned);
     } catch {
-      sendJson(res, 502, { error: "AI returned non-JSON response", raw: rawText.slice(0, 500) });
+      sendJson(res, 502, { error: "AI returned non-JSON response." });
       return;
     }
 
@@ -2712,7 +2983,7 @@ Return ONLY a valid JSON object (no markdown, no explanation outside the json) w
       explanation: String(suggestion.explanation || "")
     });
   } catch (error) {
-    sendJson(res, 500, { error: `Analyze failed: ${error.message}` });
+    sendJson(res, 500, { error: "Analyze failed." });
   }
 }
 
@@ -2740,13 +3011,20 @@ async function handlePulseFormsAnalyzeUrl(req, res) {
     const systemPrompt = `You are an API configuration assistant for CRM integrations, especially Sugar CRM. Analyze the provided URL and suggest a reusable PulseForms data source template.
 Available placeholders: {{phone}}, {{customer_id}}, {{email}}, {{first_name}}, {{last_name}}, {{account_id}}, plus custom URL parameters.
 Return ONLY valid JSON with fields: name, url, fixedParams, headersJson, bodyTemplate, mode ("query" or "submit"), explanation.`;
-    const rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, systemPrompt, `URL: ${rawUrl}\nMethod: ${method}`);
+    let rawText;
+    try {
+      rawText = await callAiForSummary(aiProvider, aiApiKey, aiModel, systemPrompt, `URL: ${rawUrl}\nMethod: ${method}`);
+    } catch (err) {
+      console.error("[pulseforms:analyze-url] AI call failed:", err.message);
+      sendJson(res, 502, { error: "AI call failed." });
+      return;
+    }
     let suggestion;
     try {
       const cleaned = rawText.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
       suggestion = JSON.parse(cleaned);
     } catch {
-      sendJson(res, 502, { error: "AI returned invalid JSON", raw: rawText.slice(0, 500) });
+      sendJson(res, 502, { error: "AI returned invalid JSON." });
       return;
     }
     sendJson(res, 200, {
@@ -2761,7 +3039,7 @@ Return ONLY valid JSON with fields: name, url, fixedParams, headersJson, bodyTem
       explanation: String(suggestion.explanation || "")
     });
   } catch (error) {
-    sendJson(res, 500, { error: `PulseForms analyze failed: ${error.message}` });
+    sendJson(res, 500, { error: "PulseForms analyze failed." });
   }
 }
 
@@ -2815,7 +3093,7 @@ Return only JSON.`;
       parsed = parsePulseFormsFieldDiscovery(repairedText);
     }
     if (!parsed) {
-      sendJson(res, 502, { error: "AI returned invalid field JSON", raw: rawText.slice(0, 1000) });
+      sendJson(res, 502, { error: "AI returned invalid field JSON." });
       return;
     }
     const normalizedFields = normalizePulseFormsFields(parsed.fields || []).map((field, index) => ({
@@ -2828,7 +3106,7 @@ Return only JSON.`;
       explanation: String(parsed.explanation || "")
     });
   } catch (error) {
-    sendJson(res, 500, { error: `PulseForms field analysis failed: ${error.message}` });
+    sendJson(res, 500, { error: "PulseForms field analysis failed." });
   }
 }
 
@@ -2890,12 +3168,11 @@ Rules (strictly follow):
       sendJson(res, 200, {
         ok: true,
         layouts: fallbackLayouts,
-        warning: `AI returned invalid layout JSON, generated safe fallback layouts instead: ${parseErr.message}`,
-        raw: cleaned.slice(0, 1200)
+        warning: "AI returned invalid layout JSON; generated safe fallback layouts instead."
       });
     }
   } catch (error) {
-    sendJson(res, 500, { error: `PulseForms layout generation failed: ${error.message}` });
+    sendJson(res, 500, { error: "PulseForms layout generation failed." });
   }
 }
 
@@ -2944,7 +3221,7 @@ async function handlePulseFormsAgentSession(req, res) {
     }
     sendJson(res, 200, { ok: true, active: true, session });
   } catch (error) {
-    sendJson(res, 502, { ok: false, active: false, error: `Agent session validation failed: ${error.message}` });
+    sendJson(res, 502, { ok: false, active: false, error: "Agent session validation failed." });
   }
 }
 
@@ -2969,7 +3246,7 @@ async function handlePulseFormsConfig(req, res, url) {
       }
     });
   } catch (error) {
-    sendJson(res, 500, { configured: false, error: error.message });
+    sendJson(res, 500, { configured: false, error: "PulseForms config failed." });
   }
 }
 
@@ -3001,11 +3278,11 @@ async function handlePulseFormsWidgetConfig(req, res, url) {
         NEEDS_ASSESSMENT_MODULE: sugar.needsAssessmentModule || "NA_NeedsAssessment",
         OPPORTUNITY_MODULE: sugar.submitModule || "Opportunities",
         MAX_FIELDS_PER_REQUEST: sugar.maxFieldsPerRequest || 100,
-        NCC_EVENT_ORIGIN: sugar.nccEventOrigin || "*"
+        NCC_EVENT_ORIGIN: normalizeAllowedOrigin(sugar.nccEventOrigin) || defaultCampaignOrigin(config)
       }
     });
   } catch (error) {
-    sendJson(res, 500, { ok: false, error: error.message });
+    sendJson(res, 500, { ok: false, error: "PulseForms widget config failed." });
   }
 }
 
@@ -3337,7 +3614,7 @@ async function handlePulseFormsQuery(req, res, url) {
 
     sendJson(res, 200, { ok: true, values, sources, queriedAt: Date.now() });
   } catch (error) {
-    sendJson(res, 500, { ok: false, error: error.message });
+    sendJson(res, 500, { ok: false, error: "PulseForms query failed." });
   }
 }
 
@@ -3400,7 +3677,7 @@ async function handlePulseFormsSubmit(req, res) {
     const allOk = sources.every((s) => s.ok);
     sendJson(res, 200, { ok: allOk, sources });
   } catch (error) {
-    sendJson(res, 500, { ok: false, error: error.message });
+    sendJson(res, 500, { ok: false, error: "PulseForms submit failed." });
   }
 }
 
@@ -3576,7 +3853,7 @@ async function handleWidgetDraft(req, res, url) {
       updatedAt: record.updatedAt || null
     });
   } catch (error) {
-    sendJson(res, 500, { ok: false, error: error.message });
+    sendJson(res, 500, { ok: false, error: "Widget draft failed." });
   }
 }
 
@@ -3623,9 +3900,7 @@ async function handleWidgetState(req, res, url) {
       sendJson(res, 403, { ok: false, error: "Widget state read token is not configured for this campaign." });
       return;
     }
-    const providedTokenBuffer = Buffer.from(token);
-    const configuredTokenBuffer = Buffer.from(configuredToken);
-    if (!token || providedTokenBuffer.length !== configuredTokenBuffer.length || !crypto.timingSafeEqual(providedTokenBuffer, configuredTokenBuffer)) {
+    if (!token || !constantTimeEqualString(token, configuredToken)) {
       sendJson(res, 401, { ok: false, error: "Unauthorized." });
       return;
     }
@@ -3650,7 +3925,7 @@ async function handleWidgetState(req, res, url) {
       updatedAt: record.updatedAt || null
     });
   } catch (error) {
-    sendJson(res, 500, { ok: false, error: error.message });
+    sendJson(res, 500, { ok: false, error: "Widget state failed." });
   }
 }
 
@@ -4683,7 +4958,7 @@ function buildPulseFormsSugarConnection(config) {
     platform: String(sugar.platform || "base").trim() || "base",
     apiVersion: String(sugar.apiVersion || "v11_1").trim() || "v11_1",
     maxFieldsPerRequest: Math.max(1, Math.min(100, parseInt(sugar.maxFieldsPerRequest || 100, 10) || 100)),
-    nccEventOrigin: String(sugar.nccEventOrigin || "*").trim() || "*",
+    nccEventOrigin: normalizeAllowedOrigin(sugar.nccEventOrigin) || defaultCampaignOrigin(config),
     queryEnabled: sugar.queryEnabled !== false,
     contactModule: String(sugar.contactModule || sugar.queryModule || "Contacts").trim() || "Contacts",
     ticketModule: String(sugar.ticketModule || "tic_Tickets").trim() || "tic_Tickets",
@@ -4711,8 +4986,9 @@ function assertPulseFormsSugarConnection(connection) {
 
 async function getPulseFormsSugarToken(connection) {
   assertPulseFormsSugarConnection(connection);
+  const safeBaseUrl = await assertSafeOutboundUrl(connection.baseUrl, "Sugar CRM base URL");
   const apiVersion = encodeURIComponent(connection.apiVersion || "v11_1");
-  const response = await fetch(`${connection.baseUrl}/rest/${apiVersion}/oauth2/token`, {
+  const response = await fetch(new URL(`/rest/${apiVersion}/oauth2/token`, safeBaseUrl).toString(), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -4742,7 +5018,10 @@ async function fetchPulseFormsSugar(connection, method, path, body = null) {
 
 async function fetchPulseFormsSugarRaw(connection, method, path, body = null) {
   const token = await getPulseFormsSugarToken(connection);
-  const response = await fetch(`${connection.baseUrl}${path}`, {
+  const safeBaseUrl = await assertSafeOutboundUrl(connection.baseUrl, "Sugar CRM base URL");
+  const safeUrl = new URL(path, safeBaseUrl);
+  if (safeUrl.origin !== safeBaseUrl.origin) throwConfig("Sugar CRM request path is invalid.");
+  const response = await fetch(safeUrl.toString(), {
     method,
     headers: {
       "Content-Type": "application/json",
@@ -5864,23 +6143,27 @@ async function logoutAgentChatUser(config, token) {
 
 async function handleAdmin(req, res, url) {
   const ip = getClientIp(req);
+  const adminSession = getSessionFromRequest(req);
 
   if (isAdminRateLimited(ip)) {
     sendJson(res, 429, { error: "Too many failed attempts. Try again in 15 minutes." });
     return;
   }
 
-  if (!isAuthorizedAdmin(req)) {
+  if (!adminSession) {
     recordFailedAdminAttempt(ip);
-    res.writeHead(401, {
-      "Content-Type": "application/json; charset=utf-8",
-      "WWW-Authenticate": 'Basic realm="NextIQ Admin"'
-    });
+    res.writeHead(401, securityHeaders({
+      "Content-Type": "application/json; charset=utf-8"
+    }));
     res.end(JSON.stringify({ error: "Unauthorized" }));
     return;
   }
 
   clearAdminAttempts(ip);
+  if (ADMIN_MUTATING_METHODS.has(req.method) && !isValidCsrfToken(req, adminSession)) {
+    sendJson(res, 403, { error: "Invalid CSRF token." });
+    return;
+  }
 
   if (req.method === "GET" && url.pathname === "/api/admin/ncc-builder/survey-ai-config") {
     const session = getSessionFromRequest(req);
@@ -6059,14 +6342,18 @@ async function handleAdmin(req, res, url) {
 
   if (req.method === "POST" && url.pathname === "/api/admin/users/change-password") {
     const session = getSessionFromRequest(req);
+    if (!session) {
+      sendJson(res, 401, { error: "Not authenticated." });
+      return;
+    }
     let body;
     try { body = await readJson(req); } catch {
       sendJson(res, 400, { error: "Invalid JSON." });
       return;
     }
-    const targetId = String(body.id || "").trim();
+    const targetId = String(body.id || session.sub || "").trim();
     // Only admin can change others' passwords; any user can change their own
-    if (session && session.sub !== targetId && session.role !== "admin") {
+    if (session.sub !== targetId && session.role !== "admin") {
       sendJson(res, 403, { error: "Admin role required to change other users' passwords." });
       return;
     }
@@ -6078,6 +6365,13 @@ async function handleAdmin(req, res, url) {
     const users = await readUsers();
     const idx = users.findIndex((u) => u.id === targetId);
     if (idx === -1) { sendJson(res, 404, { error: "User not found." }); return; }
+    if (session.sub === targetId) {
+      const currentPassword = String(body.currentPassword || "");
+      if (!currentPassword || !verifyPassword(currentPassword, users[idx].passwordHash, users[idx].passwordSalt)) {
+        sendJson(res, 401, { error: "Current password is incorrect." });
+        return;
+      }
+    }
     const { hash, salt } = hashPassword(newPassword);
     users[idx] = { ...users[idx], passwordHash: hash, passwordSalt: salt };
     await writeUsers(users);
@@ -6089,10 +6383,10 @@ async function handleAdmin(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/admin/campaigns") {
     try {
       const campaigns = await readCampaigns();
-      sendJson(res, 200, { campaigns, adminConfigured: Boolean(ADMIN_PASSWORD) });
+      sendJson(res, 200, { campaigns: campaigns.map(redactCampaignSecrets), adminConfigured: Boolean(ADMIN_PASSWORD) });
     } catch (error) {
       console.error("[admin/campaigns] readCampaigns error:", error.message, error.stack);
-      sendJson(res, 500, { error: "Failed to load campaigns", details: error.message });
+      sendJson(res, 500, { error: "Failed to load campaigns" });
     }
     return;
   }
@@ -6111,6 +6405,8 @@ async function handleAdmin(req, res, url) {
       const campaign = normalizeCampaign(body);
       const campaigns = await readCampaigns();
       const index = campaigns.findIndex((item) => item.id === campaign.id);
+      const savedCampaign = index >= 0 ? campaigns[index] : {};
+      const campaignToSave = preserveExistingCampaignSecrets(campaign, savedCampaign);
       const permission = index >= 0 ? "editCampaign" : "createCampaign";
       if (!hasAdminPermission(session, permission)) {
         sendJson(res, 403, {
@@ -6122,13 +6418,13 @@ async function handleAdmin(req, res, url) {
       }
 
       if (index >= 0) {
-        campaigns[index] = campaign;
+        campaigns[index] = campaignToSave;
       } else {
-        campaigns.push(campaign);
+        campaigns.push(campaignToSave);
       }
 
       await writeCampaigns(campaigns);
-      sendJson(res, 200, { ok: true, campaign });
+      sendJson(res, 200, { ok: true, campaign: redactCampaignSecrets(campaignToSave) });
     } catch (error) {
       sendJson(res, 400, { error: error.message });
     }
@@ -6219,7 +6515,9 @@ function serveStatic(requestPath, isHeadRequest, res) {
     }
 
     const ext = path.extname(filePath).toLowerCase();
-    res.writeHead(200, { "Content-Type": MIME_TYPES[ext] || "application/octet-stream" });
+    const headers = { "Content-Type": MIME_TYPES[ext] || "application/octet-stream" };
+    const protectedAdminPage = ["/admin.html", "/login.html", "/setup.html"].includes(safePath);
+    res.writeHead(200, protectedAdminPage ? adminSecurityHeaders(headers) : securityHeaders(headers));
     if (isHeadRequest) {
       res.end();
       return;
@@ -6338,15 +6636,12 @@ function readSelection(searchParams) {
   };
 }
 
-// Extrae un token override del header x-thrio-token o query param token.
+// Extrae un token override del header x-thrio-token.
 // Si está presente, se usa en lugar del token de la campaña para llamadas a Thrio.
 function getThrioTokenOverride(req) {
   const fromHeader = String(req.headers["x-thrio-token"] || "").trim();
   if (fromHeader) return fromHeader;
-  try {
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    return String(url.searchParams.get("token") || "").trim();
-  } catch { return ""; }
+  return "";
 }
 
 // Aplica el token override al config si viene en el request
@@ -7121,7 +7416,7 @@ function normalizePulseFormsSugarConfig(input) {
     platform: String(src.platform || "base").trim() || "base",
     apiVersion: String(src.apiVersion || "v11_1").trim() || "v11_1",
     maxFieldsPerRequest: Math.max(1, Math.min(100, parseInt(src.maxFieldsPerRequest || 100, 10) || 100)),
-    nccEventOrigin: String(src.nccEventOrigin || "*").trim() || "*",
+    nccEventOrigin: normalizeAllowedOrigin(src.nccEventOrigin),
     queryEnabled: src.queryEnabled !== false,
     contactModule: cleanModule(src.contactModule || src.queryModule, "Contacts"),
     ticketModule: cleanModule(src.ticketModule, "tic_Tickets"),
@@ -7224,10 +7519,10 @@ function isAuthorizedAdmin(req) {
   // Primary: session cookie
   if (getSessionFromRequest(req)) return true;
 
-  // Legacy fallback: X-Admin-Password header (kept for backward compatibility)
-  if (!ADMIN_PASSWORD) return false;
+  // Legacy fallback is disabled by default because it bypasses session and CSRF.
+  if (!ALLOW_LEGACY_ADMIN_AUTH || !ADMIN_PASSWORD) return false;
   const headerPassword = String(req.headers["x-admin-password"] || "").trim();
-  if (headerPassword && headerPassword === ADMIN_PASSWORD) return true;
+  if (headerPassword && constantTimeEqualString(headerPassword, ADMIN_PASSWORD)) return true;
 
   // Legacy fallback: HTTP Basic auth
   const authHeader = req.headers.authorization || "";
@@ -7236,15 +7531,15 @@ function isAuthorizedAdmin(req) {
     const decoded = Buffer.from(authHeader.slice(6), "base64").toString("utf8");
     const separator = decoded.indexOf(":");
     const password = separator >= 0 ? decoded.slice(separator + 1) : "";
-    return password === ADMIN_PASSWORD;
+    return constantTimeEqualString(password, ADMIN_PASSWORD);
   } catch {
     return false;
   }
 }
 
 function sendJson(res, status, data) {
-  const payload = JSON.stringify(data);
-  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
+  const payload = JSON.stringify(sanitizeServerResponse(status, data));
+  res.writeHead(status, securityHeaders({ "Content-Type": "application/json; charset=utf-8" }));
   res.end(payload);
 }
 
@@ -7254,6 +7549,11 @@ function readJson(req) {
   }
 
   if (typeof req.body === "string") {
+    if (Buffer.byteLength(req.body, "utf8") > MAX_JSON_BODY_BYTES) {
+      const error = new Error("JSON body too large.");
+      error.status = 413;
+      return Promise.reject(error);
+    }
     try {
       return Promise.resolve(JSON.parse(req.body));
     } catch (error) {
@@ -7262,6 +7562,11 @@ function readJson(req) {
   }
 
   if (Buffer.isBuffer(req.rawBody)) {
+    if (req.rawBody.length > MAX_JSON_BODY_BYTES) {
+      const error = new Error("JSON body too large.");
+      error.status = 413;
+      return Promise.reject(error);
+    }
     try {
       return Promise.resolve(JSON.parse(req.rawBody.toString("utf8") || "{}"));
     } catch (error) {
@@ -7270,11 +7575,30 @@ function readJson(req) {
   }
 
   return new Promise((resolve, reject) => {
+    const contentLength = Number(req.headers["content-length"] || 0);
+    if (Number.isFinite(contentLength) && contentLength > MAX_JSON_BODY_BYTES) {
+      const error = new Error("JSON body too large.");
+      error.status = 413;
+      reject(error);
+      return;
+    }
     let raw = "";
+    let bytes = 0;
+    let rejected = false;
     req.on("data", (chunk) => {
+      bytes += chunk.length;
+      if (bytes > MAX_JSON_BODY_BYTES) {
+        rejected = true;
+        const error = new Error("JSON body too large.");
+        error.status = 413;
+        reject(error);
+        req.destroy();
+        return;
+      }
       raw += chunk;
     });
     req.on("end", () => {
+      if (rejected) return;
       try {
         resolve(JSON.parse(raw || "{}"));
       } catch (error) {
@@ -7329,17 +7653,16 @@ async function fetchWorkitem(config, workitemId) {
   if (!config.workitemApiUrl) {
     throwConfig(`Campaign "${config.id}" is missing a workitem API URL.`);
   }
+  const safeWorkitemUrl = await assertSafeOutboundUrl(config.workitemApiUrl, "Workitem API URL");
 
-  const upstream = await fetch(config.workitemApiUrl, {
+  const upstream = await fetch(safeWorkitemUrl, {
     method: "GET",
     headers
   });
 
   if (!upstream.ok) {
     const detail = await upstream.text().catch(() => "");
-    const tok = String(config.token || "");
-    const tokenHint = tok.slice(0, 12) + "..." + tok.slice(-12);
-    console.error(`[fetchWorkitem] Thrio ${upstream.status} | token=${tokenHint} | len=${tok.length}`);
+    console.error(`[fetchWorkitem] Thrio ${upstream.status} | tokenPresent=${Boolean(config.token)}`);
     throw new Error(`Workitem API returned ${upstream.status}: ${detail.slice(0, 120)}`);
   }
 
@@ -7369,8 +7692,9 @@ async function fetchWorkitems(config) {
   if (!config.workitemApiUrl) {
     throwConfig(`Campaign "${config.id}" is missing a workitem API URL.`);
   }
+  const safeWorkitemUrl = await assertSafeOutboundUrl(config.workitemApiUrl, "Workitem API URL");
 
-  const upstream = await fetch(config.workitemApiUrl, {
+  const upstream = await fetch(safeWorkitemUrl, {
     method: "GET",
     headers
   });
@@ -9368,7 +9692,7 @@ async function handleWieland(req, res, url) {
         body: formData
       });
     } catch (err) {
-      sendJson(res, 502, { error: "Failed to reach NCC API", details: err.message });
+      sendJson(res, 502, { error: "Failed to reach NCC API" });
       return;
     }
 
@@ -9571,7 +9895,7 @@ async function handleWieland(req, res, url) {
       return;
     }
 
-    console.log("[wieland/leads] sending leads:", JSON.stringify(leads.slice(0, 2)));
+    console.log("[wieland/leads] sending leads:", { count: leads.length });
     const result = await nccFetch(nccConfig, `/outboundlist/${encodeURIComponent(listId)}/leads`, "POST", leads);
     console.log("[wieland/leads] NCC response:", result.status, JSON.stringify(result.data)?.slice(0, 300));
     let visibleAfterInsert = null;
@@ -10002,7 +10326,7 @@ function buildNccBuilderBaseUrl(domain) {
 }
 
 function getNccBuilderAuth(req, url, body = {}) {
-  const token = String(body.token || url.searchParams.get("token") || req.headers["x-ncc-token"] || "").trim();
+  const token = String(body.token || req.headers["x-ncc-token"] || "").trim();
   const domain = String(body.domain || url.searchParams.get("domain") || "astonvilla.thrio.io").trim();
   return {
     token,
@@ -11542,12 +11866,12 @@ async function handleNccCampaignBuilder(req, res, url) {
       let tokenData;
       try { tokenData = tokenText ? JSON.parse(tokenText) : {}; } catch { tokenData = tokenText; }
       if (!tokenResponse.ok) {
-        sendJson(res, tokenResponse.status, { error: "Failed to get NCC token.", details: tokenData });
+        sendJson(res, tokenResponse.status, { error: "Failed to get NCC token." });
         return;
       }
       const providerToken = extractNccToken(tokenData);
       if (!providerToken) {
-        sendJson(res, 502, { error: "Login provider did not return a token.", details: tokenData });
+        sendJson(res, 502, { error: "Login provider did not return a token." });
         return;
       }
 
@@ -11882,8 +12206,7 @@ async function handleNccCampaignBuilder(req, res, url) {
         sendJson(res, 502, {
           error: "Survey AI provider call failed.",
           provider,
-          model,
-          details: aiError?.message || String(aiError)
+          model
         });
         return;
       }
@@ -11894,7 +12217,7 @@ async function handleNccCampaignBuilder(req, res, url) {
           model,
           preview: String(rawText || "").slice(0, 500)
         });
-        sendJson(res, 502, { error: "AI did not return valid survey JSON.", provider, model, raw: String(rawText || "").slice(0, 2000) });
+        sendJson(res, 502, { error: "AI did not return valid survey JSON.", provider, model });
         return;
       }
       const surveyName = String(parsed.surveyJson?.name || body.name || "NCC AI Assisted Survey").trim() || "NCC AI Assisted Survey";
@@ -11906,7 +12229,7 @@ async function handleNccCampaignBuilder(req, res, url) {
           model,
           validationErrors
         });
-        sendJson(res, 502, { error: "AI generated survey JSON failed validation.", provider, model, details: validationErrors, raw: String(rawText || "").slice(0, 2000) });
+        sendJson(res, 502, { error: "AI generated survey JSON failed validation.", provider, model });
         return;
       }
       sendJson(res, 200, {

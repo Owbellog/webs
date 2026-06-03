@@ -15,6 +15,20 @@ const state = {
   stableSnapshot: null
 };
 
+function getParentTargetOrigin() {
+  const configured = pageParams.get("parent_origin") || pageParams.get("parentOrigin") || "";
+  const candidates = [configured, document.referrer].filter(Boolean);
+  for (const candidate of candidates) {
+    try {
+      const origin = new URL(candidate, window.location.href).origin;
+      if (origin && origin !== "null") return origin;
+    } catch {
+      // Ignore invalid origins.
+    }
+  }
+  return "";
+}
+
 if (isEmbedded) {
   document.documentElement.classList.add("embedded");
   document.body.classList.add("embedded");
@@ -200,7 +214,10 @@ function renderWidget(data) {
     const phrase = nextStep.suggestedPhrase || "";
     if (!phrase) return;
     if (isEmbedded) {
-      window.parent.postMessage({ type: "nextiq:insert", text: phrase }, "*");
+      const targetOrigin = getParentTargetOrigin();
+      if (targetOrigin) {
+        window.parent.postMessage({ type: "nextiq:insert", text: phrase }, targetOrigin);
+      }
     } else {
       copyText(phrase);
     }

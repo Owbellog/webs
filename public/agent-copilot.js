@@ -269,7 +269,9 @@ function appendAnswer(data) {
 
 function appendMessage(role, label, text) {
   const bubble = createMessage(role, label);
-  bubble.innerHTML = `<p>${text}</p>`;
+  const paragraph = document.createElement("p");
+  paragraph.textContent = text;
+  bubble.appendChild(paragraph);
   scrollToBottom();
   notifyParentHeight();
 }

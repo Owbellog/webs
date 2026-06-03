@@ -24,6 +24,13 @@ const adminUserBar = document.getElementById("adminUserBar");
 const adminUserName = document.getElementById("adminUserName");
 const adminUserRole = document.getElementById("adminUserRole");
 const logoutButton = document.getElementById("logoutButton");
+const changePasswordToggle = document.getElementById("changePasswordToggle");
+const changePasswordPanel = document.getElementById("changePasswordPanel");
+const currentPassword = document.getElementById("currentPassword");
+const newPasswordSelf = document.getElementById("newPasswordSelf");
+const newPasswordSelfConfirm = document.getElementById("newPasswordSelfConfirm");
+const saveSelfPasswordButton = document.getElementById("saveSelfPasswordButton");
+const cancelSelfPasswordButton = document.getElementById("cancelSelfPasswordButton");
 const usersSection = document.getElementById("usersSection");
 const userList = document.getElementById("userList");
 const addUserButton = document.getElementById("addUserButton");
@@ -316,6 +323,7 @@ const state = {
   toastTimer: null,
   currentUser: null
 };
+let adminCsrfToken = "";
 
 const NCC_BUILDER_AI_MODEL_DEFAULTS = {
   gemini: "gemini-2.5-flash",
@@ -1653,9 +1661,8 @@ function updateSummaryAgenticUrls(campaignId) {
     if (urlCustomerId) urlCustomerId.value = `${base}?campaign=${encodeURIComponent(campaignId)}&customer_id=C-001`;
     if (embedCode) embedCode.value = `<iframe src="${base}?campaign=${encodeURIComponent(campaignId)}&phone={{PHONE}}" style="width:100%;height:900px;border:none;" allow="clipboard-write"></iframe>`;
     const warmEndpoint = `${apiBase}/api/summaryagentic/warm`;
-    const warmTokenVal = fields.summaryagenticWarmToken?.value.trim() || "TU_WARM_TOKEN";
     if (warmUrl) warmUrl.value = warmEndpoint;
-    if (warmCurl) warmCurl.value = `curl -X POST ${warmEndpoint} \\\n  -H "Content-Type: application/json" \\\n  -d '{"campaign":"${campaignId}","phone":"+15551234567","token":"${warmTokenVal}"}'`;
+    if (warmCurl) warmCurl.value = `curl -X POST ${warmEndpoint} \\\n  -H "Content-Type: application/json" \\\n  -d '{"campaign":"${campaignId}","phone":"+15551234567","token":"<WARM_TOKEN>"}'`;
   } else {
     if (saLink) saLink.hidden = true;
     if (urlPhone) urlPhone.value = "";
@@ -2680,8 +2687,56 @@ expandAllButton.addEventListener("click", () => {
 campaignSearch.addEventListener("input", renderCampaigns);
 
 logoutButton.addEventListener("click", async () => {
-  await fetch(buildApiUrl("/api/admin/logout"), { method: "POST", credentials: "include" });
+  await fetch(buildApiUrl("/api/admin/logout"), {
+    method: "POST",
+    credentials: "include",
+    headers: adminCsrfToken ? { "X-CSRF-Token": adminCsrfToken } : {}
+  });
   location.replace(buildApiUrl("/login.html"));
+});
+
+function resetSelfPasswordForm() {
+  if (currentPassword) currentPassword.value = "";
+  if (newPasswordSelf) newPasswordSelf.value = "";
+  if (newPasswordSelfConfirm) newPasswordSelfConfirm.value = "";
+}
+
+changePasswordToggle?.addEventListener("click", () => {
+  if (!changePasswordPanel) return;
+  changePasswordPanel.hidden = !changePasswordPanel.hidden;
+  if (!changePasswordPanel.hidden) currentPassword?.focus();
+});
+
+cancelSelfPasswordButton?.addEventListener("click", () => {
+  resetSelfPasswordForm();
+  if (changePasswordPanel) changePasswordPanel.hidden = true;
+});
+
+saveSelfPasswordButton?.addEventListener("click", async () => {
+  const current = currentPassword?.value || "";
+  const password = newPasswordSelf?.value || "";
+  const confirm = newPasswordSelfConfirm?.value || "";
+  if (!current) { showToast("Current password is required.", true); return; }
+  if (password.length < 8) { showToast("New password must be at least 8 characters.", true); return; }
+  if (password !== confirm) { showToast("New passwords do not match.", true); return; }
+  saveSelfPasswordButton.disabled = true;
+  try {
+    await apiRequest("/api/admin/users/change-password", {
+      method: "POST",
+      body: JSON.stringify({
+        id: state.currentUser?.id,
+        currentPassword: current,
+        password
+      })
+    });
+    resetSelfPasswordForm();
+    if (changePasswordPanel) changePasswordPanel.hidden = true;
+    showToast("Password changed.");
+  } catch (err) {
+    showToast(err.message, true);
+  } finally {
+    saveSelfPasswordButton.disabled = false;
+  }
 });
 
 nccBuilderAiProvider?.addEventListener("change", syncNccBuilderAiModelPlaceholder);
@@ -3040,7 +3095,7 @@ function fillForm(campaign) {
   if (fields.pulseformsSugarPlatform) fields.pulseformsSugarPlatform.value = sugar.platform || "base";
   if (fields.pulseformsSugarApiVersion) fields.pulseformsSugarApiVersion.value = sugar.apiVersion || "v11_1";
   if (fields.pulseformsSugarMaxFields) fields.pulseformsSugarMaxFields.value = sugar.maxFieldsPerRequest || 100;
-  if (fields.pulseformsNccEventOrigin) fields.pulseformsNccEventOrigin.value = sugar.nccEventOrigin || "*";
+  if (fields.pulseformsNccEventOrigin) fields.pulseformsNccEventOrigin.value = sugar.nccEventOrigin || "";
   if (fields.pulseformsWidgetStateReadToken) fields.pulseformsWidgetStateReadToken.value = campaign.pulseformsWidgetStateReadToken || "";
   if (fields.pulseformsSugarContactModule) fields.pulseformsSugarContactModule.value = sugar.contactModule || sugar.queryModule || "Contacts";
   if (fields.pulseformsSugarTicketModule) fields.pulseformsSugarTicketModule.value = sugar.ticketModule || "tic_Tickets";
@@ -3257,7 +3312,7 @@ function readForm() {
         platform: fields.pulseformsSugarPlatform?.value.trim() || "base",
         apiVersion: fields.pulseformsSugarApiVersion?.value.trim() || "v11_1",
         maxFieldsPerRequest: Math.max(1, Math.min(100, parseInt(fields.pulseformsSugarMaxFields?.value || "100", 10) || 100)),
-        nccEventOrigin: fields.pulseformsNccEventOrigin?.value.trim() || "*",
+        nccEventOrigin: fields.pulseformsNccEventOrigin?.value.trim() || "",
         contactModule: fields.pulseformsSugarContactModule?.value.trim() || "Contacts",
         ticketModule: fields.pulseformsSugarTicketModule?.value.trim() || "tic_Tickets",
         needsAssessmentModule: fields.pulseformsSugarNeedsAssessmentModule?.value.trim() || "NA_NeedsAssessment",
@@ -3598,6 +3653,7 @@ async function apiRequest(url, options = {}) {
     credentials: "include",
     headers: {
       "Content-Type": "application/json",
+      ...(adminCsrfToken ? { "X-CSRF-Token": adminCsrfToken } : {}),
       ...(options.headers || {})
     }
   });
@@ -3626,6 +3682,7 @@ async function initSession() {
       location.replace(buildApiUrl("/login.html"));
       return;
     }
+    adminCsrfToken = data.csrfToken || "";
     state.currentUser = data.user;
     adminUserName.textContent = data.user.username;
     adminUserRole.textContent = data.user.role;
