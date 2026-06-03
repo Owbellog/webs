@@ -22,7 +22,7 @@ develop → staging → main
 ## Configuración inicial (primera vez)
 
 ```bash
-# Copia las plantillas y rellena los secretos
+# Copia las plantillas locales. En despliegue, los secretos se inyectan desde Secret Manager.
 cp env/staging.yaml.example    env/staging.yaml
 cp env/production.yaml.example env/production.yaml
 cp env/local.env.example       .env
@@ -50,7 +50,8 @@ npm run start:functions
 
 ## Reglas
 
-- **Nunca** commitear `env/staging.yaml`, `env/production.yaml` o `.env` — contienen secretos
+- **Nunca** commitear `.env` — contiene secretos locales
+- `env/staging.yaml` y `env/production.yaml` deben contener solo variables no sensibles; los secretos de Cloud Functions viven en Secret Manager
 - **Nunca** hacer deploy a producción directamente desde `develop`
 - **Siempre** pasar por staging antes de subir a main
 - Los archivos `env/*.yaml.example` sí se commitean — son plantillas sin secretos

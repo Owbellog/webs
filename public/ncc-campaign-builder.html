@@ -116,6 +116,235 @@
       font-weight: 700;
     }
     .check input { width: auto; }
+    .switch-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 12px;
+      color: var(--brand);
+      font-weight: 800;
+    }
+    .switch-row input {
+      width: 48px;
+      height: 26px;
+      accent-color: var(--brand);
+    }
+    .disposition-add {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(220px, 0.8fr) auto;
+      gap: 12px;
+      align-items: end;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 12px;
+      background: #fbfcff;
+    }
+    .disposition-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 14px;
+    }
+    .disposition-card {
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 12px;
+      background: #fff;
+    }
+    .disposition-card-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(220px, 0.75fr) auto auto;
+      gap: 10px;
+      align-items: end;
+    }
+    .disposition-icon {
+      min-width: 44px;
+      width: 44px;
+      padding-left: 0;
+      padding-right: 0;
+      background: #fff;
+      color: var(--brand);
+      border-color: var(--line);
+      font-size: 1.2rem;
+    }
+    .disposition-empty {
+      border: 1px dashed var(--line);
+      border-radius: 9px;
+      padding: 18px;
+      color: var(--muted);
+      background: #fbfcff;
+      font-weight: 800;
+    }
+    .disposition-subsection {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid #edf1f7;
+    }
+    .disposition-subsection-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .disposition-subsection-title {
+      color: var(--muted);
+      font-size: 0.82rem;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+    .disposition-mini-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .disposition-mini-actions button {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 6px 10px;
+      min-height: 0;
+      background: #fff;
+      color: var(--brand);
+      font-size: 0.76rem;
+      font-weight: 900;
+    }
+    .disposition-chip-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .disposition-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 7px 10px;
+      color: var(--brand);
+      background: #fff;
+      font-weight: 800;
+      font-size: 0.8rem;
+    }
+    .disposition-chip input {
+      width: auto;
+      accent-color: var(--accent);
+    }
+    .disposition-options {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .disposition-summary {
+      margin-top: 12px;
+      border: 1px solid #bbf7d0;
+      border-radius: 9px;
+      padding: 10px 12px;
+      color: var(--ok);
+      background: #f0fdf4;
+      font-weight: 800;
+      font-size: 0.85rem;
+    }
+    .supervisor-list {
+      display: grid;
+      gap: 8px;
+      max-height: 220px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 10px;
+      background: #fbfcff;
+    }
+    .supervisor-option {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 9px 10px;
+      background: #fff;
+      color: var(--brand);
+      font-weight: 800;
+    }
+    .supervisor-option input { width: auto; }
+    .supervisor-profile {
+      color: var(--muted);
+      font-size: 0.76rem;
+      font-weight: 900;
+    }
+    .queue-add {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(240px, 0.9fr) auto;
+      gap: 12px;
+      align-items: end;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 12px;
+      background: #fbfcff;
+    }
+    .queue-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 14px;
+    }
+    .queue-card {
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 12px;
+      background: #fff;
+    }
+    .queue-card-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(240px, 0.8fr) auto auto;
+      gap: 10px;
+      align-items: end;
+    }
+    .queue-options {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid #edf1f7;
+    }
+    .queue-summary {
+      margin-top: 12px;
+      border: 1px solid #bbf7d0;
+      border-radius: 9px;
+      padding: 10px 12px;
+      color: var(--ok);
+      background: #f0fdf4;
+      font-weight: 800;
+      font-size: 0.85rem;
+    }
+    .queue-note {
+      margin-top: 10px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 10px 12px;
+      color: var(--muted);
+      background: #fbfcff;
+      font-weight: 800;
+      font-size: 0.82rem;
+    }
+    .preset-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+    button.preset {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 7px 10px;
+      min-height: 0;
+      background: #fff;
+      color: var(--brand);
+      font-size: 0.82rem;
+      font-weight: 800;
+      cursor: pointer;
+    }
     .actions {
       display: flex;
       gap: 10px;
@@ -171,27 +400,109 @@
       margin: 0 auto;
     }
     .stepper {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      margin-bottom: 18px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 16px;
+      background: #f8fafc;
     }
-    .step-pill {
+    .progress-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      color: var(--brand);
+      font-weight: 900;
+      margin-bottom: 10px;
+    }
+    .progress-track {
+      height: 10px;
+      border-radius: 999px;
+      background: #e7ebf3;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      width: 0;
+      border-radius: inherit;
+      background: #166534;
+      transition: width 160ms ease;
+    }
+    .progress-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .progress-chip {
       border: 1px solid var(--line);
       border-radius: 999px;
-      padding: 8px 11px;
+      padding: 6px 9px;
       color: var(--muted);
-      font-size: 0.8rem;
-      font-weight: 800;
+      font-size: 0.76rem;
+      font-weight: 900;
       background: #fff;
     }
-    .step-pill.active {
-      color: #fff;
-      background: var(--brand);
-      border-color: var(--brand);
+    .progress-chip.complete { color: var(--ok); border-color: #bbf7d0; background: #f0fdf4; }
+    .progress-chip.active { color: #fff; border-color: var(--brand); background: var(--brand); }
+    .wizard-step {
+      display: block;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 0;
+      margin-bottom: 10px;
+      background: #fff;
+      overflow: hidden;
     }
-    .wizard-step { display: none; }
-    .wizard-step.active { display: block; }
+    .wizard-step > .section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin: 0;
+      padding: 15px 16px;
+      cursor: pointer;
+    }
+    .wizard-step > .section-title::after {
+      content: "Edit";
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 5px 9px;
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 900;
+    }
+    .wizard-step.active {
+      border-color: var(--brand);
+      box-shadow: 0 12px 26px rgba(32, 42, 90, 0.08);
+    }
+    .wizard-step.complete > .section-title::after {
+      content: "Complete";
+      color: var(--ok);
+      border-color: #bbf7d0;
+      background: #f0fdf4;
+    }
+    .wizard-step.active > .section-title::after {
+      content: "Open";
+      color: #fff;
+      border-color: var(--brand);
+      background: var(--brand);
+    }
+    .wizard-step > .hint,
+    .wizard-step > .form-grid,
+    .wizard-step > .log {
+      padding-left: 16px;
+      padding-right: 16px;
+    }
+    .wizard-step > .form-grid,
+    .wizard-step > .log {
+      padding-bottom: 16px;
+    }
+    .wizard-step:not(.active) > .hint,
+    .wizard-step:not(.active) > .form-grid,
+    .wizard-step:not(.active) > .log {
+      display: none;
+    }
     .domain-chip {
       display: inline-flex;
       align-items: center;
@@ -204,9 +515,97 @@
       font-weight: 800;
       background: #fff;
     }
+    .tool-menu {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .tool-menu button {
+      background: #fff;
+      color: var(--brand);
+      border-color: var(--line);
+    }
+    .tool-menu button.active {
+      background: var(--brand);
+      color: #fff;
+      border-color: var(--brand);
+    }
+    .survey-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 360px;
+      gap: 20px;
+      align-items: start;
+    }
+    .survey-toolbar {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr) auto;
+      gap: 12px;
+      align-items: end;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 12px;
+      background: #fbfcff;
+      margin-bottom: 14px;
+    }
+    .survey-bulk {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .campaign-survey-list {
+      display: grid;
+      gap: 10px;
+    }
+    .campaign-survey-row {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 12px;
+      background: #fff;
+    }
+    .campaign-survey-row input { width: auto; }
+    .campaign-survey-name {
+      color: var(--brand);
+      font-weight: 900;
+    }
+    .campaign-survey-id {
+      color: var(--muted);
+      font-size: 0.76rem;
+      font-weight: 800;
+      margin-top: 3px;
+    }
+    .survey-status {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 6px 9px;
+      color: var(--muted);
+      font-size: 0.75rem;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+    .survey-status.on {
+      color: var(--ok);
+      border-color: #bbf7d0;
+      background: #f0fdf4;
+    }
+    .survey-summary {
+      margin-top: 12px;
+      border: 1px solid #bbf7d0;
+      border-radius: 9px;
+      padding: 10px 12px;
+      color: var(--ok);
+      background: #f0fdf4;
+      font-weight: 800;
+    }
     @media (max-width: 860px) {
       .shell { padding: 18px; }
-      .grid, .form-grid { grid-template-columns: 1fr; }
+      .grid, .form-grid, .survey-grid, .survey-toolbar { grid-template-columns: 1fr; }
       header { display: grid; }
       .days { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
@@ -217,7 +616,7 @@
     <header>
       <div>
         <h1>NCC Campaign Builder</h1>
-        <div class="subtitle">Create a campaign, configure phone routing, workflow and business hours.</div>
+        <div class="subtitle">Complete each section, review the setup, then create the NCC campaign.</div>
       </div>
       <div id="sessionBadge" class="badge">Sign in required</div>
     </header>
@@ -241,9 +640,17 @@
       <div class="hint">Only users with an Administrator profile can use this page.</div>
     </form>
 
+    <div class="tool-menu hidden" id="toolMenu" aria-label="NCC tool menu">
+      <button id="builderViewBtn" class="active" type="button" data-tool-view="builder">Campaign Builder</button>
+      <button id="surveyViewBtn" type="button" data-tool-view="survey">Survey campaigns</button>
+      <button id="surveyDesignerViewBtn" type="button" data-tool-view="surveyDesigner">Survey Designer</button>
+      <button id="adminAccountsViewBtn" type="button" data-tool-view="adminAccounts">Admin Accounts</button>
+      <button id="userReportsViewBtn" type="button" data-tool-view="userReports">User Reports</button>
+    </div>
+
     <div class="grid hidden" id="builderGrid">
       <form class="panel" id="builderForm">
-        <h2 class="section-title">Campaign setup</h2>
+        <h2 class="section-title">Campaign checklist</h2>
         <div class="domain-chip">Domain: <span id="domainLabel">Detected after login</span></div>
         <input id="domain" name="domain" type="hidden" />
 
@@ -264,6 +671,61 @@
                 <option value="outbound">Outbound</option>
               </select>
             </div>
+            <div class="field full">
+              <label for="recordCalls">Call recording</label>
+              <label class="switch-row">
+                <input id="recordCalls" name="recordCalls" type="checkbox" />
+                <span>Record calls</span>
+                <span class="hint" id="recordCallsHint" style="margin:0;">0% of calls</span>
+              </label>
+            </div>
+            <div class="field full">
+              <label for="enableRealtimeTranscription">Realtime transcription</label>
+              <label class="switch-row">
+                <input id="enableRealtimeTranscription" name="enableRealtimeTranscription" type="checkbox" />
+                <span>Enable realtime transcription</span>
+                <span class="hint" id="transcriptionHint" style="margin:0;">Transcription off</span>
+              </label>
+              <label class="switch-row hidden" id="recordingEventsTranscriptionRow" style="margin-top:10px;">
+                <input id="recordingEventsTranscription" name="recordingEventsTranscription" type="checkbox" />
+                <span>Recording events transcription</span>
+                <span class="hint" id="recordingEventsTranscriptionHint" style="margin:0;">Events transcription off</span>
+              </label>
+              <div class="hint" style="margin-top:8px;">When realtime transcription is enabled, a transcription service is required. Events transcription can be enabled separately.</div>
+              <select id="recordingAnalysisServiceId" name="recordingAnalysisServiceId" disabled>
+                <option value="">Load services after sign in</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="generativeAIServiceId">Summary</label>
+              <select id="generativeAIServiceId" name="generativeAIServiceId">
+                <option value="">Load services after sign in</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="realtimeAnalysisServiceId">Real-Time Analysis</label>
+              <select id="realtimeAnalysisServiceId" name="realtimeAnalysisServiceId">
+                <option value="">Load services after sign in</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="knowledgeBaseServiceId">KNOWLEDGE BASE</label>
+              <select id="knowledgeBaseServiceId" name="knowledgeBaseServiceId">
+                <option value="">Load services after sign in</option>
+              </select>
+            </div>
+            <div class="field full">
+              <label>Campaign supervisors</label>
+              <div class="hint" style="margin-bottom:10px;">Only NCC users with Administrator or Supervisor profiles are listed.</div>
+              <div class="supervisor-list" id="supervisorList">
+                <div class="hint">Supervisors load after sign in.</div>
+              </div>
+              <div class="preset-row" aria-label="Supervisor actions">
+                <button class="preset" id="reloadSupervisorsBtn" type="button">Reload supervisors</button>
+                <button class="preset" type="button" data-supervisor-selection="all">Select all</button>
+                <button class="preset" type="button" data-supervisor-selection="clear">Clear</button>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -276,31 +738,30 @@
               <select id="inboundAddress" name="inboundAddress">
                 <option value="">Loading numbers…</option>
               </select>
+              <div class="preset-row" aria-label="Inbound phone actions">
+                <button class="preset" id="reloadNumbersBtn" type="button">Reload inbound numbers</button>
+              </div>
             </div>
             <div class="field hidden" id="outboundField">
               <label for="outboundCallerId">Outbound caller ID</label>
               <input id="outboundCallerId" name="outboundCallerId" placeholder="+12342342341" />
             </div>
-            <div class="field inbound-only">
-              <label for="queueName">Queue name</label>
-              <input id="queueName" name="queueName" placeholder="queuetest" />
-              <div class="hint">Inbound campaigns create a queue and route in-hours traffic to it.</div>
-            </div>
-            <div class="field inbound-only">
-              <label for="queueAssignmentType">Agent assignment</label>
-              <select id="queueAssignmentType" name="queueAssignmentType">
-                <option value="fifo_across_all_queues">First In First Out Across All Queues</option>
-                <option value="fifo_by_status">First In First Out by Status</option>
-                <option value="fifo_per_queue">First In First Out Per Queue</option>
-                <option value="lifo_across_all_queues">Last In First Out Across All Queues</option>
-                <option value="lifo_by_status">Last In First Out by Status</option>
-                <option value="lifo_per_queue">Last In First Out Per Queue</option>
-              </select>
-            </div>
-            <div class="field inbound-only">
-              <label>Blended queue</label>
-              <label class="check"><input id="queueBlended" name="queueBlended" type="checkbox" checked /> Enable blended queue</label>
-              <div class="hint">Use blended when agents will also handle outbound or another channel.</div>
+            <div class="field full inbound-only">
+              <label>Queues</label>
+              <div class="hint" style="margin-bottom:10px;">Create one or more queues. The first queue marked for in-hours routing is used in the workflow.</div>
+              <div class="queue-add">
+                <div>
+                  <label for="newQueueName">Queue name</label>
+                  <input id="newQueueName" name="newQueueName" placeholder="Billing support queue" />
+                </div>
+                <div>
+                  <label for="newQueueAssignmentType">Agent assignment</label>
+                  <select id="newQueueAssignmentType" name="newQueueAssignmentType"></select>
+                </div>
+                <button id="addQueueBtn" type="button">Add queue</button>
+              </div>
+              <div class="queue-list" id="queueList"></div>
+              <div class="queue-summary" id="queueSummary">No queues added yet.</div>
             </div>
           </div>
         </section>
@@ -367,8 +828,30 @@
         </section>
 
         <section class="wizard-step" data-step="5">
-          <h3 class="section-title">6. Review and create</h3>
-          <div class="hint">Review the values, then create the campaign, phone routing, workflow and business hours in NCC.</div>
+          <h3 class="section-title">6. Dispositions</h3>
+          <div class="hint" style="margin-bottom:16px;">Create as many dispositions as needed. Each disposition has its own name, one optional action, optional workitem types, and optional flags.</div>
+          <div class="form-grid">
+            <div class="field full">
+              <div class="disposition-add">
+                <div>
+                  <label for="newDispositionName">Disposition name</label>
+                  <input id="newDispositionName" type="text" placeholder="Example: Payment promise" />
+                </div>
+                <div>
+                  <label for="newDispositionAction">Action</label>
+                  <select id="newDispositionAction"></select>
+                </div>
+                <button id="addDispositionBtn" type="button">Add disposition</button>
+              </div>
+              <div class="disposition-list" id="dispositionList"></div>
+              <div class="disposition-summary" id="dispositionSummary">No dispositions added yet.</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="wizard-step" data-step="6">
+          <h3 class="section-title">7. Review and create</h3>
+          <div class="hint">Review the values, then create the campaign, phone routing, workflow, business hours and dispositions in NCC.</div>
           <pre class="log" id="reviewLog" style="min-height:160px;margin-top:16px;"></pre>
         </section>
 
@@ -376,7 +859,6 @@
           <button class="secondary" id="prevStepBtn" type="button">Back</button>
           <button id="nextStepBtn" type="button">Next</button>
           <button id="submitBtn" class="hidden" type="submit">Create NCC campaign</button>
-          <button class="secondary" id="reloadNumbersBtn" type="button">Reload inbound numbers</button>
           <button class="secondary" id="logoutBtn" type="button">Sign out</button>
         </div>
       </form>
@@ -385,6 +867,264 @@
         <h2 class="section-title">Execution</h2>
         <div class="step-list" id="stepList"></div>
         <pre class="log" id="resultLog">Waiting…</pre>
+      </aside>
+    </div>
+
+    <div class="survey-grid hidden" id="surveyGrid">
+      <section class="panel">
+        <h2 class="section-title">Survey campaigns</h2>
+        <div class="domain-chip">Domain: <span id="surveyDomainLabel">Detected after login</span></div>
+        <div class="hint" style="margin-bottom:16px;">Select one survey, choose one or many campaigns in this tenant, then save. Each selected campaign receives a PATCH with the selected surveyId.</div>
+        <div class="survey-toolbar">
+          <div class="field">
+            <label for="surveySelect">Survey</label>
+            <select id="surveySelect">
+              <option value="">Load surveys after sign in</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="campaignSurveySearch">Campaign search</label>
+            <input id="campaignSurveySearch" placeholder="Search campaigns" />
+          </div>
+          <button id="reloadSurveyCampaignsBtn" type="button">Reload</button>
+        </div>
+        <div class="survey-bulk">
+          <div>
+            <label style="margin:0;">Campaigns</label>
+            <div class="hint" id="surveySelectionSummary" style="margin:0;">0 selected</div>
+          </div>
+          <div class="preset-row" style="margin:0;">
+            <button class="preset" type="button" data-survey-campaign-selection="all">Select all</button>
+            <button class="preset" type="button" data-survey-campaign-selection="clear">Clear</button>
+            <button class="preset" type="button" data-survey-campaign-selection="without-survey">Only without survey</button>
+          </div>
+        </div>
+        <div class="campaign-survey-list" id="campaignSurveyList">
+          <div class="hint">Campaigns load after sign in.</div>
+        </div>
+        <div class="survey-summary" id="surveySaveSummary">Select a survey and at least one campaign.</div>
+        <div class="actions" style="justify-content:flex-end;">
+          <button class="secondary" id="cancelSurveyBtn" type="button">Cancel</button>
+          <button id="saveSurveyCampaignsBtn" type="button">Save survey to selected campaigns</button>
+        </div>
+      </section>
+
+      <aside class="panel">
+        <h2 class="section-title">Survey execution</h2>
+        <div class="step-list" id="surveyStepList"></div>
+        <pre class="log" id="surveyResultLog">Select a survey and campaigns to update.</pre>
+      </aside>
+    </div>
+
+    <div class="survey-grid hidden" id="surveyDesignerGrid">
+      <section class="panel">
+        <h2 class="section-title">Survey Designer</h2>
+        <div class="hint" style="margin-bottom:16px;">Design NCC surveys from a user story. The generator uses only NCC-compatible components and returns functional analysis, panel architecture, risks, checklist, and final JSON.</div>
+        <div class="form-grid">
+          <div class="field">
+            <label for="surveyDesignerName">Survey name</label>
+            <input id="surveyDesignerName" placeholder="Customer service intake" />
+          </div>
+          <div class="field">
+            <label for="surveyDesignerAudience">Agent / team</label>
+            <input id="surveyDesignerAudience" placeholder="Support agents" />
+          </div>
+          <div class="field full">
+            <label for="surveyDesignerStory">User story</label>
+            <textarea id="surveyDesignerStory" style="min-height:150px;" placeholder="Describe the business process, required fields, integrations, decisions, and final action the agent must complete."></textarea>
+          </div>
+          <div class="field full">
+            <label>External systems</label>
+            <div class="disposition-chip-row" id="surveyDesignerIntegrations">
+              <label class="disposition-chip"><input type="checkbox" value="Salesforce" /> Salesforce</label>
+              <label class="disposition-chip"><input type="checkbox" value="Zoho" /> Zoho</label>
+              <label class="disposition-chip"><input type="checkbox" value="Epic" /> Epic</label>
+              <label class="disposition-chip"><input type="checkbox" value="Netsuite" /> Netsuite</label>
+              <label class="disposition-chip"><input type="checkbox" value="Property Management" /> Property Management</label>
+              <label class="disposition-chip"><input type="checkbox" value="CRM" /> CRM</label>
+              <label class="disposition-chip"><input type="checkbox" value="AI widget" /> AI widget</label>
+            </div>
+          </div>
+          <div class="field">
+            <label for="surveyDesignerPrimaryId">Primary identifier</label>
+            <input id="surveyDesignerPrimaryId" placeholder="account_number" />
+          </div>
+          <div class="field">
+            <label for="surveyDesignerContactMode">Contact requirement</label>
+            <select id="surveyDesignerContactMode">
+              <option value="phone_or_email">Phone or email</option>
+              <option value="phone">Phone required</option>
+              <option value="email">Email required</option>
+              <option value="none">No contact field required</option>
+            </select>
+          </div>
+          <div class="field full">
+            <label>Survey fields</label>
+            <div class="hint" style="margin-bottom:10px;">Upload a CSV with the required fields or add them one by one. Field type must use one of the selectable NCC-compatible types.</div>
+            <div class="survey-toolbar">
+              <div class="field">
+                <label for="surveyFieldFile">Field file</label>
+                <input id="surveyFieldFile" type="file" accept=".csv,text/csv" />
+              </div>
+              <div class="field">
+                <label>Template</label>
+                <button class="secondary" id="downloadSurveyFieldTemplateBtn" type="button">Download model CSV</button>
+              </div>
+              <button class="secondary" id="clearSurveyFieldsBtn" type="button">Clear fields</button>
+            </div>
+            <div class="survey-toolbar">
+              <div class="field">
+                <label for="manualSurveyFieldLabel">Field name</label>
+                <input id="manualSurveyFieldLabel" placeholder="Customer ID" />
+              </div>
+              <div class="field">
+                <label for="manualSurveyFieldMapping">Fieldmapping name</label>
+                <input id="manualSurveyFieldMapping" placeholder="customer_id" />
+              </div>
+              <div class="field">
+                <label for="manualSurveyFieldType">Field type</label>
+                <select id="manualSurveyFieldType">
+                  <option value="input">Input</option>
+                  <option value="textarea">Textarea</option>
+                  <option value="select">Select</option>
+                  <option value="boolean">Boolean</option>
+                </select>
+              </div>
+              <button id="addSurveyFieldBtn" type="button">Add field</button>
+            </div>
+            <div class="campaign-survey-list" id="surveyFieldList">
+              <div class="hint">No custom survey fields added yet.</div>
+            </div>
+          </div>
+        </div>
+        <div class="actions">
+          <button id="generateSurveyDesignBtn" type="button">Generate survey design</button>
+          <button class="secondary" id="generateSurveyWithAiBtn" type="button">Generate with AI</button>
+          <button id="createSurveyInNccBtn" type="button">Create in NCC</button>
+          <button class="secondary" id="copySurveyJsonBtn" type="button">Copy JSON</button>
+          <button class="secondary" id="downloadSurveyJsonBtn" type="button">Download JSON</button>
+        </div>
+        <div class="survey-summary" id="surveyDesignerSummary">Enter a user story to generate the survey design.</div>
+        <div class="campaign-survey-list" id="surveyDesignerAnalysis" style="margin-top:14px;">
+          <div class="hint">Functional analysis and architecture will appear here.</div>
+        </div>
+      </section>
+
+      <aside class="panel">
+        <h2 class="section-title">NCC JSON</h2>
+        <pre class="log" id="surveyDesignerJsonLog">Generate a survey design to see the NCC JSON.</pre>
+      </aside>
+    </div>
+
+    <div class="survey-grid hidden" id="adminAccountsGrid">
+      <section class="panel">
+        <h2 class="section-title">Admin Accounts</h2>
+        <div class="hint" style="margin-bottom:16px;">Save admin credentials per tenant. Passwords are encrypted at rest and used later for bulk actions.</div>
+        <div class="survey-toolbar">
+          <div class="field">
+            <label for="adminTenant">Tenant</label>
+            <input id="adminTenant" placeholder="Aston Villa" />
+          </div>
+          <div class="field">
+            <label for="adminCluster">Cluster / domain</label>
+            <input id="adminCluster" placeholder="astonvilla or astonvilla.thrio.io" />
+          </div>
+          <div class="field">
+            <label for="adminTimezone">Timezone</label>
+            <input id="adminTimezone" placeholder="America/New_York" />
+          </div>
+          <div class="field">
+            <label for="adminUsername">Username</label>
+            <input id="adminUsername" placeholder="admin@example.com" autocomplete="username" />
+          </div>
+          <div class="field">
+            <label for="adminPassword">Password</label>
+            <input id="adminPassword" type="password" autocomplete="new-password" />
+          </div>
+          <button id="saveAdminAccountBtn" type="button">Save account</button>
+        </div>
+        <div class="survey-bulk">
+          <div>
+            <label style="margin:0;">Saved admin accounts</label>
+            <div class="hint" id="adminAccountsSummary" style="margin:0;">No accounts loaded.</div>
+          </div>
+          <div class="preset-row" style="margin:0;">
+            <button class="preset" id="reloadAdminAccountsBtn" type="button">Reload</button>
+          </div>
+        </div>
+        <div class="campaign-survey-list" id="adminAccountList">
+          <div class="hint">Accounts load after sign in.</div>
+        </div>
+      </section>
+
+      <aside class="panel">
+        <h2 class="section-title">Admin account log</h2>
+        <pre class="log" id="adminAccountLog">Save or test admin accounts.</pre>
+      </aside>
+    </div>
+
+    <div class="survey-grid hidden" id="userReportsGrid">
+      <section class="panel">
+        <h2 class="section-title">User Reports</h2>
+        <div class="hint" style="margin-bottom:16px;">Save the user report ID per tenant first. Bulk runs use each tenant's saved report ID, patch the date range, run analytics, and merge the returned users.</div>
+        <div class="survey-toolbar">
+          <div class="field">
+            <label for="tenantReportAccount">Tenant</label>
+            <select id="tenantReportAccount">
+              <option value="">Select a saved tenant</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="tenantReportId">User report ID</label>
+            <input id="tenantReportId" placeholder="NCC user report id" />
+          </div>
+          <button id="saveTenantReportBtn" type="button">Save report ID</button>
+        </div>
+        <div class="survey-bulk">
+          <div>
+            <label style="margin:0;">Saved tenant reports</label>
+            <div class="hint" id="tenantReportSummary" style="margin:0;">No tenant reports loaded.</div>
+          </div>
+        </div>
+        <div class="campaign-survey-list" id="tenantReportList">
+          <div class="hint">Tenant reports load after sign in.</div>
+        </div>
+        <hr style="border:0;border-top:1px solid var(--line);margin:16px 0;" />
+        <div class="survey-toolbar">
+          <div class="field">
+            <label for="reportStartDate">Date from</label>
+            <input id="reportStartDate" type="date" />
+          </div>
+          <div class="field">
+            <label for="reportEndDate">Date to</label>
+            <input id="reportEndDate" type="date" />
+          </div>
+          <button id="runUserReportsBtn" type="button">Run reports</button>
+        </div>
+        <div class="survey-bulk">
+          <div>
+            <label style="margin:0;">Admin accounts</label>
+            <div class="hint" id="reportAccountSummary" style="margin:0;">0 selected</div>
+          </div>
+          <div class="preset-row" style="margin:0;">
+            <button class="preset" type="button" data-report-account-selection="all">Select all</button>
+            <button class="preset" type="button" data-report-account-selection="clear">Clear</button>
+            <button class="preset" id="exportUserReportsBtn" type="button">Export CSV</button>
+          </div>
+        </div>
+        <div class="campaign-survey-list" id="reportAccountList">
+          <div class="hint">Accounts load after sign in.</div>
+        </div>
+        <div class="survey-summary" id="userReportSummary">Select accounts with saved report IDs and a date range.</div>
+        <div class="campaign-survey-list" id="userReportResults" style="margin-top:14px;">
+          <div class="hint">Results will appear here.</div>
+        </div>
+      </section>
+
+      <aside class="panel">
+        <h2 class="section-title">User report log</h2>
+        <div class="step-list" id="userReportStepList"></div>
+        <pre class="log" id="userReportLog">Run bulk reports to see execution detail.</pre>
       </aside>
     </div>
   </div>

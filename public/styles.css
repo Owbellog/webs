@@ -699,6 +699,7 @@ body.embedded .composer {
 .admin-section[data-page="secrets"] summary::before { content: "🔑"; }
 .admin-section[data-page="nextstep"] summary::before { content: "🧭"; }
 .admin-section[data-page="simulator"] summary::before { content: "🖥"; }
+.admin-section[data-page="nccbuilderai"] summary::before { content: "🤖"; }
 
 .admin-section summary .chevron {
   margin-left: auto;

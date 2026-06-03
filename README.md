@@ -79,6 +79,12 @@ http://127.0.0.1:3000/?domain=mancity.thrio.io&kb_ids=69b7c1301d31ed595dfef3cb,o
 
 El backend resuelve internamente el token según la campaña o dominio configurado.
 
+La vista local de documentación del SDK de Nextiva se publica en:
+
+```text
+http://127.0.0.1:3000/nextiva-sdk.html
+```
+
 ## Cloud Functions
 
 El proyecto ya puede desplegarse como HTTP Cloud Function usando [`index.js`](/Users/oscar.bello/Documents/Code/webs/index.js), que exporta `nextiq`.

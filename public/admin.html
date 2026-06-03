@@ -46,6 +46,37 @@
             <button type="button" id="collapseAllButton">Collapse all</button>
             <button type="button" id="expandAllButton">Expand all</button>
           </div>
+          <details class="admin-section" data-page="nccbuilderai" id="nccBuilderAiSection" hidden>
+            <summary>NCC Builder AI <span class="chevron">▼</span></summary>
+            <div class="admin-section-grid">
+              <div class="admin-field">
+                <label for="nccBuilderAiProvider">Provider</label>
+                <select id="nccBuilderAiProvider">
+                  <option value="gemini">Gemini</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="claude">Claude</option>
+                </select>
+              </div>
+
+              <div class="admin-field">
+                <label for="nccBuilderAiModel">Model</label>
+                <input id="nccBuilderAiModel" type="text" placeholder="gemini-2.5-flash" />
+                <span class="admin-field-note">Gemini: <code>gemini-2.5-flash</code> · OpenAI: <code>gpt-4o</code> · Claude: <code>claude-sonnet-4-6</code>.</span>
+              </div>
+
+              <div class="admin-field">
+                <label for="nccBuilderAiApiKey">API key</label>
+                <input id="nccBuilderAiApiKey" type="password" placeholder="Paste API key" autocomplete="new-password" />
+                <span class="admin-field-note">Stored encrypted. Used by Survey Designer AI assisted mode.</span>
+              </div>
+
+              <div class="admin-field">
+                <label>Status</label>
+                <span class="admin-field-note" id="nccBuilderAiStatus">AI provider is not loaded.</span>
+                <button type="button" id="saveNccBuilderAiConfig">Save AI config</button>
+              </div>
+            </div>
+          </details>
           <form class="admin-form" id="campaignForm">
             <details class="admin-section" data-page="campaign" open>
               <summary>Campaign <span class="chevron">▼</span></summary>
@@ -947,135 +978,24 @@
                   <summary>General <span class="chevron">▼</span></summary>
                   <div class="admin-section-grid admin-subsection-grid">
                     <div class="admin-field">
-                      <label><input id="pulseformsEnabled" type="checkbox" checked /> Enable PulseForms</label>
-                      <span class="admin-field-note">Widget para consultar o enviar informacion a Sugar CRM u otros CRMs desde fuentes dinamicas.</span>
+                      <label><input id="pulseformsEnabled" type="checkbox" checked /> Enable PulseForms widget</label>
+                      <span class="admin-field-note">Habilita el widget actual de PulseForms/Elliott.</span>
                     </div>
-                    <div class="admin-field">
-                      <label for="pulseformsMode">Default mode</label>
-                      <select id="pulseformsMode">
-                        <option value="query">Consulta de informacion</option>
-                        <option value="submit">Envio de informacion</option>
-                        <option value="both">Consulta y envio</option>
-                      </select>
+                    <div class="admin-field admin-field--full">
+                      <a id="pulseformsOpenLink" href="./widget/index.html" target="_blank" class="admin-wieland-link" hidden>Open NCC Agent Widget →</a>
+                      <a href="./widget/index.html" target="_blank" class="admin-wieland-link" style="margin-left:10px;">Preview widget →</a>
                     </div>
                   </div>
                 </details>
-
-                <details class="admin-subsection" open>
-                  <summary>AI Provider <span class="chevron">▼</span></summary>
-                  <div class="admin-section-grid admin-subsection-grid">
-                    <div class="admin-field">
-                      <label for="pulseformsAiProvider">AI provider</label>
-                      <select id="pulseformsAiProvider">
-                        <option value="claude">Claude (Anthropic)</option>
-                        <option value="gemini">Gemini (Google)</option>
-                        <option value="openai">ChatGPT (OpenAI)</option>
-                      </select>
-                    </div>
-                    <div class="admin-field">
-                      <label for="pulseformsAiModel">Model</label>
-                      <input id="pulseformsAiModel" type="text" placeholder="claude-sonnet-4-6" />
-                    </div>
-                    <div class="admin-field">
-                      <label for="pulseformsAiApiKey">API key</label>
-                      <input id="pulseformsAiApiKey" type="password" autocomplete="off" placeholder="sk-... / AIza... / sk-ant-..." />
-                      <span class="admin-field-note">Stored encrypted. Required for URL import and layout generation.</span>
-                    </div>
-                    <div class="admin-field admin-field--full">
-                      <label for="pulseformsAiPrompt">System prompt</label>
-                      <textarea id="pulseformsAiPrompt" rows="5" placeholder="Prompt para generar formularios, acciones CRM y layouts de PulseForms."></textarea>
-                    </div>
-                  </div>
-                </details>
-
-                <details class="admin-subsection" open>
-                  <summary>Form Fields <span class="chevron">▼</span></summary>
-                  <div class="admin-section-grid admin-subsection-grid">
-                    <p class="admin-field-note" style="margin:0 0 8px;">
-                      Define aqui la informacion que necesita tu formulario. Despues puedes homologar cada campo contra los campos del CRM/API en cada data source. Tambien puedes configurar primero endpoints y completar la homologacion luego.
-                    </p>
-                    <div class="sa-datasources-list" id="pulseformsFieldsList"></div>
-                    <button type="button" class="secondary" id="pulseformsAddField">+ Add form field</button>
-                  </div>
-                </details>
-
-                <details class="admin-subsection" open>
-                  <summary>AI Field Discovery <span class="chevron">▼</span></summary>
-                  <div class="admin-section-grid admin-subsection-grid">
-                    <p class="admin-field-note" style="margin:0 0 8px;">
-                      Carga imagenes, PDF, DOC/DOCX o archivos de texto para que la IA proponga los campos necesarios del formulario.
-                    </p>
-                    <div class="admin-field admin-field--full">
-                      <label for="pulseformsFieldFiles">Documents</label>
-                      <input id="pulseformsFieldFiles" type="file" multiple accept="image/*,.pdf,.doc,.docx,.txt,.csv,.json,.md" />
-                      <span class="admin-field-note">Maximo recomendado: 5 MB por archivo. Para DOC/DOCX, si el proveedor IA no acepta el binario, usa PDF o texto exportado.</span>
-                    </div>
-                    <div class="admin-field admin-field--full">
-                      <label for="pulseformsFieldDiscoveryNotes">Notas para la IA</label>
-                      <textarea id="pulseformsFieldDiscoveryNotes" rows="3" placeholder="Ej: crear campos para contacto de Sugar CRM, incluir telefono, email, empresa y motivo de consulta."></textarea>
-                    </div>
-                    <div class="admin-field admin-field--full" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-                      <button type="button" class="primary" id="pulseformsAnalyzeFieldsBtn">Analizar archivos con IA</button>
-                      <button type="button" class="secondary" id="pulseformsAddSuggestedFieldsBtn" style="display:none;">Agregar campos sugeridos</button>
-                      <span id="pulseformsFieldDiscoveryStatus" class="admin-field-note" style="margin:0;"></span>
-                    </div>
-                    <div class="admin-field admin-field--full" id="pulseformsFieldDiscoveryResult" style="display:none;">
-                      <div class="sa-analyze-explanation" id="pulseformsFieldDiscoveryExplanation"></div>
-                      <div class="sa-datasources-list" id="pulseformsSuggestedFieldsList" style="margin-top:10px;"></div>
-                    </div>
-                  </div>
-                </details>
-
-                <details class="admin-subsection" open>
-                  <summary>JSON Field Import <span class="chevron">▼</span></summary>
-                  <div class="admin-section-grid admin-subsection-grid">
-                    <p class="admin-field-note" style="margin:0 0 8px;">
-                      Sube o pega un JSON con los campos del formulario. Estructura aceptada:
-                    </p>
-                    <div class="admin-field admin-field--full">
-                      <pre style="white-space:pre-wrap;margin:0;padding:12px;border:1px solid #d7deec;border-radius:8px;background:#fbfcff;font-size:.78rem;"><code>{
-  "fields": [
-    {
-      "id": "phone",
-      "label": "Phone",
-      "type": "phone",
-      "required": true,
-      "options": "",
-      "reason": "Primary customer phone"
-    }
-  ]
-}</code></pre>
-                      <span class="admin-field-note">Tambien se acepta un array directo <code>[{...}]</code>, o claves <code>formFields</code> / <code>suggestedFields</code>. Tipos validos: <code>text</code>, <code>textarea</code>, <code>number</code>, <code>phone</code>, <code>email</code>, <code>date</code>, <code>select</code>, <code>checkbox</code>. Para <code>select</code>, usa <code>options</code> separado por comas.</span>
-                    </div>
-                    <div class="admin-field admin-field--full">
-                      <label for="pulseformsJsonFieldsFile">JSON file</label>
-                      <input id="pulseformsJsonFieldsFile" type="file" accept=".json,application/json" />
-                    </div>
-                    <div class="admin-field admin-field--full">
-                      <label for="pulseformsJsonFieldsText">Paste JSON</label>
-                      <textarea id="pulseformsJsonFieldsText" rows="8" placeholder='{"fields":[{"id":"phone","label":"Phone","type":"phone","required":true}]}'></textarea>
-                    </div>
-                    <div class="admin-field admin-field--full" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-                      <button type="button" class="primary" id="pulseformsImportJsonFieldsBtn">Cargar campos desde JSON</button>
-                      <button type="button" class="secondary" id="pulseformsAddJsonFieldsBtn" style="display:none;">Agregar estos campos a Form Fields</button>
-                      <span id="pulseformsJsonFieldsStatus" class="admin-field-note" style="margin:0;"></span>
-                    </div>
-                    <div class="admin-field admin-field--full" id="pulseformsJsonFieldsResult" style="display:none;">
-                      <div class="sa-analyze-explanation">Campos importados desde JSON. Revisa la lista y desmarca los que no quieras agregar.</div>
-                      <div class="sa-datasources-list" id="pulseformsJsonFieldsPreview" style="margin-top:10px;"></div>
-                    </div>
-                  </div>
-                </details>
-
                 <details class="admin-subsection" open>
                   <summary>Sugar CRM Connection <span class="chevron">▼</span></summary>
                   <div class="admin-section-grid admin-subsection-grid">
                     <p class="admin-field-note" style="margin:0 0 8px;">
-                      Configura la conexion OAuth de Sugar CRM. Usa el consumer key de Sugar, normalmente <code>sugar</code>, y la URL base de tu instancia.
+                      Configuracion usada por el widget actual para consultar contactos, crear contacto si hace falta, crear ticket, crear Needs Assessment y guardar los IDs para NCC.
                     </p>
                     <div class="admin-field">
                       <label><input id="pulseformsSugarEnabled" type="checkbox" /> Enable Sugar CRM</label>
-                      <span class="admin-field-note">Cuando esta activo, PulseForms puede consultar y enviar informacion a Sugar sin exponer credenciales en el widget.</span>
+                      <span class="admin-field-note">Cuando esta activo, el widget usa el backend para consultar y escribir en Sugar sin exponer credenciales.</span>
                     </div>
                     <div class="admin-field">
                       <label for="pulseformsSugarBaseUrl">Sugar base URL</label>
@@ -1102,8 +1022,87 @@
                       <input id="pulseformsSugarPlatform" type="text" placeholder="base" />
                     </div>
                     <div class="admin-field">
+                      <label for="pulseformsSugarApiVersion">Sugar REST API version</label>
+                      <input id="pulseformsSugarApiVersion" type="text" placeholder="v11_1" />
+                    </div>
+                    <div class="admin-field">
+                      <label for="pulseformsSugarMaxFields">Max fields per request</label>
+                      <input id="pulseformsSugarMaxFields" type="number" min="1" max="100" step="1" placeholder="100" />
+                      <span class="admin-field-note">Limite usado para dividir payloads grandes hacia Sugar.</span>
+                    </div>
+                    <div class="admin-field">
+                      <label for="pulseformsNccEventOrigin">NCC event origin</label>
+                      <input id="pulseformsNccEventOrigin" type="text" placeholder="*" />
+                      <span class="admin-field-note">Usa <code>*</code> para pruebas. En produccion usa el origin del parent de NCC.</span>
+                    </div>
+                  </div>
+                </details>
+
+                <details class="admin-subsection" open>
+                  <summary>Sugar modules and relationships <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
+                    <div class="admin-field">
+                      <label for="pulseformsSugarContactModule">Contact module</label>
+                      <input id="pulseformsSugarContactModule" type="text" placeholder="Contacts" />
+                    </div>
+                    <div class="admin-field">
+                      <label for="pulseformsSugarTicketModule">Ticket module</label>
+                      <input id="pulseformsSugarTicketModule" type="text" placeholder="tic_Tickets" />
+                    </div>
+                    <div class="admin-field">
+                      <label for="pulseformsSugarNeedsAssessmentModule">Needs Assessment module</label>
+                      <input id="pulseformsSugarNeedsAssessmentModule" type="text" placeholder="NA_NeedsAssessment" />
+                    </div>
+                    <div class="admin-field admin-field--full">
+                      <span class="admin-field-note">Los link names son opcionales. Si quedan vacios, el backend intenta descubrirlos desde metadata y usa fallbacks conocidos.</span>
+                    </div>
+                    <div class="admin-field">
+                      <label for="pulseformsSugarTicketContactLink">Ticket → Contact link</label>
+                      <input id="pulseformsSugarTicketContactLink" type="text" placeholder="tic_tickets_contacts" />
+                    </div>
+                    <div class="admin-field">
+                      <label for="pulseformsSugarContactTicketLink">Contact → Ticket link</label>
+                      <input id="pulseformsSugarContactTicketLink" type="text" placeholder="tic_tickets_contacts" />
+                    </div>
+                    <div class="admin-field">
+                      <label for="pulseformsSugarTicketNeedsAssessmentLink">Ticket → Needs Assessment link</label>
+                      <input id="pulseformsSugarTicketNeedsAssessmentLink" type="text" placeholder="na_needsassessment_tic_tickets" />
+                    </div>
+                    <div class="admin-field">
+                      <label for="pulseformsSugarNeedsAssessmentTicketLink">Needs Assessment → Ticket link</label>
+                      <input id="pulseformsSugarNeedsAssessmentTicketLink" type="text" placeholder="na_needsassessment_tic_tickets" />
+                    </div>
+                  </div>
+                </details>
+
+                <details class="admin-subsection" open>
+                  <summary>Widget state for NCC <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
+                    <div class="admin-field admin-field--full">
+                      <label for="pulseformsWidgetStateReadToken">Widget state read token</label>
+                      <div style="display:flex;gap:8px;align-items:center;">
+                        <input id="pulseformsWidgetStateReadToken" type="password" autocomplete="off" placeholder="Token used by NCC to read and consume widget IDs" />
+                        <button type="button" class="secondary" id="pulseformsToggleWidgetStateToken">Show</button>
+                        <button type="button" class="secondary" id="pulseformsCopyWidgetStateToken">Copy token</button>
+                        <button type="button" class="secondary" id="pulseformsGenerateWidgetStateToken">Generate token</button>
+                      </div>
+                      <span class="admin-field-note">NCC debe enviar este valor como <code>Authorization: Bearer &lt;token&gt;</code> al consultar <code>/api/widget-state?...&amp;consume=1</code>.</span>
+                      <span class="admin-field-note">
+                        Ejemplo:
+                        <code>GET https://us-central1-voicebot-451222.cloudfunctions.net/nextiq-staging/api/widget-state?campaign=elena&amp;callId=&lt;CALL_ID&gt;&amp;consume=1</code>
+                        con header <code>Authorization: Bearer &lt;widget_state_read_token&gt;</code>.
+                        La respuesta devuelve <code>contactId</code>, <code>ticketId</code> y <code>needsAssessmentId</code>; con <code>consume=1</code> se borra después de leer.
+                      </span>
+                    </div>
+                  </div>
+                </details>
+
+                <details class="admin-subsection" open>
+                  <summary>Contact lookup <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
+                    <div class="admin-field">
                       <label><input id="pulseformsSugarQueryEnabled" type="checkbox" checked /> Enable lookup</label>
-                      <span class="admin-field-note">Consulta un registro en Sugar y precarga los campos del formulario.</span>
+                      <span class="admin-field-note">El widget busca el contacto en Sugar al iniciar la llamada.</span>
                     </div>
                     <div class="admin-field">
                       <label for="pulseformsSugarQueryModule">Lookup module</label>
@@ -1116,135 +1115,231 @@
                     <div class="admin-field">
                       <label for="pulseformsSugarQueryParam">URL parameter to search</label>
                       <input id="pulseformsSugarQueryParam" type="text" placeholder="phone" />
-                      <span class="admin-field-note">Ejemplo: <code>pulseforms.html?campaign=x&amp;phone=+19092502944</code>.</span>
                     </div>
+                    <div class="admin-field admin-field--full">
+                      <label>Lookup response mapping</label>
+                      <span class="admin-field-note">Campo del widget ← campo devuelto por Sugar Contacts, por ejemplo <code>phone_work</code>.</span>
+                      <div class="sa-kv-list pf-mapping-rows" id="pulseformsSugarLookupMappingRows" style="margin-top:8px;"></div>
+                      <button type="button" class="secondary" id="pulseformsSugarAddLookupMapping" style="margin-top:8px;">+ Add lookup mapping</button>
+                    </div>
+                  </div>
+                </details>
+
+                <details class="admin-subsection" open>
+                  <summary>Submit mappings <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
                     <div class="admin-field">
                       <label><input id="pulseformsSugarSubmitEnabled" type="checkbox" checked /> Enable submit</label>
-                      <span class="admin-field-note">Envia el formulario al modulo configurado.</span>
+                      <span class="admin-field-note">El widget crea contacto, ticket y Needs Assessment en Sugar.</span>
                     </div>
                     <div class="admin-field">
-                      <label for="pulseformsSugarSubmitModule">Submit module</label>
-                      <input id="pulseformsSugarSubmitModule" type="text" placeholder="Leads" />
+                      <label for="pulseformsSugarSubmitModule">Legacy submit module</label>
+                      <input id="pulseformsSugarSubmitModule" type="text" placeholder="Opportunities" />
+                      <span class="admin-field-note">Solo se usa por endpoints legacy de PulseForms. El widget actual usa Ticket module.</span>
                     </div>
                     <div class="admin-field admin-field--full">
-                      <label>Field mapping</label>
-                      <span class="admin-field-note">Homologa cada campo de PulseForms con el campo real de Sugar, por ejemplo <code>phone</code> → <code>phone_work</code>.</span>
-                      <div class="sa-kv-list pf-mapping-rows" id="pulseformsSugarMappingRows" style="margin-top:8px;"></div>
-                      <button type="button" class="secondary" id="pulseformsSugarAddMapping" style="margin-top:8px;">+ Add mapping</button>
-                    </div>
-                  </div>
-                </details>
-
-                <details class="admin-subsection" open>
-                  <summary>Data Sources <span class="chevron">▼</span></summary>
-                  <div class="admin-section-grid admin-subsection-grid">
-                    <p class="admin-field-note" style="margin:0 0 8px;">
-                      Configura fuentes externas dinamicas para Sugar CRM u otros CRMs. Usa placeholders como <code>{{phone}}</code>, <code>{{customer_id}}</code>, <code>{{email}}</code> o variables propias que lleguen por URL.
-                    </p>
-                    <div class="sa-import-box">
-                      <div class="sa-import-trigger">
-                        <button type="button" class="secondary" id="pulseformsImportToggle">Import from URL</button>
-                        <span class="admin-field-note" style="margin:0 0 0 8px;">Pega una URL real y la IA sugiere la configuracion.</span>
+                      <label>Submit request mapping</label>
+                      <span class="admin-field-note">Campo del widget → campo aceptado por Sugar. El widget actual tambien aplica aliases internos para <code>NA_NeedsAssessment</code>.</span>
+                      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;">
+                        <button type="button" class="secondary" id="pulseformsSugarLoadSubmitTemplate">Load Sugar opportunity template</button>
+                        <span class="admin-field-note">Herramienta legacy para leer <code>/rest/v11_1/Opportunities/template</code>.</span>
                       </div>
-                      <div class="sa-import-form" id="pulseformsImportForm" style="display:none;">
-                        <div class="sa-source-field sa-source-field--full" style="margin-top:8px;">
-                          <label>URL a analizar</label>
-                          <textarea id="pulseformsImportUrl" rows="3" placeholder="https://sugar.example.com/rest/v11/Contacts?filter[0][phone_work][$equals]=672420697"></textarea>
-                        </div>
-                        <div class="sa-source-field" style="margin-top:4px;">
-                          <label>Metodo</label>
-                          <select id="pulseformsImportMethod">
-                            <option value="GET">GET</option>
-                            <option value="POST">POST</option>
-                            <option value="PATCH">PATCH</option>
-                          </select>
-                        </div>
-                        <button type="button" class="primary" id="pulseformsAnalyzeBtn" style="margin-top:8px;">Analizar con IA</button>
-                        <div id="pulseformsAnalyzeResult" style="display:none;margin-top:10px;">
-                          <div class="sa-analyze-explanation" id="pulseformsExplanation"></div>
-                          <div class="sa-source-field sa-source-field--full" style="margin-top:8px;">
-                            <label>Nombre sugerido</label>
-                            <input id="pulseformsSugName" type="text" />
-                          </div>
-                          <div class="sa-source-field sa-source-field--full">
-                            <label>URL template</label>
-                            <input id="pulseformsSugUrl" type="text" />
-                          </div>
-                          <div class="sa-source-field sa-source-field--full">
-                            <label>Fixed params</label>
-                            <textarea id="pulseformsSugFixed" rows="3"></textarea>
-                          </div>
-                          <div class="sa-source-field sa-source-field--full">
-                            <label>Headers (JSON)</label>
-                            <textarea id="pulseformsSugHeaders" rows="2"></textarea>
-                          </div>
-                          <button type="button" class="primary" id="pulseformsAddFromAnalysis" style="margin-top:8px;">Agregar data source</button>
-                        </div>
-                      </div>
-                    </div>
-                    <div class="sa-datasources-list" id="pulseformsSourcesList"></div>
-                    <button type="button" class="secondary" id="pulseformsAddSource">+ Add data source</button>
-                  </div>
-                </details>
-
-                <details class="admin-subsection" open>
-                  <summary>Layout del Widget <span class="chevron">▼</span></summary>
-                  <div class="admin-section-grid admin-subsection-grid">
-                    <div class="admin-field admin-field--full">
-                      <span class="admin-field-note">La IA propone hasta 3 layouts visuales para organizar los campos del formulario. Selecciona uno para fijarlo.</span>
-                    </div>
-                    <div class="admin-field admin-field--full">
-                      <label for="pulseformsLayoutPrompt">Instrucciones para la IA <span style="font-weight:400;color:#888;">(opcional)</span></label>
-                      <textarea id="pulseformsLayoutPrompt" rows="2" placeholder="Ej: organiza los campos técnicos en la columna derecha, agrupa contacto arriba, pon el botón de envío al final."></textarea>
-                      <span class="admin-field-note">Si el primer resultado no te convence, escribe aquí indicaciones y vuelve a generar.</span>
-                    </div>
-                    <div class="admin-field admin-field--full" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-                      <button type="button" class="primary" id="pulseformsLayoutGenerateBtn">Generar opciones de layout</button>
-                      <button type="button" class="secondary" id="pulseformsLayoutClearBtn" style="font-size:.8rem;">Quitar layout fijo</button>
-                      <span id="pulseformsLayoutActiveBadge" style="font-size:.82rem;font-weight:600;"></span>
-                    </div>
-                    <div class="admin-field admin-field--full">
-                      <span id="pulseformsLayoutGenerateStatus" style="font-size:.82rem;"></span>
-                      <span id="pulseformsLayoutActiveInfo" style="font-size:.78rem;color:#888;margin-left:8px;"></span>
-                    </div>
-                    <div class="admin-field admin-field--full" id="pulseformsLayoutGeneratePanel" style="display:none;">
-                      <div id="pulseformsLayoutCards" class="sa-layout-cards"></div>
-                    </div>
-                    <div class="admin-field admin-field--full">
-                      <button type="button" class="secondary" id="pulseformsLayoutCodeBtn">Generar codigo HTML del layout</button>
-                      <span class="admin-field-note">Puedes usarlo como base para personalizar una pagina propia.</span>
-                    </div>
-                    <div class="admin-field admin-field--full">
-                      <label for="pulseformsLayoutCode">Codigo generado</label>
-                      <textarea id="pulseformsLayoutCode" rows="10" style="font-family:monospace;font-size:.76rem;" placeholder="Selecciona o genera un layout y luego pulsa Generar codigo HTML del layout."></textarea>
-                    </div>
-                    <input type="hidden" id="pulseformsActiveLayout" value="null" />
-                  </div>
-                </details>
-
-                <details class="admin-subsection" open>
-                  <summary>Widget URL <span class="chevron">▼</span></summary>
-                  <div class="admin-section-grid admin-subsection-grid">
-                    <div class="admin-field admin-field--full">
-                      <a id="pulseformsOpenLink" href="./pulseforms.html" target="_blank" class="admin-wieland-link" hidden>Open PulseForms →</a>
-                      <a href="./pulseforms.html?demo=1" target="_blank" class="admin-wieland-link" style="margin-left:10px;">Preview demo →</a>
-                    </div>
-                    <div class="admin-field admin-field--full">
-                      <label>URL by phone number</label>
-                      <input id="pulseformsUrlPhone" type="text" readonly style="font-family:monospace;font-size:.82rem;" placeholder="Save campaign first..." />
-                    </div>
-                    <div class="admin-field admin-field--full">
-                      <label>URL by customer ID</label>
-                      <input id="pulseformsUrlCustomerId" type="text" readonly style="font-family:monospace;font-size:.82rem;" placeholder="Save campaign first..." />
-                    </div>
-                    <div class="admin-field admin-field--full">
-                      <label>Embed code (iframe)</label>
-                      <textarea id="pulseformsEmbedCode" rows="3" readonly style="font-family:monospace;font-size:.78rem;" placeholder="Save campaign first..."></textarea>
+                      <div id="pulseformsSugarSubmitTemplateResult" class="sa-test-result" style="display:none;margin-top:8px;"></div>
+                      <div class="sa-kv-list pf-mapping-rows" id="pulseformsSugarSubmitMappingRows" style="margin-top:8px;"></div>
+                      <button type="button" class="secondary" id="pulseformsSugarAddSubmitMapping" style="margin-top:8px;">+ Add submit mapping</button>
                     </div>
                   </div>
                 </details>
               </div>
             </details>
+
+            <details class="admin-section" data-page="pulseformv2">
+                  <summary>PulseForm V2 <span class="chevron">▼</span></summary>
+                  <div class="admin-section-grid admin-subsection-grid">
+                    <p class="admin-field-note" style="margin:0 0 8px;">
+                      Configuracion del formulario dinamico <code>pulseformv2.html</code>. Esta seccion queda separada del widget PulseForms actual.
+                    </p>
+                    <div class="admin-field">
+                      <label for="pulseformsMode">Default mode</label>
+                      <select id="pulseformsMode">
+                        <option value="query">Consulta de informacion</option>
+                        <option value="submit">Envio de informacion</option>
+                        <option value="both">Consulta y envio</option>
+                      </select>
+                    </div>
+                    <div class="admin-field admin-field--full">
+                      <a id="pulseformv2OpenLink" href="./pulseformv2.html" target="_blank" class="admin-wieland-link" hidden>Open PulseForm V2 →</a>
+                      <a href="./pulseformv2.html?demo=1" target="_blank" class="admin-wieland-link" style="margin-left:10px;">Preview V2 demo →</a>
+                    </div>
+                    <div class="admin-field admin-field--full">
+                      <label>V2 URL by phone number</label>
+                      <input id="pulseformsUrlPhone" type="text" readonly style="font-family:monospace;font-size:.82rem;" placeholder="Save campaign first..." />
+                    </div>
+                    <div class="admin-field admin-field--full">
+                      <label>V2 URL by customer ID</label>
+                      <input id="pulseformsUrlCustomerId" type="text" readonly style="font-family:monospace;font-size:.82rem;" placeholder="Save campaign first..." />
+                    </div>
+                    <div class="admin-field admin-field--full">
+                      <label>V2 embed code (iframe)</label>
+                      <textarea id="pulseformsEmbedCode" rows="3" readonly style="font-family:monospace;font-size:.78rem;" placeholder="Save campaign first..."></textarea>
+                    </div>
+                  </div>
+
+                  <details class="admin-subsection" open>
+                    <summary>V2 AI Provider <span class="chevron">▼</span></summary>
+                    <div class="admin-section-grid admin-subsection-grid">
+                      <div class="admin-field">
+                        <label for="pulseformsAiProvider">AI provider</label>
+                        <select id="pulseformsAiProvider">
+                          <option value="claude">Claude (Anthropic)</option>
+                          <option value="gemini">Gemini (Google)</option>
+                          <option value="openai">ChatGPT (OpenAI)</option>
+                        </select>
+                      </div>
+                      <div class="admin-field">
+                        <label for="pulseformsAiModel">Model</label>
+                        <input id="pulseformsAiModel" type="text" placeholder="claude-sonnet-4-6" />
+                      </div>
+                      <div class="admin-field">
+                        <label for="pulseformsAiApiKey">API key</label>
+                        <input id="pulseformsAiApiKey" type="password" autocomplete="off" placeholder="sk-... / AIza... / sk-ant-..." />
+                        <span class="admin-field-note">Stored encrypted. Required for V2 URL import and layout generation.</span>
+                      </div>
+                      <div class="admin-field admin-field--full">
+                        <label for="pulseformsAiPrompt">System prompt</label>
+                        <textarea id="pulseformsAiPrompt" rows="5" placeholder="Prompt para generar formularios, acciones CRM y layouts de PulseForm V2."></textarea>
+                      </div>
+                    </div>
+                  </details>
+
+                  <details class="admin-subsection" open>
+                    <summary>V2 Form Fields <span class="chevron">▼</span></summary>
+                    <div class="admin-section-grid admin-subsection-grid">
+                      <p class="admin-field-note" style="margin:0 0 8px;">
+                        Define los campos que renderiza <code>pulseformv2.html</code>.
+                      </p>
+                      <div class="sa-datasources-list" id="pulseformsFieldsList"></div>
+                      <button type="button" class="secondary" id="pulseformsAddField">+ Add form field</button>
+                    </div>
+                  </details>
+
+                  <details class="admin-subsection" open>
+                    <summary>V2 AI Field Discovery <span class="chevron">▼</span></summary>
+                    <div class="admin-section-grid admin-subsection-grid">
+                      <p class="admin-field-note" style="margin:0 0 8px;">Carga imagenes, PDF, DOC/DOCX o archivos de texto para que la IA proponga campos.</p>
+                      <div class="admin-field admin-field--full">
+                        <label for="pulseformsFieldFiles">Documents</label>
+                        <input id="pulseformsFieldFiles" type="file" multiple accept="image/*,.pdf,.doc,.docx,.txt,.csv,.json,.md" />
+                      </div>
+                      <div class="admin-field admin-field--full">
+                        <label for="pulseformsFieldDiscoveryNotes">Notas para la IA</label>
+                        <textarea id="pulseformsFieldDiscoveryNotes" rows="3" placeholder="Ej: crear campos para contacto de Sugar CRM, incluir telefono, email, empresa y motivo de consulta."></textarea>
+                      </div>
+                      <div class="admin-field admin-field--full" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                        <button type="button" class="primary" id="pulseformsAnalyzeFieldsBtn">Analizar archivos con IA</button>
+                        <button type="button" class="secondary" id="pulseformsAddSuggestedFieldsBtn" style="display:none;">Agregar campos sugeridos</button>
+                        <span id="pulseformsFieldDiscoveryStatus" class="admin-field-note" style="margin:0;"></span>
+                      </div>
+                      <div class="admin-field admin-field--full" id="pulseformsFieldDiscoveryResult" style="display:none;">
+                        <div class="sa-analyze-explanation" id="pulseformsFieldDiscoveryExplanation"></div>
+                        <div class="sa-datasources-list" id="pulseformsSuggestedFieldsList" style="margin-top:10px;"></div>
+                      </div>
+                    </div>
+                  </details>
+
+                  <details class="admin-subsection" open>
+                    <summary>V2 JSON Field Import <span class="chevron">▼</span></summary>
+                    <div class="admin-section-grid admin-subsection-grid">
+                      <div class="admin-field admin-field--full">
+                        <label for="pulseformsJsonFieldsFile">JSON file</label>
+                        <input id="pulseformsJsonFieldsFile" type="file" accept=".json,application/json" />
+                      </div>
+                      <div class="admin-field admin-field--full">
+                        <label for="pulseformsJsonFieldsText">Paste JSON</label>
+                        <textarea id="pulseformsJsonFieldsText" rows="8" placeholder='{"fields":[{"id":"phone","label":"Phone","type":"phone","required":true}]}'></textarea>
+                      </div>
+                      <div class="admin-field admin-field--full" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                        <button type="button" class="primary" id="pulseformsImportJsonFieldsBtn">Cargar campos desde JSON</button>
+                        <button type="button" class="secondary" id="pulseformsAddJsonFieldsBtn" style="display:none;">Agregar estos campos a Form Fields</button>
+                        <span id="pulseformsJsonFieldsStatus" class="admin-field-note" style="margin:0;"></span>
+                      </div>
+                      <div class="admin-field admin-field--full" id="pulseformsJsonFieldsResult" style="display:none;">
+                        <div class="sa-analyze-explanation">Campos importados desde JSON. Revisa la lista y desmarca los que no quieras agregar.</div>
+                        <div class="sa-datasources-list" id="pulseformsJsonFieldsPreview" style="margin-top:10px;"></div>
+                      </div>
+                    </div>
+                  </details>
+
+                  <details class="admin-subsection" open>
+                    <summary>V2 Data Sources <span class="chevron">▼</span></summary>
+                    <div class="admin-section-grid admin-subsection-grid">
+                      <p class="admin-field-note" style="margin:0 0 8px;">
+                        Fuentes externas dinamicas para <code>pulseformv2.html</code>. Usa placeholders como <code>{{phone}}</code>, <code>{{customer_id}}</code> o <code>{{email}}</code>.
+                      </p>
+                      <div class="sa-import-box">
+                        <div class="sa-import-trigger">
+                          <button type="button" class="secondary" id="pulseformsImportToggle">Import from URL</button>
+                          <span class="admin-field-note" style="margin:0 0 0 8px;">Pega una URL real y la IA sugiere la configuracion.</span>
+                        </div>
+                        <div class="sa-import-form" id="pulseformsImportForm" style="display:none;">
+                          <div class="sa-source-field sa-source-field--full" style="margin-top:8px;">
+                            <label>URL a analizar</label>
+                            <textarea id="pulseformsImportUrl" rows="3" placeholder="https://sugar.example.com/rest/v11/Contacts?filter[0][phone_work][$equals]=672420697"></textarea>
+                          </div>
+                          <div class="sa-source-field" style="margin-top:4px;">
+                            <label>Metodo</label>
+                            <select id="pulseformsImportMethod">
+                              <option value="GET">GET</option>
+                              <option value="POST">POST</option>
+                              <option value="PATCH">PATCH</option>
+                            </select>
+                          </div>
+                          <button type="button" class="primary" id="pulseformsAnalyzeBtn" style="margin-top:8px;">Analizar con IA</button>
+                          <div id="pulseformsAnalyzeResult" style="display:none;margin-top:10px;">
+                            <div class="sa-analyze-explanation" id="pulseformsExplanation"></div>
+                            <div class="sa-source-field sa-source-field--full" style="margin-top:8px;"><label>Nombre sugerido</label><input id="pulseformsSugName" type="text" /></div>
+                            <div class="sa-source-field sa-source-field--full"><label>URL template</label><input id="pulseformsSugUrl" type="text" /></div>
+                            <div class="sa-source-field sa-source-field--full"><label>Fixed params</label><textarea id="pulseformsSugFixed" rows="3"></textarea></div>
+                            <div class="sa-source-field sa-source-field--full"><label>Headers (JSON)</label><textarea id="pulseformsSugHeaders" rows="2"></textarea></div>
+                            <button type="button" class="primary" id="pulseformsAddFromAnalysis" style="margin-top:8px;">Agregar data source</button>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="sa-datasources-list" id="pulseformsSourcesList"></div>
+                      <button type="button" class="secondary" id="pulseformsAddSource">+ Add data source</button>
+                    </div>
+                  </details>
+
+                  <details class="admin-subsection" open>
+                    <summary>V2 Layout <span class="chevron">▼</span></summary>
+                    <div class="admin-section-grid admin-subsection-grid">
+                      <div class="admin-field admin-field--full">
+                        <label for="pulseformsLayoutPrompt">Instrucciones para la IA <span style="font-weight:400;color:#888;">(opcional)</span></label>
+                        <textarea id="pulseformsLayoutPrompt" rows="2" placeholder="Ej: organiza los campos técnicos en la columna derecha, agrupa contacto arriba, pon el botón de envío al final."></textarea>
+                      </div>
+                      <div class="admin-field admin-field--full" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                        <button type="button" class="primary" id="pulseformsLayoutGenerateBtn">Generar opciones de layout</button>
+                        <button type="button" class="secondary" id="pulseformsLayoutClearBtn" style="font-size:.8rem;">Quitar layout fijo</button>
+                        <span id="pulseformsLayoutActiveBadge" style="font-size:.82rem;font-weight:600;"></span>
+                      </div>
+                      <div class="admin-field admin-field--full">
+                        <span id="pulseformsLayoutGenerateStatus" style="font-size:.82rem;"></span>
+                        <span id="pulseformsLayoutActiveInfo" style="font-size:.78rem;color:#888;margin-left:8px;"></span>
+                      </div>
+                      <div class="admin-field admin-field--full" id="pulseformsLayoutGeneratePanel" style="display:none;">
+                        <div id="pulseformsLayoutCards" class="sa-layout-cards"></div>
+                      </div>
+                      <div class="admin-field admin-field--full">
+                        <button type="button" class="secondary" id="pulseformsLayoutCodeBtn">Generar codigo HTML del layout</button>
+                      </div>
+                      <div class="admin-field admin-field--full">
+                        <label for="pulseformsLayoutCode">Codigo generado</label>
+                        <textarea id="pulseformsLayoutCode" rows="10" style="font-family:monospace;font-size:.76rem;" placeholder="Selecciona o genera un layout y luego pulsa Generar codigo HTML del layout."></textarea>
+                      </div>
+                      <input type="hidden" id="pulseformsActiveLayout" value="null" />
+                    </div>
+                  </details>
+                </details>
 
             <details class="admin-section" data-page="secrets">
               <summary>Secrets <span class="chevron">▼</span></summary>
@@ -1257,6 +1352,32 @@
                 <div class="admin-field">
                   <label for="campaignCookie">Cookie</label>
                   <textarea id="campaignCookie" name="cookie" placeholder="Optional cookie"></textarea>
+                </div>
+              </div>
+            </details>
+
+            <details class="admin-section" data-page="history">
+              <summary>Workitem History <span class="chevron">▼</span></summary>
+              <div class="admin-section-grid">
+                <div class="admin-field admin-field--full">
+                  <label for="historyWidgetId">History widget ID</label>
+                  <div style="display:flex;gap:8px;align-items:center;">
+                    <input id="historyWidgetId" type="text" autocomplete="off" placeholder="Public alias for history widget, e.g. t2c-history" style="flex:1;" />
+                    <button type="button" class="secondary" id="historyGenerateWidgetId">Generate ID</button>
+                    <button type="button" class="secondary" id="historyCopyWidgetUrl">Copy URL</button>
+                  </div>
+                  <span class="admin-field-note">Alias publico para abrir el historial sin usar el Campaign ID interno del admin.</span>
+                </div>
+
+                <div class="admin-field admin-field--full">
+                  <label for="historyCampaignIds">Analytics campaignId filter</label>
+                  <textarea id="historyCampaignIds" rows="4" placeholder="69fda9a1323bdd0236cd4912&#10;6a100be7ea313e6d170c200f"></textarea>
+                  <span class="admin-field-note">Uno por linea o separados por coma. Se envia al endpoint como <code>campaignId=...</code>. Si queda vacio, no se aplica filtro de campana.</span>
+                </div>
+
+                <div class="admin-field admin-field--full">
+                  <label for="historyWidgetUrl">History widget URL</label>
+                  <input id="historyWidgetUrl" type="text" readonly placeholder="Save or generate a History widget ID to build the URL" />
                 </div>
               </div>
             </details>
@@ -1505,6 +1626,6 @@
     <div class="admin-toast" id="adminToast"></div>
 
     <script src="./i18n.js"></script>
-    <script src="./admin.js"></script>
+    <script src="./admin.js?v=20260601-1548"></script>
   </body>
 </html>

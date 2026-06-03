@@ -1,0 +1,624 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NCC Agent Widget</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=DM+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.31.0/dist/tabler-icons.min.css" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      --color-background-primary: Canvas;
+      --color-background-secondary: color-mix(in srgb, Canvas 93%, CanvasText 7%);
+      --color-text-primary: CanvasText;
+      --color-text-secondary: color-mix(in srgb, CanvasText 62%, Canvas 38%);
+      --color-border-secondary: color-mix(in srgb, CanvasText 18%, Canvas 82%);
+      --color-border-tertiary: color-mix(in srgb, CanvasText 8%, Canvas 92%);
+      --color-state-success-bg: color-mix(in srgb, Canvas 86%, green 14%);
+      --color-state-success-text: color-mix(in srgb, CanvasText 60%, green 40%);
+      --color-state-warning-bg: color-mix(in srgb, Canvas 84%, orange 16%);
+      --color-state-warning-text: color-mix(in srgb, CanvasText 58%, orange 42%);
+      --color-state-error-bg: color-mix(in srgb, Canvas 84%, red 16%);
+      --color-state-error-text: color-mix(in srgb, CanvasText 58%, red 42%);
+      --font-sans: "DM Sans", system-ui, sans-serif;
+      --font-mono: "DM Mono", ui-monospace, monospace;
+      --radius-md: 10px;
+      --radius-lg: 14px;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--font-sans);
+      background: var(--color-background-secondary);
+      color: var(--color-text-primary);
+    }
+    .shell { max-width: 980px; margin: 0 auto; padding: 28px 24px 48px; }
+    .header {
+      display: flex; align-items: center; gap: 12px; padding: 14px 16px;
+      background: var(--color-background-primary);
+      border: .5px solid var(--color-border-secondary);
+      border-radius: var(--radius-lg); margin-bottom: 20px;
+    }
+    .header-icon {
+      width: 36px; height: 36px; display: flex; align-items: center; justify-content: center;
+      background: var(--color-background-secondary); border: .5px solid var(--color-border-tertiary);
+      border-radius: var(--radius-md); font-size: 18px; flex-shrink: 0;
+    }
+    .header-info { flex: 1; min-width: 0; }
+    .header-info h1 { margin: 0; font-size: 14px; font-weight: 700; }
+    .header-info p { margin: 2px 0 0; font-size: 12px; color: var(--color-text-secondary); }
+    .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+    .badge {
+      display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 4px 10px;
+      border-radius: 999px; border: .5px solid var(--color-border-secondary);
+      background: var(--color-background-secondary); color: var(--color-text-secondary);
+    }
+    .badge.success { background: var(--color-state-success-bg); color: var(--color-state-success-text); }
+    .badge.warning { background: var(--color-state-warning-bg); color: var(--color-state-warning-text); }
+    .badge.error { background: var(--color-state-error-bg); color: var(--color-state-error-text); }
+    .prog-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+    .prog-label { font-size: 12px; color: var(--color-text-secondary); white-space: nowrap; }
+    .prog-track { flex: 1; height: 4px; background: var(--color-border-tertiary); border-radius: 2px; overflow: hidden; }
+    .prog-fill { height: 100%; background: var(--color-text-primary); transition: width .3s ease; width: 33%; }
+    .tab-nav {
+      display: flex; gap: 2px; background: var(--color-background-primary);
+      border: .5px solid var(--color-border-secondary); border-radius: var(--radius-lg);
+      padding: 4px; margin-bottom: 16px;
+    }
+    .tab-btn {
+      flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; gap: 6px;
+      padding: 8px 10px; font: inherit; font-size: 13px; font-weight: 700;
+      color: var(--color-text-secondary); background: transparent; border: none; border-radius: var(--radius-md);
+      cursor: pointer; white-space: nowrap;
+    }
+    .tab-btn span { overflow: hidden; text-overflow: ellipsis; }
+    .tab-btn.is-active {
+      background: var(--color-background-secondary); color: var(--color-text-primary);
+      border: .5px solid var(--color-border-secondary);
+    }
+    .panel { display: none; }
+    .panel.is-active { display: block; }
+    .card {
+      background: var(--color-background-primary); border: .5px solid var(--color-border-secondary);
+      border-radius: var(--radius-lg); padding: 1rem 1.25rem; margin-bottom: 12px;
+    }
+    .section-header {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 14px;
+      color: var(--color-text-secondary); text-transform: uppercase; font-size: 11px; font-weight: 700;
+      letter-spacing: .04em;
+    }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+    label.field { display: flex; flex-direction: column; gap: 4px; color: var(--color-text-secondary); font-size: 12px; font-weight: 700; }
+    label.full { grid-column: 1 / -1; }
+    input, select, textarea {
+      width: 100%; border: .5px solid var(--color-border-secondary); border-radius: var(--radius-md);
+      background: var(--color-background-primary); color: var(--color-text-primary); font: inherit; font-size: 13px;
+      padding: 8px 10px;
+    }
+    textarea { min-height: 86px; resize: vertical; }
+    input.prefilled, select.prefilled, textarea.prefilled {
+      background: var(--color-state-success-bg);
+      border-color: var(--color-state-success-text);
+    }
+    .hidden-section { display: none; }
+    .check-group {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+    }
+    .check {
+      min-height: 42px;
+      display: grid;
+      grid-template-columns: 18px 1fr;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 10px;
+      border: .5px solid var(--color-border-tertiary);
+      border-radius: var(--radius-md);
+      background: var(--color-background-secondary);
+      color: var(--color-text-primary);
+      font-size: 12px;
+      line-height: 1.2;
+      cursor: pointer;
+    }
+    .check input {
+      width: 16px;
+      height: 16px;
+      margin: 0;
+      padding: 0;
+      justify-self: center;
+    }
+    .actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 8px; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: var(--radius-md);
+      border: .5px solid var(--color-border-secondary); background: var(--color-background-primary);
+      color: var(--color-text-primary); font: inherit; font-weight: 700; font-size: 13px; padding: 8px 16px; cursor: pointer;
+    }
+    .btn-primary { background: var(--color-text-primary); color: var(--color-background-primary); }
+    .btn:disabled { color: var(--color-text-secondary); cursor: not-allowed; }
+    .status { margin-top: 12px; font-size: 13px; color: var(--color-text-secondary); }
+    .status.error { color: var(--color-state-error-text); }
+    .status.success { color: var(--color-state-success-text); }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="header">
+      <div class="header-icon"><i class="ti ti-headset" aria-hidden="true"></i></div>
+      <div class="header-info">
+        <h1>NCC · Sugar CRM integration</h1>
+        <p>Tube tool needs assessment</p>
+      </div>
+      <div class="header-actions">
+        <span class="badge" id="callBadge"><i class="ti ti-phone" aria-hidden="true"></i> Waiting for call</span>
+        <span class="badge warning" id="contactBadge"><i class="ti ti-user-question" aria-hidden="true"></i> No contact loaded</span>
+      </div>
+    </header>
+
+    <div class="prog-row">
+      <span class="prog-label" id="progLabel">Step 1 of 3</span>
+      <div class="prog-track"><div class="prog-fill" id="pfProgress"></div></div>
+    </div>
+
+    <nav class="tab-nav" aria-label="Form sections">
+      <button type="button" class="tab-btn is-active" data-tab="0"><i class="ti ti-user" aria-hidden="true"></i><span>Basic information</span></button>
+      <button type="button" class="tab-btn" data-tab="1"><i class="ti ti-list-details" aria-hidden="true"></i><span>Additional information</span></button>
+      <button type="button" class="tab-btn" data-tab="2"><i class="ti ti-phone-call" aria-hidden="true"></i><span>Call details</span></button>
+    </nav>
+
+    <form id="pulseForm">
+      <section class="panel is-active" data-panel="0">
+        <div class="card">
+          <div class="section-header"><i class="ti ti-category" aria-hidden="true"></i> Project type</div>
+          <div class="grid">
+            <label class="field full">Project type
+              <select id="project_type" name="project_type_c" required>
+                <option value="">— select project type —</option>
+                <option value="tube_tool">Tube Tool</option>
+                <option value="metal_finishing">Metal Finishing</option>
+                <option value="pipe_rattling">Pipe Rattling</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="section-header"><i class="ti ti-user-circle" aria-hidden="true"></i> Contact details</div>
+          <div class="grid">
+            <label class="field">First name<input id="first_name" name="first_name" required /></label>
+            <label class="field">Last name<input id="last_name" name="last_name" required /></label>
+            <label class="field">Name<input id="name" name="name" /></label>
+            <label class="field">Account name<input id="account_name" name="account_name" required /></label>
+            <label class="field">Phone<input id="phone_work" name="phone_work" required /></label>
+            <label class="field">Email<input id="email1" name="email1" type="email" /></label>
+            <label class="field">City<input id="billing_address_city" name="billing_address_city" /></label>
+            <label class="field">Zip code<input id="billing_address_postalcode" name="billing_address_postalcode" /></label>
+            <label class="field full">Address<input id="billing_address_street" name="billing_address_street" /></label>
+            <label class="field full">Description<textarea id="description" name="description"></textarea></label>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="section-header"><i class="ti ti-building-store" aria-hidden="true"></i> Sugar CRM opportunity</div>
+          <div class="grid">
+            <label class="field">Status
+              <select id="status" name="status" required>
+                <option value="">Select</option>
+                <option>Received</option>
+                <option>Technical Assistance</option>
+                <option>Accuracy / Create Opportunity</option>
+                <option>Dialer / ACD</option>
+                <option>Opportunity Creation</option>
+                <option>In Sugar (triggered)</option>
+              </select>
+            </label>
+            <label class="field">Priority
+              <select id="priority_c" name="priority_c">
+                <option value="">Select</option>
+                <option>Normal</option>
+                <option>High - Priority Pursue</option>
+                <option>Escalated</option>
+              </select>
+            </label>
+            <label class="field">Buyer type
+              <select id="buyer_type_c" name="buyer_type_c">
+                <option value="">Select</option>
+                <option>End User</option>
+                <option>Distributor</option>
+                <option>OEM</option>
+                <option>Reseller</option>
+              </select>
+            </label>
+            <label class="field">Budget (USD)<input id="amount" name="amount" inputmode="decimal" /></label>
+            <label class="field">Sugar opportunity ID<input id="sugar_opportunity_id_c" name="sugar_opportunity_id_c" readonly /></label>
+            <label class="field">Sugar office URL<input id="sugar_office_url_c" name="sugar_office_url_c" /></label>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button type="button" class="btn" data-prev disabled><i class="ti ti-arrow-left" aria-hidden="true"></i> Previous</button>
+          <button type="button" class="btn btn-primary" data-next>Next <i class="ti ti-arrow-right" aria-hidden="true"></i></button>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="2">
+        <div class="card">
+          <div class="section-header"><i class="ti ti-phone-call" aria-hidden="true"></i> NCC call data</div>
+          <div class="grid">
+            <label class="field">NCC call ID<input id="ncc_call_id_c" name="ncc_call_id_c" /></label>
+            <label class="field">NCC agent<input id="ncc_agent_c" name="ncc_agent_c" /></label>
+            <label class="field">NCC queue<input id="ncc_queue_c" name="ncc_queue_c" /></label>
+            <label class="field">Call date<input id="call_date_c" name="call_date_c" /></label>
+            <label class="field">Call duration<input id="call_duration_c" name="call_duration_c" /></label>
+            <label class="field">Call disposition
+              <select id="call_disposition_c" name="call_disposition_c">
+                <option value="">Select</option>
+                <option>Interested</option>
+                <option>Callback</option>
+                <option>Not Interested</option>
+                <option>No Answer</option>
+                <option>Follow-up</option>
+              </select>
+            </label>
+            <label class="field full">AI transcript<textarea id="ai_transcript_c" name="ai_transcript_c"></textarea></label>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="section-header"><i class="ti ti-notes" aria-hidden="true"></i> Notes</div>
+          <div class="grid">
+            <label class="field full">Customer information<textarea id="customer_info_c" name="customer_info_c"></textarea></label>
+            <label class="field full">Additional notes<textarea id="extra_notes_c" name="extra_notes_c"></textarea></label>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button type="button" class="btn" data-prev><i class="ti ti-arrow-left" aria-hidden="true"></i> Previous</button>
+          <button type="submit" class="btn btn-primary" id="submitBtn"><i class="ti ti-send" aria-hidden="true"></i> Push to Sugar CRM</button>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="1">
+        <div class="card hidden-section" id="sec-tube-basics">
+          <div class="section-header"><i class="ti ti-tool" aria-hidden="true"></i> Tube basics</div>
+          <div class="grid">
+            <label class="field">Tool type<select id="tool_type_c" name="tool_type_c"><option value="">Select</option><option>Tube Tool</option><option>End Mill</option><option>Drill</option><option>Reamer</option><option>Other</option></select></label>
+            <label class="field">Tube OD<input id="tube_od_c" name="tube_od_c" /></label>
+            <label class="field">Tube wall thickness<input id="tube_wall_c" name="tube_wall_c" /></label>
+            <label class="field">Tube material<select id="tube_material_c" name="tube_material_c"><option value="">Select</option><option>Carbon Steel</option><option>Stainless Steel</option><option>Copper</option><option>Titanium</option><option>Duplex</option><option>Other</option></select></label>
+            <label class="field">Length of tube<input id="tube_length_c" name="tube_length_c" /></label>
+            <label class="field">Tube sheet thickness 1<input id="tube_sheet_thick1_c" name="tube_sheet_thick1_c" /></label>
+            <label class="field">Tube sheet thickness 2<input id="tube_sheet_thick2_c" name="tube_sheet_thick2_c" /></label>
+            <label class="field">Expansion ratio (%)<input id="expansion_ratio_c" name="expansion_ratio_c" /></label>
+            <label class="field">Tube expander type<select id="tube_expander_type_c" name="tube_expander_type_c"><option value="">Select</option><option>Standard</option><option>Hydraulic</option><option>Pneumatic</option><option>Manual</option></select></label>
+          </div>
+        </div>
+
+        <div class="card hidden-section" id="sec-consumables">
+          <div class="section-header"><i class="ti ti-package" aria-hidden="true"></i> Consumables</div>
+          <div class="check-group">
+            <label class="check"><input type="checkbox" id="seal_oring_kit_c" name="seal_oring_kit_c" /><span>Seal / O-ring kit</span></label>
+            <label class="check"><input type="checkbox" id="full_consumable_set_c" name="full_consumable_set_c" /><span>Full consumable set</span></label>
+            <label class="check"><input type="checkbox" id="roller_consumables_c" name="roller_consumables_c" /><span>Roller consumables only</span></label>
+            <label class="check"><input type="checkbox" id="expander_consumables_c" name="expander_consumables_c" /><span>Expander consumables only</span></label>
+            <label class="check"><input type="checkbox" id="boiler_tube_cutter_c" name="boiler_tube_cutter_c" /><span>Tube cutter</span></label>
+            <label class="check"><input type="checkbox" id="boiler_blade_set_c" name="boiler_blade_set_c" /><span>Blade set</span></label>
+            <label class="check"><input type="checkbox" id="boiler_deburr_c" name="boiler_deburr_c" /><span>Deburring tool</span></label>
+            <label class="check"><input type="checkbox" id="boiler_extension_c" name="boiler_extension_c" /><span>Extension kit</span></label>
+            <label class="check"><input type="checkbox" id="aux_torque_tool_c" name="aux_torque_tool_c" /><span>Torque tool</span></label>
+            <label class="check"><input type="checkbox" id="aux_plug_set_c" name="aux_plug_set_c" /><span>Plug set</span></label>
+            <label class="check"><input type="checkbox" id="aux_roller_kit_c" name="aux_roller_kit_c" /><span>Roller replacement kit</span></label>
+            <label class="check"><input type="checkbox" id="aux_annealing_c" name="aux_annealing_c" /><span>Annealing tool</span></label>
+          </div>
+        </div>
+
+        <div class="card hidden-section" id="sec-pump">
+          <div class="section-header"><i class="ti ti-engine" aria-hidden="true"></i> Pump</div>
+          <div class="grid">
+            <label class="field">Pump frequency (Hz)<input id="pump_frequency_c" name="pump_frequency_c" /></label>
+            <label class="field">Pump phase<select id="pump_phase_c" name="pump_phase_c"><option value="">Select</option><option>Single</option><option>Three</option></select></label>
+            <label class="field">Pump voltage (V)<input id="pump_voltage_c" name="pump_voltage_c" /></label>
+          </div>
+        </div>
+
+        <div class="card hidden-section" id="sec-finish">
+          <div class="section-header"><i class="ti ti-brush" aria-hidden="true"></i> Finish</div>
+          <div class="grid">
+            <label class="field">Finishing type<select id="finishing_type_c" name="finishing_type_c"><option value="">Select</option><option>Standard</option><option>Polished</option><option>Ground</option></select></label>
+            <label class="field">Metal finish<select id="metal_finish_c" name="metal_finish_c"><option value="">Select</option><option>Anodized</option><option>Nitride</option><option>TiN Coating</option><option>AlTiN Coating</option><option>Uncoated</option><option>Custom</option></select></label>
+            <label class="field">Labor / surface<input id="labor_surface_c" name="labor_surface_c" /></label>
+          </div>
+        </div>
+
+        <div class="card hidden-section" id="sec-parse-items">
+          <div class="section-header"><i class="ti ti-list-search" aria-hidden="true"></i> Parse items</div>
+          <div class="grid">
+            <label class="field">Parse item 1<input id="parse_item1_c" name="parse_item1_c" /></label>
+            <label class="field">Parse item 2<input id="parse_item2_c" name="parse_item2_c" /></label>
+          </div>
+        </div>
+
+        <div class="card hidden-section" id="sec-coating">
+          <div class="section-header"><i class="ti ti-palette" aria-hidden="true"></i> Coating</div>
+          <div class="grid">
+            <label class="field">Display label<input id="display_label_c" name="display_label_c" /></label>
+            <label class="field">Unit of measure<select id="unit_of_measure_c" name="unit_of_measure_c"><option value="">Select</option><option>Inch</option><option>mm</option></select></label>
+          </div>
+        </div>
+
+        <div class="card hidden-section" id="sec-second-survey">
+          <div class="section-header"><i class="ti ti-clipboard-list" aria-hidden="true"></i> Second survey</div>
+          <div class="grid">
+            <label class="field">Reference<input id="reference_c" name="reference_c" /></label>
+            <label class="field">Opportunity creation mode<select id="opp_creation_mode_c" name="opp_creation_mode_c"><option value="">Select</option><option>Auto (triggered)</option><option>Manual</option></select></label>
+          </div>
+        </div>
+
+        <div class="card hidden-section" id="sec-pipe">
+          <div class="section-header"><i class="ti ti-affiliate" aria-hidden="true"></i> Pipe rattling</div>
+          <div class="grid">
+            <label class="field">Groove type<select id="groove_type_c" name="groove_type_c"><option value="">Select</option><option>Internal</option><option>External</option><option>Face</option><option>N/A</option></select></label>
+            <label class="field">Groove style<select id="groove_style_c" name="groove_style_c"><option value="">Select</option><option>Single</option><option>Double</option><option>Triple</option><option>Custom</option></select></label>
+            <label class="field">Number of grooves T#1<input id="num_grooves_t1_c" name="num_grooves_t1_c" /></label>
+            <label class="field">Number of grooves T#2<input id="num_grooves_t2_c" name="num_grooves_t2_c" /></label>
+            <label class="field">Tube pier no expand<input id="tube_pier_c" name="tube_pier_c" /></label>
+            <label class="field">Tube wheel missed<select id="tube_wheel_missed_c" name="tube_wheel_missed_c"><option value="">Select</option><option>Yes</option><option>No</option><option>Unknown</option></select></label>
+            <label class="field">Table setter style<select id="table_setter_style_c" name="table_setter_style_c"><option value="">Select</option><option>Standard</option><option>Custom</option><option>N/A</option></select></label>
+            <label class="field">Chassis<input id="chassis_c" name="chassis_c" /></label>
+            <label class="field">Pool type<select id="pool_type_c" name="pool_type_c"><option value="">Select</option><option>Standard</option><option>Special</option></select></label>
+            <label class="field">Seal type<select id="seal_type_c" name="seal_type_c"><option value="">Select</option><option>Standard</option><option>High-Pressure</option><option>Custom</option></select></label>
+            <label class="field">New mandrel needed<select id="mandrel_needed_c" name="mandrel_needed_c"><option value="">Select</option><option>Yes</option><option>No</option><option>Unknown</option></select></label>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button type="button" class="btn" data-prev><i class="ti ti-arrow-left" aria-hidden="true"></i> Previous</button>
+          <button type="button" class="btn btn-primary" data-next>Next <i class="ti ti-arrow-right" aria-hidden="true"></i></button>
+        </div>
+      </section>
+    </form>
+    <div class="status" id="statusText" aria-live="polite"></div>
+  </main>
+
+  <script src="./config.js"></script>
+  <script src="./sugar.js"></script>
+  <script src="./ncc.js"></script>
+  <script>
+    const SECTION_MAP = {
+      tube_tool: ["sec-tube-basics", "sec-consumables", "sec-pump"],
+      metal_finishing: ["sec-finish", "sec-parse-items", "sec-coating"],
+      pipe_rattling: ["sec-pipe", "sec-consumables"]
+    };
+    const CONDITIONAL_SECTIONS = ["sec-tube-basics", "sec-consumables", "sec-pump", "sec-finish", "sec-parse-items", "sec-coating", "sec-pipe", "sec-second-survey"];
+    let currentOpportunityId = "";
+
+    function $(id) { return document.getElementById(id); }
+
+    function setStatus(message, type = "") {
+      const status = $("statusText");
+      status.textContent = message || "";
+      status.className = `status ${type}`.trim();
+    }
+
+    function setBadge(id, text, type, icon) {
+      const badge = $(id);
+      badge.className = `badge ${type || ""}`.trim();
+      badge.innerHTML = `<i class="ti ${icon || "ti-info-circle"}" aria-hidden="true"></i> ${text}`;
+    }
+
+    function setValue(id, value, markPrefilled = false) {
+      const el = $(id);
+      if (!el || value === undefined || value === null || value === "") return;
+      el.value = value;
+      if (markPrefilled) el.classList.add("prefilled");
+    }
+
+    function getFormValues() {
+      const values = {};
+      new FormData($("pulseForm")).forEach((value, key) => { values[key] = value; });
+      document.querySelectorAll('input[type="checkbox"]').forEach((input) => { values[input.name] = input.checked; });
+      return values;
+    }
+
+    function applyProjectSections() {
+      const projectType = $("project_type").value;
+      const visible = new Set(SECTION_MAP[projectType] || []);
+      const metalFinish = $("metal_finish_c")?.value || "";
+      if (projectType === "metal_finishing" && metalFinish && metalFinish !== "Uncoated") visible.add("sec-second-survey");
+      CONDITIONAL_SECTIONS.forEach((id) => $(id)?.classList.toggle("hidden-section", !visible.has(id)));
+    }
+
+    function showTab(index) {
+      const tabs = [...document.querySelectorAll("[data-tab]")];
+      const panels = [...document.querySelectorAll("[data-panel]")];
+      tabs.forEach((tab) => tab.classList.toggle("is-active", Number(tab.dataset.tab) === index));
+      panels.forEach((panel) => panel.classList.toggle("is-active", Number(panel.dataset.panel) === index));
+      $("pfProgress").style.width = `${Math.round(((index + 1) / panels.length) * 100)}%`;
+      $("progLabel").textContent = `Step ${index + 1} of ${panels.length}`;
+    }
+
+    function prefillContact(contact) {
+      if (!contact) {
+        setBadge("contactBadge", "New contact", "warning", "ti-user-plus");
+        $("first_name")?.focus();
+        return;
+      }
+      setValue("first_name", contact.first_name, true);
+      setValue("last_name", contact.last_name, true);
+      setValue("name", `${contact.first_name || ""} ${contact.last_name || ""}`.trim(), true);
+      setValue("account_name", contact.account_name, true);
+      setValue("email1", contact.email1, true);
+      setValue("phone_work", contact.phone_work || contact.phone_mobile || contact.phone_home || contact.phone_other, true);
+      setValue("billing_address_city", contact.billing_address_city, true);
+      setValue("billing_address_postalcode", contact.billing_address_postalcode, true);
+      setValue("billing_address_street", contact.billing_address_street, true);
+      setBadge("contactBadge", "Contact found — pre-filled", "success", "ti-user-check");
+    }
+
+    async function screenPop(ani) {
+      if (!ani) {
+        setBadge("contactBadge", "New contact", "warning", "ti-user-plus");
+        return;
+      }
+      try {
+        setStatus("Looking up contact in Sugar CRM...");
+        const contact = await window.sugar.lookupContactByPhone(ani);
+        prefillContact(contact);
+        setStatus(contact ? "Contact loaded from Sugar CRM." : "No contact found. Create a new opportunity.", contact ? "success" : "");
+      } catch (error) {
+        setBadge("contactBadge", "Lookup failed", "error", "ti-alert-triangle");
+        setStatus(`Sugar lookup failed: ${error.message}`, "error");
+      }
+    }
+
+    function getInitialCallDataFromUrl() {
+      const params = new URLSearchParams(window.location.search);
+      const ani = params.get("ani") || params.get("phone") || params.get("callerId") || "";
+      const workitemId = params.get("workitemid") || params.get("workitemId") || params.get("callId") || params.get("call_id") || "";
+      if (!ani && !workitemId) return null;
+      return {
+        ani,
+        callId: workitemId,
+        agentName: params.get("agentName") || params.get("agent") || "",
+        queueName: params.get("queueName") || params.get("queue") || "",
+        workitemId
+      };
+    }
+
+    function getCampaignId() {
+      return window.PULSEFORMS_CONFIG?.CAMPAIGN_ID || new URLSearchParams(window.location.search).get("campaign") || "";
+    }
+
+    function transcriptText(data) {
+      const rows = Array.isArray(data?.transcript) && data.transcript.length
+        ? data.transcript
+        : Array.isArray(data?.messages) ? data.messages : [];
+      return rows
+        .map((item) => {
+          const speaker = item.type || item.fromId || "Speaker";
+          const text = item.text || item.textMsg || "";
+          return text ? `${speaker}: ${text}` : "";
+        })
+        .filter(Boolean)
+        .join("\n");
+    }
+
+    function applyWorkitemDetails(data) {
+      const summary = data?.summary || {};
+      setValue("ncc_call_id_c", data?.workitemId || summary.workitemId, true);
+      setValue("ncc_agent_c", summary.agentUsername, true);
+      setValue("phone_work", summary.phone, true);
+      setValue("ai_transcript_c", transcriptText(data), true);
+      setBadge("callBadge", "Workitem loaded", "success", "ti-phone-check");
+      if (summary.phone) screenPop(summary.phone);
+    }
+
+    async function loadWorkitemDetails(workitemId) {
+      const campaignId = getCampaignId();
+      if (!campaignId || !workitemId) return;
+      try {
+        setStatus("Loading call details from Workitem API...");
+        const params = new URLSearchParams({ campaign: campaignId, workitemid: workitemId });
+        const response = await fetch(new URL(`../api/workitem?${params.toString()}`, window.location.href), { cache: "no-store" });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.details || data.error || `HTTP ${response.status}`);
+        applyWorkitemDetails(data);
+        setStatus("Call details loaded from Workitem API.", "success");
+      } catch (error) {
+        setBadge("callBadge", "Workitem lookup failed", "error", "ti-alert-triangle");
+        setStatus(`Workitem API failed: ${error.message}`, "error");
+      }
+    }
+
+    function buildOpportunityPayload() {
+      const form = getFormValues();
+      return {
+        ...form,
+        name: `${form.first_name || ""} ${form.last_name || ""} — ${form.project_type_c || "Tube Tool"}`.trim(),
+        ncc_call_id_c: window.ncc.currentCallId || form.ncc_call_id_c,
+        ncc_agent_c: window.ncc.currentAgent || form.ncc_agent_c,
+        ncc_queue_c: window.ncc.currentQueue || form.ncc_queue_c,
+        call_duration_c: window.ncc.callDuration || form.call_duration_c,
+        call_date_c: form.call_date_c || new Date().toISOString()
+      };
+    }
+
+    function splitPayload(payload) {
+      const maxFields = Number(window.PULSEFORMS_CONFIG?.MAX_FIELDS_PER_REQUEST || 100);
+      const entries = Object.entries(payload).filter(([, value]) => value !== undefined && value !== null && value !== "");
+      const chunks = [];
+      for (let i = 0; i < entries.length; i += maxFields) chunks.push(Object.fromEntries(entries.slice(i, i + maxFields)));
+      return chunks;
+    }
+
+    async function pushToSugar(event) {
+      event.preventDefault();
+      const submitBtn = $("submitBtn");
+      submitBtn.disabled = true;
+      setStatus("Pushing opportunity to Sugar CRM...");
+      try {
+        const chunks = splitPayload(buildOpportunityPayload());
+        const created = await window.sugar.createOpportunity(chunks[0] || {});
+        currentOpportunityId = created.id || created._id || "";
+        setValue("sugar_opportunity_id_c", currentOpportunityId, true);
+        for (const chunk of chunks.slice(1)) await window.sugar.updateOpportunity(currentOpportunityId, chunk);
+        setStatus(`Opportunity pushed to Sugar CRM: ${currentOpportunityId}`, "success");
+      } catch (error) {
+        setStatus(`Push failed: ${error.message}`, "error");
+      } finally {
+        submitBtn.disabled = false;
+      }
+    }
+
+    document.querySelectorAll("[data-tab]").forEach((tab) => tab.addEventListener("click", () => showTab(Number(tab.dataset.tab))));
+    document.querySelectorAll("[data-next]").forEach((btn) => btn.addEventListener("click", () => {
+      const active = [...document.querySelectorAll("[data-panel]")].find((panel) => panel.classList.contains("is-active"));
+      showTab(Math.min(Number(active?.dataset.panel || 0) + 1, 2));
+    }));
+    document.querySelectorAll("[data-prev]").forEach((btn) => btn.addEventListener("click", () => {
+      const active = [...document.querySelectorAll("[data-panel]")].find((panel) => panel.classList.contains("is-active"));
+      showTab(Math.max(Number(active?.dataset.panel || 0) - 1, 0));
+    }));
+
+    $("project_type").addEventListener("change", applyProjectSections);
+    $("metal_finish_c").addEventListener("change", applyProjectSections);
+    $("pulseForm").addEventListener("submit", pushToSugar);
+    applyProjectSections();
+
+    window.ncc.on("call_started", (callData) => {
+      const workitemId = callData.workitemId || callData.callId;
+      setValue("ncc_call_id_c", workitemId, true);
+      setValue("ncc_agent_c", callData.agentName, true);
+      setValue("ncc_queue_c", callData.queueName, true);
+      setValue("call_date_c", new Date().toISOString(), true);
+      setValue("phone_work", callData.ani, true);
+      setBadge("callBadge", "Call active", "success", "ti-phone-call");
+      if (workitemId) loadWorkitemDetails(workitemId);
+      else screenPop(callData.ani);
+    });
+
+    const initialCallData = getInitialCallDataFromUrl();
+    if (initialCallData) {
+      setStatus("Call data loaded from URL.");
+      window.ncc.handleCallStarted(initialCallData);
+    }
+
+    window.ncc.on("call_ended", async (callData) => {
+      setBadge("callBadge", "Call ended", "", "ti-phone-off");
+      setValue("call_duration_c", callData.duration, true);
+      if (!currentOpportunityId) return;
+      try {
+        await window.sugar.updateOpportunity(currentOpportunityId, {
+          ai_transcript_c: callData.transcript,
+          call_duration_c: callData.duration
+        });
+        setStatus("AI transcript pushed to Sugar CRM.", "success");
+      } catch (error) {
+        setStatus(`Transcript push failed: ${error.message}`, "error");
+      }
+    });
+  </script>
+</body>
+</html>

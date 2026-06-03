@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PulseForm V2</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.31.0/dist/tabler-icons.min.css" />
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+      :root {
+        --bg-primary:   #ffffff;
+        --bg-secondary: #f5f6f8;
+        --text-primary: #111827;
+        --text-muted:   #6b7280;
+        --text-hint:    #9ca3af;
+        --border-faint: rgba(0,0,0,0.07);
+        --border-soft:  rgba(0,0,0,0.13);
+        --accent:       #111827;
+        --blue-bg:      #e6f1fb;
+        --blue-text:    #0c447c;
+        --blue-border:  #85b7eb;
+        --warn-bg:      #faeeda;
+        --warn-text:    #633806;
+        --warn-border:  #fac775;
+        --green-bg:     #eaf3de;
+        --green-text:   #27500a;
+        --green-border: #c0dd97;
+        --red-bg:       #feeceb;
+        --red-text:     #9f1d18;
+        --red-border:   #f5a7a4;
+        --font-sans:    "DM Sans", system-ui, sans-serif;
+        --font-mono:    "DM Mono", ui-monospace, monospace;
+        --radius-sm:    6px;
+        --radius-md:    10px;
+        --radius-lg:    14px;
+      }
+
+      html, body {
+        min-height: 100%;
+        font-family: var(--font-sans);
+        background: var(--bg-secondary);
+        color: var(--text-primary);
+        font-size: 14px;
+      }
+
+      .embedded body { background: transparent; }
+      .pf-shell { max-width: 960px; margin: 0 auto; padding: 28px 24px 48px; }
+
+      .pf-header {
+        display: flex; align-items: center; gap: 12px;
+        padding: 14px 16px;
+        background: var(--bg-primary);
+        border: 0.5px solid var(--border-soft);
+        border-radius: var(--radius-lg);
+        margin-bottom: 20px;
+      }
+      .pf-header-icon {
+        width: 36px; height: 36px;
+        background: var(--blue-bg);
+        border-radius: var(--radius-sm);
+        display: flex; align-items: center; justify-content: center;
+        color: var(--blue-text); font-size: 18px; flex-shrink: 0;
+      }
+      .pf-header-info { flex: 1; min-width: 0; }
+      .pf-header-title {
+        display: block;
+        font-size: 14px;
+        font-weight: 700;
+        color: var(--text-primary);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .pf-header-subtitle {
+        display: block;
+        font-size: 12px;
+        color: var(--text-muted);
+        margin-top: 1px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .pf-header-badge {
+        display: inline-flex; align-items: center; gap: 5px;
+        font-size: 12px; padding: 4px 10px; border-radius: 20px;
+        background: var(--green-bg); color: var(--green-text);
+        border: 0.5px solid var(--green-border);
+        max-width: 220px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .pf-header-badge[hidden] { display: none; }
+      .pf-sources-row { display: flex; align-items: center; gap: 4px; }
+      .pf-src-dot { width: 7px; height: 7px; border-radius: 50%; cursor: default; }
+      .pf-src-dot--ok { background: var(--green-text); }
+      .pf-src-dot--error { background: var(--red-text); }
+      .pf-header-btn {
+        display: inline-flex; align-items: center; gap: 5px;
+        font: inherit; font-size: 12px; font-weight: 600;
+        padding: 6px 10px; border-radius: var(--radius-md);
+        cursor: pointer; border: 0.5px solid var(--border-soft);
+        background: var(--bg-primary); color: var(--text-primary);
+      }
+      .pf-header-btn[hidden] { display: none; }
+
+      .pf-body { display: flex; flex-direction: column; gap: 12px; }
+      .prog-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+      .prog-label { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+      .prog-track { flex: 1; height: 4px; background: var(--border-faint); border-radius: 2px; overflow: hidden; }
+      .prog-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s ease; width: 0; }
+
+      .tab-nav {
+        display: flex; gap: 2px;
+        background: var(--bg-primary);
+        border: 0.5px solid var(--border-soft);
+        border-radius: var(--radius-lg);
+        padding: 4px; margin-bottom: 16px;
+      }
+      .tab-btn {
+        flex: 1;
+        display: flex; align-items: center; justify-content: center; gap: 6px;
+        padding: 8px 10px;
+        font: inherit; font-size: 13px; font-weight: 600;
+        color: var(--text-muted); background: transparent;
+        border: none; border-radius: var(--radius-md);
+        cursor: pointer; transition: all 0.15s; white-space: nowrap;
+        min-width: 0;
+      }
+      .tab-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .tab-btn i { font-size: 15px; }
+      .tab-btn.is-active {
+        background: var(--bg-secondary);
+        color: var(--text-primary);
+        border: 0.5px solid var(--border-soft);
+      }
+
+      .pf-section { display: none; }
+      .pf-section.is-active { display: block; }
+      .pf-layout-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+      .pf-layout-main, .pf-layout-side { display: flex; flex-direction: column; gap: 12px; }
+      @media (min-width: 840px) {
+        .pf-layout-grid { grid-template-columns: minmax(0, 1fr) 320px; align-items: start; }
+      }
+
+      .pf-card {
+        background: var(--bg-primary);
+        border: 0.5px solid var(--border-soft);
+        border-radius: var(--radius-lg);
+        padding: 1.1rem 1.25rem;
+        margin-bottom: 12px;
+      }
+      .section-header {
+        display: flex; align-items: center; gap: 8px;
+        font-size: 11px; font-weight: 700;
+        color: var(--text-muted);
+        text-transform: uppercase; letter-spacing: 0.05em;
+        margin-bottom: 14px;
+      }
+      .section-header i { font-size: 15px; }
+
+      .pf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+      .pf-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-muted); font-weight: 600; }
+      .pf-field--full { grid-column: 1 / -1; }
+      .pf-label { display: inline-flex; align-items: center; gap: 4px; }
+      .pf-required { color: var(--red-text); font-size: 12px; }
+
+      .pf-input, .pf-select, .pf-textarea {
+        font: inherit; font-size: 13px;
+        color: var(--text-primary); background: var(--bg-primary);
+        border: 0.5px solid var(--border-soft);
+        border-radius: var(--radius-md);
+        padding: 8px 10px; width: 100%; outline: none;
+        transition: border-color 0.15s, box-shadow 0.15s;
+      }
+      .pf-input:focus, .pf-select:focus, .pf-textarea:focus {
+        border-color: var(--text-hint);
+        box-shadow: 0 0 0 3px rgba(0,0,0,0.05);
+      }
+      .pf-textarea { min-height: 80px; resize: vertical; }
+      .pf-input.pf-prefilled, .pf-select.pf-prefilled, .pf-textarea.pf-prefilled {
+        background: var(--green-bg);
+        border-color: var(--green-border);
+      }
+
+      .pf-checkbox-row {
+        display: flex; align-items: center; gap: 8px;
+        font-size: 13px; color: var(--text-primary); cursor: pointer;
+        font-weight: 500;
+      }
+      .pf-checkbox-row input[type="checkbox"] {
+        width: 16px; height: 16px; border-radius: 4px;
+        flex-shrink: 0; padding: 0; cursor: pointer;
+      }
+
+      .pf-actions {
+        display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 4px;
+      }
+      .pf-btn, .pf-submit-btn {
+        display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+        font: inherit; font-size: 13px; font-weight: 700;
+        padding: 8px 16px; border-radius: var(--radius-md);
+        cursor: pointer; transition: all 0.15s;
+        border: 0.5px solid var(--border-soft);
+        background: var(--bg-primary); color: var(--text-primary);
+      }
+      .pf-btn:hover, .pf-submit-btn:hover { background: var(--bg-secondary); }
+      .pf-btn:disabled, .pf-submit-btn:disabled { color: var(--text-hint); cursor: not-allowed; }
+      .pf-btn-primary, .pf-submit-btn {
+        background: var(--accent); color: #fff; border-color: var(--accent);
+      }
+      .pf-btn-primary:hover, .pf-submit-btn:hover { background: #1f2937; }
+      .pf-submit-wrap { display: flex; justify-content: flex-end; }
+
+      .pf-mode-badge {
+        display: inline-flex; align-items: center; gap: 5px;
+        font-size: 12px; padding: 4px 10px; border-radius: 20px;
+        background: var(--blue-bg); color: var(--blue-text);
+        border: 0.5px solid var(--blue-border);
+        margin-bottom: 12px;
+      }
+      .pf-banner {
+        display: flex; gap: 8px; align-items: flex-start;
+        padding: 8px 12px; border-radius: var(--radius-md);
+        font-size: 12px; margin-bottom: 14px;
+      }
+      .pf-banner strong { display: block; margin-right: 4px; }
+      .pf-banner--ok { background: var(--green-bg); color: var(--green-text); border: 0.5px solid var(--green-border); }
+      .pf-banner--error { background: var(--red-bg); color: var(--red-text); border: 0.5px solid var(--red-border); }
+      .pf-banner--info { background: var(--blue-bg); color: var(--blue-text); border: 0.5px solid var(--blue-border); }
+
+      .pf-loading {
+        min-height: 260px; display: flex; flex-direction: column;
+        align-items: center; justify-content: center; gap: 12px;
+        color: var(--text-muted); font-size: 13px;
+      }
+      .pf-spinner {
+        width: 30px; height: 30px;
+        border: 3px solid var(--border-faint);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: pf-spin .7s linear infinite;
+      }
+      @keyframes pf-spin { to { transform: rotate(360deg); } }
+      .pf-error-full {
+        background: var(--red-bg);
+        border: 0.5px solid var(--red-border);
+        border-radius: var(--radius-lg);
+        padding: 18px 20px;
+        color: var(--red-text);
+        font-size: 13px; line-height: 1.5;
+      }
+      .pf-error-full strong { display: block; margin-bottom: 4px; font-size: 14px; }
+      .pf-timestamp { font-size: 12px; color: var(--text-hint); text-align: right; padding: 2px 0; }
+
+      @media (max-width: 640px) {
+        .pf-shell { padding: 16px 12px 28px; }
+        .pf-header { align-items: flex-start; flex-wrap: wrap; }
+        .pf-header-badge { max-width: 100%; }
+        .tab-nav { overflow-x: auto; }
+        .tab-btn { flex: 0 0 auto; min-width: 150px; }
+        .pf-actions { flex-direction: column; align-items: stretch; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="pf-shell">
+      <header class="pf-header" id="pfHeader">
+        <div class="pf-header-icon"><i class="ti ti-headset" aria-hidden="true"></i></div>
+        <div class="pf-header-info">
+          <span class="pf-header-title" id="pfTitle">PulseForm V2</span>
+          <span class="pf-header-subtitle" id="pfSubtitle">CRM integration</span>
+        </div>
+        <span class="pf-header-badge" id="pfBadge" hidden><i class="ti ti-circle-dot" aria-hidden="true"></i></span>
+        <div class="pf-sources-row" id="pfSourcesRow"></div>
+        <button type="button" class="pf-header-btn" id="pfRefreshBtn" hidden><i class="ti ti-refresh" aria-hidden="true"></i> Refresh</button>
+      </header>
+
+      <div class="pf-body" id="pfBody"></div>
+    </main>
+
+    <script src="./i18n.js"></script>
+    <script src="./pulseformv2.js"></script>
+  </body>
+</html>

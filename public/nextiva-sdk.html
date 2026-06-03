@@ -1,0 +1,776 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nextiva SDK</title>
+    <style>
+      :root {
+        --bg: #f3f5f8;
+        --panel: #ffffff;
+        --panel-soft: #eef6f0;
+        --ink: #162033;
+        --muted: #5b6474;
+        --line: #d6dde7;
+        --brand: #20406c;
+        --accent: #087f67;
+        --code: #101827;
+        --warm: #f4efe5;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        color: var(--ink);
+        background: var(--bg);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        letter-spacing: 0;
+      }
+      button, input { font: inherit; }
+      .shell { min-height: 100vh; }
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        min-height: 68px;
+        padding: 14px clamp(18px, 4vw, 44px);
+        border-bottom: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.92);
+        backdrop-filter: blur(10px);
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+      }
+      .mark {
+        display: grid;
+        width: 38px;
+        height: 38px;
+        place-items: center;
+        border-radius: 8px;
+        background: var(--brand);
+        color: #fff;
+        font-weight: 800;
+      }
+      .brand h1 {
+        margin: 0;
+        font-size: 1.08rem;
+        line-height: 1.1;
+      }
+      .brand p {
+        margin: 3px 0 0;
+        color: var(--muted);
+        font-size: 0.82rem;
+      }
+      .top-actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        border: 1px solid #b8d7c7;
+        border-radius: 999px;
+        background: var(--panel-soft);
+        color: #135b4d;
+        padding: 7px 11px;
+        white-space: nowrap;
+        font-size: 0.82rem;
+        font-weight: 700;
+      }
+      .status::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+      .language-switch {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        padding: 7px 9px;
+        color: var(--muted);
+        font-size: 0.82rem;
+        font-weight: 700;
+      }
+      .language-switch select {
+        border: 0;
+        background: transparent;
+        color: var(--ink);
+        font-weight: 800;
+        outline: 0;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: minmax(220px, 270px) minmax(0, 1fr);
+        gap: clamp(18px, 3vw, 38px);
+        width: min(1420px, 100%);
+        margin: 0 auto;
+        padding: clamp(18px, 4vw, 44px);
+      }
+      aside {
+        position: sticky;
+        top: 96px;
+        align-self: start;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        overflow: hidden;
+      }
+      .aside-head {
+        padding: 16px;
+        border-bottom: 1px solid var(--line);
+        background: var(--warm);
+      }
+      .aside-head strong {
+        display: block;
+        margin-bottom: 5px;
+      }
+      .aside-head span {
+        color: var(--muted);
+        font-size: 0.84rem;
+      }
+      nav {
+        display: grid;
+        padding: 8px;
+      }
+      nav a {
+        color: var(--ink);
+        text-decoration: none;
+        border-radius: 6px;
+        padding: 10px 11px;
+        font-size: 0.9rem;
+        font-weight: 650;
+      }
+      nav a:hover { background: #edf2f8; color: var(--brand); }
+      main { min-width: 0; }
+      section {
+        padding-bottom: clamp(28px, 5vw, 54px);
+        border-bottom: 1px solid var(--line);
+        margin-bottom: clamp(28px, 5vw, 54px);
+      }
+      section:last-child {
+        border-bottom: 0;
+        margin-bottom: 0;
+      }
+      .kicker {
+        margin: 0 0 9px;
+        color: var(--accent);
+        font-size: 0.8rem;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+      h2 {
+        margin: 0 0 10px;
+        color: var(--brand);
+        font-size: clamp(1.35rem, 2vw, 2rem);
+        line-height: 1.2;
+      }
+      p {
+        margin: 0 0 14px;
+        color: var(--muted);
+        line-height: 1.55;
+      }
+      .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 20px;
+      }
+      .metric {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        padding: 16px;
+      }
+      .metric strong {
+        display: block;
+        font-size: 1.55rem;
+        color: var(--brand);
+      }
+      .metric span {
+        color: var(--muted);
+        font-size: 0.86rem;
+      }
+      .code {
+        overflow: auto;
+        margin: 16px 0 0;
+        border: 1px solid #263247;
+        border-radius: 8px;
+        background: var(--code);
+        color: #e4edf8;
+        padding: 18px;
+        font: 0.9rem/1.5 "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      }
+      .resource-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 18px;
+      }
+      .resource {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        padding: 16px;
+      }
+      .resource h3 {
+        margin: 0 0 7px;
+        font-size: 1rem;
+      }
+      .resource code, td code, p code {
+        border-radius: 5px;
+        background: #edf2f8;
+        color: var(--brand);
+        padding: 2px 5px;
+        font: 0.84em "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      }
+      .resource p { margin: 0; font-size: 0.9rem; }
+      .table-tools {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 18px 0 12px;
+      }
+      .filter {
+        width: min(420px, 100%);
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: var(--panel);
+        padding: 11px 12px;
+      }
+      .table-wrap {
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+      }
+      table {
+        width: 100%;
+        min-width: 760px;
+        border-collapse: collapse;
+        font-size: 0.9rem;
+      }
+      th, td {
+        border-bottom: 1px solid var(--line);
+        padding: 12px 13px;
+        text-align: left;
+        vertical-align: top;
+      }
+      th {
+        position: sticky;
+        top: 0;
+        background: #f7f9fc;
+        color: var(--muted);
+        font-size: 0.78rem;
+        text-transform: uppercase;
+      }
+      tr:last-child td { border-bottom: 0; }
+      .method {
+        display: inline-block;
+        min-width: 58px;
+        border-radius: 5px;
+        background: var(--warm);
+        color: #6a4a08;
+        padding: 4px 6px;
+        text-align: center;
+        font-size: 0.78rem;
+        font-weight: 800;
+      }
+      .note {
+        border-left: 4px solid var(--accent);
+        background: var(--panel);
+        padding: 14px 16px;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+      .note strong { color: var(--ink); }
+      .usecase-grid {
+        display: grid;
+        gap: 12px;
+        margin-top: 18px;
+      }
+      .flow-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 18px;
+      }
+      .flow {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        padding: 16px;
+      }
+      .flow h3 {
+        margin: 0 0 8px;
+        color: var(--brand);
+        font-size: 1rem;
+      }
+      .flow p {
+        margin-bottom: 10px;
+        font-size: 0.9rem;
+      }
+      .flow code {
+        border-radius: 5px;
+        background: #edf2f8;
+        color: var(--brand);
+        padding: 2px 5px;
+        font: 0.84em "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      }
+      @media (max-width: 860px) {
+        .topbar { align-items: flex-start; flex-direction: column; }
+        .layout { grid-template-columns: 1fr; }
+        aside { position: static; }
+        .summary-grid, .resource-grid, .flow-grid { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="mark">N</div>
+          <div>
+            <h1>Nextiva Contact Center SDK</h1>
+            <p data-i18n="hero.subtitle">Vista publicada desde `webs` para revisar cobertura y API del SDK.</p>
+          </div>
+        </div>
+        <div class="top-actions">
+          <label class="language-switch">
+            <span data-i18n="language.label">Idioma</span>
+            <select id="languageSelect" aria-label="Language">
+              <option value="es">ES</option>
+              <option value="en">EN</option>
+            </select>
+          </label>
+          <div class="status" data-i18n="status">Primera version visible</div>
+        </div>
+      </header>
+
+      <div class="layout">
+        <aside>
+          <div class="aside-head">
+            <strong data-i18n="aside.title">Revision</strong>
+            <span data-i18n="aside.subtitle">SDK separado, docs servidas desde `webs`.</span>
+          </div>
+          <nav>
+            <a href="#overview" data-i18n="nav.overview">Resumen</a>
+            <a href="#usage" data-i18n="nav.usage">Uso</a>
+            <a href="#resources" data-i18n="nav.resources">Recursos</a>
+            <a href="#coverage" data-i18n="nav.coverage">Endpoints</a>
+            <a href="#usecases" data-i18n="nav.usecases">Casos de uso</a>
+            <a href="#boundary" data-i18n="nav.boundary">Limites</a>
+          </nav>
+        </aside>
+
+        <main>
+          <section id="overview">
+            <p class="kicker" data-i18n="overview.kicker">SDK publico</p>
+            <h2 data-i18n="overview.title">Cobertura Nextiva extraida del proyecto actual</h2>
+            <p data-i18n="overview.body">
+              Esta version agrupa los endpoints Nextiva/Thrio que `webs` ya usa
+              para auth, AI prediction, analytics, workitems, chat, TTS, REST Calls y datos NCC.
+            </p>
+            <div class="summary-grid">
+              <div class="metric"><strong>5</strong><span data-i18n="metric.families">familias API</span></div>
+              <div class="metric"><strong>50</strong><span data-i18n="metric.methods">metodos documentados</span></div>
+              <div class="metric"><strong>TS</strong><span data-i18n="metric.client">cliente publicable</span></div>
+            </div>
+          </section>
+
+          <section id="usage">
+            <p class="kicker" data-i18n="usage.kicker">Cliente</p>
+            <h2 data-i18n="usage.title">Primer flujo de uso</h2>
+            <p data-i18n="usage.body">
+              La API se organiza por recursos. La app consumidora conserva el tenant,
+              el token y la logica de negocio.
+            </p>
+            <pre class="code"><code>import { NextivaClient } from "@nextiq/nextiva-sdk";
+
+const nextiva = new NextivaClient({
+  domain: "tenant.thrio.io",
+  token: process.env.NEXTIVA_TOKEN,
+  authorizationMode: "raw"
+});
+
+const session = await nextiva.users.session.get();
+const contacts = await nextiva.data.contacts.list({ query: { pageSize: 10 } });
+const answer = await nextiva.ai.predict({
+  message: "What should the agent answer next?",
+  kb_ids: ["knowledge-base-id"],
+  workitem_id: "workitem-id"
+});</code></pre>
+          </section>
+
+          <section id="resources">
+            <p class="kicker" data-i18n="resources.kicker">Superficie</p>
+            <h2 data-i18n="resources.title">Recursos publicados</h2>
+            <div class="resource-grid">
+              <article class="resource">
+                <h3><code>nextiva.auth</code></h3>
+                <p data-i18n="resource.auth">Provider token desde credenciales Basic del login provider.</p>
+              </article>
+              <article class="resource">
+                <h3><code>nextiva.ai</code></h3>
+                <p data-i18n="resource.ai">Prediccion con KB y contexto de workitem.</p>
+              </article>
+              <article class="resource">
+                <h3><code>nextiva.analytics</code></h3>
+                <p data-i18n="resource.analytics">Historial y detalle analitico de workitems.</p>
+              </article>
+              <article class="resource">
+                <h3><code>nextiva.users</code></h3>
+                <p data-i18n="resource.users">Sesion, login, logout, workitems, TTS, chat y ACD.</p>
+              </article>
+              <article class="resource">
+                <h3><code>nextiva.restCalls</code></h3>
+                <p data-i18n="resource.restCalls">Ejecucion REST call con respuesta por ID.</p>
+              </article>
+              <article class="resource">
+                <h3><code>nextiva.data</code></h3>
+                <p data-i18n="resource.data">Contacts, campaigns, lists, leads, workflow y objetos NCC.</p>
+              </article>
+              <article class="resource">
+                <h3><code>docs/ai-usage.md</code></h3>
+                <p data-i18n="resource.docs">Reglas para que AI use el SDK sin inventar endpoints.</p>
+              </article>
+            </div>
+          </section>
+
+          <section id="coverage">
+            <p class="kicker" data-i18n="coverage.kicker">Coverage</p>
+            <h2 data-i18n="coverage.title">Endpoints incluidos</h2>
+            <p data-i18n="coverage.body">Filtra por metodo SDK, metodo HTTP o ruta.</p>
+            <div class="table-tools">
+              <input class="filter" id="filter" type="search" placeholder="Buscar endpoint o metodo..." />
+            </div>
+            <div class="table-wrap">
+              <table id="endpointTable">
+                <thead>
+                  <tr><th>SDK</th><th>HTTP</th><th>Endpoint</th><th data-i18n="table.family">Familia</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td><code>auth.providerToken</code></td><td><span class="method">GET</span></td><td><code>https://login.thrio.com/provider/token-with-authorities</code></td><td>Auth</td></tr>
+                  <tr><td><code>ai.predict</code></td><td><span class="method">POST</span></td><td><code>/data/api/ai/prediction</code></td><td>AI</td></tr>
+                  <tr><td><code>users.session.get</code></td><td><span class="method">GET</span></td><td><code>/users/api/session</code></td><td>Users</td></tr>
+                  <tr><td><code>users.login</code></td><td><span class="method">POST</span></td><td><code>/users/api/login</code></td><td>Users</td></tr>
+                  <tr><td><code>users.logout</code></td><td><span class="method">POST</span></td><td><code>/users/api/logout</code></td><td>Users</td></tr>
+                  <tr><td><code>users.workitems.list</code></td><td><span class="method">GET</span></td><td><code>/users/api/workitems</code></td><td>Users</td></tr>
+                  <tr><td><code>users.workitems.textToSpeech</code></td><td><span class="method">POST</span></td><td><code>/users/api/calls/:workitemId/tts</code></td><td>Users</td></tr>
+                  <tr><td><code>users.chat.sendMessage</code></td><td><span class="method">POST</span></td><td><code>/chats/api/agent/chats/:workitemId/messages</code></td><td>Chats</td></tr>
+                  <tr><td><code>users.acd.updateLogin</code></td><td><span class="method">POST</span></td><td><code>/users/api/acd/login</code></td><td>Users</td></tr>
+                  <tr><td><code>restCalls.callWithResponse</code></td><td><span class="method">POST</span></td><td><code>/rest-calls/api/restcallwithresponse/:restCallId</code></td><td>REST Calls</td></tr>
+                  <tr><td><code>analytics.workitems.get</code></td><td><span class="method">GET</span></td><td><code>/analytics/api/types/workitems/:workitemId</code></td><td>Analytics</td></tr>
+                  <tr><td><code>analytics.workitems.history</code></td><td><span class="method">GET</span></td><td><code>/analytics/api/v1/types/workitems/history</code></td><td>Analytics</td></tr>
+                  <tr><td><code>data.contacts.list</code></td><td><span class="method">GET</span></td><td><code>/data/api/types/contact</code></td><td>Data</td></tr>
+                  <tr><td><code>data.contacts.create</code></td><td><span class="method">POST</span></td><td><code>/data/api/types/contact</code></td><td>Data</td></tr>
+                  <tr><td><code>data.contacts.update</code></td><td><span class="method">PATCH</span></td><td><code>/data/api/types/contact/:contactId</code></td><td>Data</td></tr>
+                  <tr><td><code>data.fieldMappings.list</code></td><td><span class="method">GET</span></td><td><code>/data/api/types/fieldmappings</code></td><td>Data</td></tr>
+                  <tr><td><code>data.templates.list</code></td><td><span class="method">GET</span></td><td><code>/data/api/types/template</code></td><td>Data</td></tr>
+                  <tr><td><code>data.dispositions.list</code></td><td><span class="method">GET</span></td><td><code>/data/api/types/disposition</code></td><td>Data</td></tr>
+                  <tr><td><code>data.dispositions.create</code></td><td><span class="method">POST</span></td><td><code>/data/api/types/disposition</code></td><td>Data</td></tr>
+                  <tr><td><code>data.outboundLists.list</code></td><td><span class="method">GET</span></td><td><code>/data/api/types/outboundlist</code></td><td>Data</td></tr>
+                  <tr><td><code>data.outboundLists.get</code></td><td><span class="method">GET</span></td><td><code>/data/api/types/outboundlist/:listId</code></td><td>Data</td></tr>
+                  <tr><td><code>data.outboundLists.update</code></td><td><span class="method">PATCH</span></td><td><code>/data/api/types/outboundlist/:listId</code></td><td>Data</td></tr>
+                  <tr><td><code>data.outboundLists.remove</code></td><td><span class="method">DELETE</span></td><td><code>/data/api/types/outboundlist/:listId</code></td><td>Data</td></tr>
+                  <tr><td><code>data.outboundLists.createMultipart</code></td><td><span class="method">POST</span></td><td><code>/data/api/types/outboundlist</code></td><td>Data</td></tr>
+                  <tr><td><code>data.outboundLists.addLeads</code></td><td><span class="method">POST</span></td><td><code>/data/api/types/outboundlist/:listId/leads</code></td><td>Data</td></tr>
+                  <tr><td><code>data.campaignOutboundLists.attach</code></td><td><span class="method">POST</span></td><td><code>/data/api/types/campaignoutboundlist</code></td><td>Data</td></tr>
+                  <tr><td><code>data.campaignDispositions.attach</code></td><td><span class="method">POST</span></td><td><code>/data/api/types/campaigndisposition</code></td><td>Data</td></tr>
+                  <tr><td><code>data.leads.list</code></td><td><span class="method">GET</span></td><td><code>/data/api/types/lead</code></td><td>Data</td></tr>
+                  <tr><td><code>data.leads.update</code></td><td><span class="method">PATCH</span></td><td><code>/data/api/types/lead/:leadId</code></td><td>Data</td></tr>
+                  <tr><td><code>data.leads.updateForList</code></td><td><span class="method">PATCH</span></td><td><code>/data/api/types/outboundlist/:listId/lead/:leadId</code></td><td>Data</td></tr>
+                  <tr><td><code>data.leads.remove</code></td><td><span class="method">DELETE</span></td><td><code>/data/api/types/lead/:leadId?outboundListId=:listId</code></td><td>Data</td></tr>
+                  <tr><td><code>data.campaigns.list</code></td><td><span class="method">GET</span></td><td><code>/data/api/types/campaign</code></td><td>Data</td></tr>
+                  <tr><td><code>data.campaigns.get</code></td><td><span class="method">GET</span></td><td><code>/data/api/types/campaign/:campaignId</code></td><td>Data</td></tr>
+                  <tr><td><code>data.campaigns.create</code></td><td><span class="method">POST</span></td><td><code>/data/api/types/campaign</code></td><td>Data</td></tr>
+                  <tr><td><code>data.campaigns.update</code></td><td><span class="method">PATCH</span></td><td><code>/data/api/types/campaign/:campaignId</code></td><td>Data</td></tr>
+                  <tr><td><code>data.campaigns.remove</code></td><td><span class="method">DELETE</span></td><td><code>/data/api/types/campaign/:campaignId</code></td><td>Data</td></tr>
+                  <tr><td><code>data.pstnNumbers.create</code></td><td><span class="method">POST</span></td><td><code>/data/api/types/pstnnumber</code></td><td>Data</td></tr>
+                  <tr><td><code>data.pstnNumbers.listUnused</code></td><td><span class="method">GET</span></td><td><code>/data/api/types/pstnnumber/unused?filter=campaign:addresses</code></td><td>Data</td></tr>
+                  <tr><td><code>data.workflows.listForCampaign</code></td><td><span class="method">GET</span></td><td><code>/data/api/types/workflow?filter=campaign:workflowId</code></td><td>Data</td></tr>
+                  <tr><td><code>data.workflows.create</code></td><td><span class="method">POST</span></td><td><code>/data/api/types/workflow</code></td><td>Data</td></tr>
+                  <tr><td><code>data.workflows.update</code></td><td><span class="method">PATCH</span></td><td><code>/data/api/types/workflow/:workflowId</code></td><td>Data</td></tr>
+                  <tr><td><code>data.queues.create</code></td><td><span class="method">POST</span></td><td><code>/data/api/types/queue</code></td><td>Data</td></tr>
+                  <tr><td><code>data.supervisorCampaigns.attach</code></td><td><span class="method">POST</span></td><td><code>/data/api/types/supervisorcampaign</code></td><td>Data</td></tr>
+                  <tr><td><code>data.prompts.create</code></td><td><span class="method">POST</span></td><td><code>/data/api/types/prompt</code></td><td>Data</td></tr>
+                  <tr><td><code>data.surveys.list</code></td><td><span class="method">GET</span></td><td><code>/data/api/types/survey</code></td><td>Data</td></tr>
+                  <tr><td><code>data.timeEvents.create</code></td><td><span class="method">POST</span></td><td><code>/data/api/types/timeevent</code></td><td>Data</td></tr>
+                  <tr><td><code>data.businessEvents.create</code></td><td><span class="method">POST</span></td><td><code>/data/api/types/businessevent</code></td><td>Data</td></tr>
+                  <tr><td><code>data.businessEventTimeEvents.create</code></td><td><span class="method">POST</span></td><td><code>/data/api/types/businesseventtimeevent</code></td><td>Data</td></tr>
+                  <tr><td><code>data.userProfiles.list</code></td><td><span class="method">GET</span></td><td><code>/data/api/types/userprofile</code></td><td>Data</td></tr>
+                  <tr><td><code>data.users.list</code></td><td><span class="method">GET</span></td><td><code>/data/api/types/user</code></td><td>Data</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="usecases">
+            <p class="kicker" data-i18n="usecases.kicker">Aplicacion</p>
+            <h2 data-i18n="usecases.title">Usos por endpoint y flujos combinados</h2>
+            <p data-i18n="usecases.body">
+              Estos ejemplos ayudan a pedir desarrollos a AI con contexto funcional: que endpoint usar,
+              para que sirve y con que otros recursos suele combinarse.
+            </p>
+            <div class="table-wrap usecase-grid">
+              <table>
+                <thead>
+                  <tr>
+                    <th>SDK</th>
+                    <th data-i18n="usecases.table.use">Uso tipico</th>
+                    <th data-i18n="usecases.table.combine">Se combina con</th>
+                  </tr>
+                </thead>
+                <tbody id="endpointUseCases"></tbody>
+              </table>
+            </div>
+
+            <div class="flow-grid" id="combinedFlows"></div>
+          </section>
+
+          <section id="boundary">
+            <p class="kicker" data-i18n="boundary.kicker">Limites</p>
+            <h2 data-i18n="boundary.title">Que no entra en este SDK</h2>
+            <div class="note" data-i18n-html="boundary.body">
+              <strong>No se mezclan wrappers de `webs`.</strong>
+              Rutas locales como <code>/api/workitem</code>, <code>/api/wieland/*</code>,
+              <code>/api/pulseforms/*</code> y <code>/api/ncc-builder/*</code> siguen siendo
+              responsabilidad de la aplicacion. Sugar, HubSpot y proveedores LLM
+              tambien quedan fuera.
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+    <script>
+      const translations = {
+        es: {
+          "document.title": "Nextiva SDK",
+          "hero.subtitle": "Vista publicada desde `webs` para revisar cobertura y API del SDK.",
+          "language.label": "Idioma",
+          status: "Primera version visible",
+          "aside.title": "Revision",
+          "aside.subtitle": "SDK separado, docs servidas desde `webs`.",
+          "nav.overview": "Resumen",
+          "nav.usage": "Uso",
+          "nav.resources": "Recursos",
+          "nav.coverage": "Endpoints",
+          "nav.usecases": "Casos de uso",
+          "nav.boundary": "Limites",
+          "overview.kicker": "SDK publico",
+          "overview.title": "Cobertura Nextiva extraida del proyecto actual",
+          "overview.body": "Esta version agrupa los endpoints Nextiva/Thrio que `webs` ya usa para auth, AI prediction, analytics, workitems, chat, TTS, REST Calls y datos NCC.",
+          "metric.families": "familias API",
+          "metric.methods": "metodos documentados",
+          "metric.client": "cliente publicable",
+          "usage.kicker": "Cliente",
+          "usage.title": "Primer flujo de uso",
+          "usage.body": "La API se organiza por recursos. La app consumidora conserva el tenant, el token y la logica de negocio.",
+          "resources.kicker": "Superficie",
+          "resources.title": "Recursos publicados",
+          "resource.auth": "Provider token desde credenciales Basic del login provider.",
+          "resource.ai": "Prediccion con KB y contexto de workitem.",
+          "resource.analytics": "Historial y detalle analitico de workitems.",
+          "resource.users": "Sesion, login, logout, workitems, TTS, chat y ACD.",
+          "resource.restCalls": "Ejecucion REST call con respuesta por ID.",
+          "resource.data": "Contacts, campaigns, lists, leads, workflow y objetos NCC.",
+          "resource.docs": "Reglas para que AI use el SDK sin inventar endpoints.",
+          "coverage.kicker": "Coverage",
+          "coverage.title": "Endpoints incluidos",
+          "coverage.body": "Filtra por metodo SDK, metodo HTTP o ruta.",
+          "coverage.placeholder": "Buscar endpoint o metodo...",
+          "table.family": "Familia",
+          "usecases.kicker": "Aplicacion",
+          "usecases.title": "Usos por endpoint y flujos combinados",
+          "usecases.body": "Estos ejemplos ayudan a pedir desarrollos a AI con contexto funcional: que endpoint usar, para que sirve y con que otros recursos suele combinarse.",
+          "usecases.table.use": "Uso tipico",
+          "usecases.table.combine": "Se combina con",
+          "boundary.kicker": "Limites",
+          "boundary.title": "Que no entra en este SDK",
+          "boundary.body": "<strong>No se mezclan wrappers de `webs`.</strong> Rutas locales como <code>/api/workitem</code>, <code>/api/wieland/*</code>, <code>/api/pulseforms/*</code> y <code>/api/ncc-builder/*</code> siguen siendo responsabilidad de la aplicacion. Sugar, HubSpot y proveedores LLM tambien quedan fuera."
+        },
+        en: {
+          "document.title": "Nextiva SDK",
+          "hero.subtitle": "Review page published from `webs` to inspect SDK coverage and API shape.",
+          "language.label": "Language",
+          status: "First visible version",
+          "aside.title": "Review",
+          "aside.subtitle": "Separate SDK, docs served from `webs`.",
+          "nav.overview": "Overview",
+          "nav.usage": "Usage",
+          "nav.resources": "Resources",
+          "nav.coverage": "Endpoints",
+          "nav.usecases": "Use cases",
+          "nav.boundary": "Boundaries",
+          "overview.kicker": "Public SDK",
+          "overview.title": "Nextiva coverage extracted from the current project",
+          "overview.body": "This version groups the Nextiva/Thrio endpoints that `webs` already uses for auth, AI prediction, analytics, workitems, chat, TTS, REST Calls, and NCC data.",
+          "metric.families": "API families",
+          "metric.methods": "documented methods",
+          "metric.client": "publishable client",
+          "usage.kicker": "Client",
+          "usage.title": "First usage flow",
+          "usage.body": "The API is organized by resources. The consuming app keeps tenant selection, token handling, and business logic.",
+          "resources.kicker": "Surface",
+          "resources.title": "Published resources",
+          "resource.auth": "Provider token from Basic credentials against the login provider.",
+          "resource.ai": "Prediction with KB and workitem context.",
+          "resource.analytics": "Historical search and analytic workitem detail.",
+          "resource.users": "Session, login, logout, workitems, TTS, chat, and ACD.",
+          "resource.restCalls": "REST call execution with response by ID.",
+          "resource.data": "Contacts, campaigns, lists, leads, workflow, and NCC objects.",
+          "resource.docs": "Rules for AI to use the SDK without inventing endpoints.",
+          "coverage.kicker": "Coverage",
+          "coverage.title": "Included endpoints",
+          "coverage.body": "Filter by SDK method, HTTP method, or path.",
+          "coverage.placeholder": "Search endpoint or method...",
+          "table.family": "Family",
+          "usecases.kicker": "Application",
+          "usecases.title": "Endpoint use cases and combined flows",
+          "usecases.body": "These examples help request AI-assisted development with functional context: which endpoint to use, what it is for, and which resources it usually works with.",
+          "usecases.table.use": "Typical use",
+          "usecases.table.combine": "Works with",
+          "boundary.kicker": "Boundaries",
+          "boundary.title": "What is not part of this SDK",
+          "boundary.body": "<strong>`webs` wrappers are not mixed in.</strong> Local routes like <code>/api/workitem</code>, <code>/api/wieland/*</code>, <code>/api/pulseforms/*</code>, and <code>/api/ncc-builder/*</code> remain application responsibilities. Sugar, HubSpot, and LLM providers are also excluded."
+        }
+      };
+
+      const languageSelect = document.getElementById("languageSelect");
+      const filter = document.getElementById("filter");
+      const rows = Array.from(document.querySelectorAll("#endpointTable tbody tr"));
+      const endpointUseCases = [
+        { sdk: "auth.providerToken", es: "Obtener un token de proveedor desde credenciales Basic para iniciar flujos autenticados contra el tenant.", en: "Get a provider token from Basic credentials to start authenticated tenant flows.", with: ["users.login", "users.session.get"] },
+        { sdk: "ai.predict", es: "Solicitar una respuesta sugerida o siguiente accion usando KB, mensaje y contexto del workitem.", en: "Request a suggested answer or next action using KB, message, and workitem context.", with: ["users.workitems.list", "data.templates.list"] },
+        { sdk: "users.session.get", es: "Validar quien esta autenticado, su tenant y permisos antes de ejecutar acciones de agente.", en: "Validate who is authenticated, tenant context, and permissions before agent actions.", with: ["users.login", "data.userProfiles.list"] },
+        { sdk: "users.login", es: "Crear sesion de usuario en NCC cuando la app necesita operar como agente o supervisor.", en: "Create an NCC user session when the app needs to operate as an agent or supervisor.", with: ["auth.providerToken", "users.session.get"] },
+        { sdk: "users.logout", es: "Cerrar sesion al terminar una consola o limpiar estado compartido.", en: "Close the session when ending a console session or clearing shared state.", with: ["users.session.get"] },
+        { sdk: "users.workitems.list", es: "Listar conversaciones o llamadas activas para abrir contexto operacional del agente.", en: "List active conversations or calls to open the agent's operational context.", with: ["ai.predict", "users.chat.sendMessage"] },
+        { sdk: "users.workitems.textToSpeech", es: "Enviar texto a voz dentro de una llamada cuando el flujo requiere reproducir una locucion.", en: "Send text-to-speech into a call when the workflow needs to play a spoken prompt.", with: ["users.workitems.list", "ai.predict"] },
+        { sdk: "users.chat.sendMessage", es: "Responder en un chat de agente con texto generado por AI o plantillas aprobadas.", en: "Reply in an agent chat using AI-generated text or approved templates.", with: ["ai.predict", "users.workitems.list"] },
+        { sdk: "users.acd.updateLogin", es: "Cambiar estado ACD del agente para disponibilidad, pausas o preparacion de campañas.", en: "Update the agent ACD state for availability, breaks, or campaign readiness.", with: ["users.session.get", "users.workitems.list"] },
+        { sdk: "restCalls.callWithResponse", es: "Ejecutar una REST Call configurada en NCC y usar su respuesta en la app.", en: "Run a REST Call configured in NCC and consume its response in the app.", with: ["data.campaigns.get", "ai.predict"] },
+        { sdk: "analytics.workitems.get", es: "Consultar detalle analitico de un workitem historico o activo por ID.", en: "Read analytic detail for a historical or active workitem by ID.", with: ["analytics.workitems.history", "data.dispositions.list"] },
+        { sdk: "analytics.workitems.history", es: "Buscar historial de llamadas o interacciones por filtros, fechas o paginacion.", en: "Search call or interaction history by filters, dates, or pagination.", with: ["analytics.workitems.get", "data.campaigns.list"] },
+        { sdk: "data.contacts.list", es: "Buscar contactos por telefono, email u otros filtros antes de crear registros nuevos.", en: "Search contacts by phone, email, or other filters before creating new records.", with: ["data.contacts.create", "data.leads.list"] },
+        { sdk: "data.contacts.create", es: "Crear un contacto cuando una llamada o formulario no tiene registro existente.", en: "Create a contact when a call or form has no existing record.", with: ["data.contacts.list", "data.leads.update"] },
+        { sdk: "data.contacts.update", es: "Actualizar datos capturados durante la interaccion, como telefono, email o notas.", en: "Update data captured during the interaction, such as phone, email, or notes.", with: ["data.contacts.list", "restCalls.callWithResponse"] },
+        { sdk: "data.fieldMappings.list", es: "Consultar homologaciones de campos para transformar datos entre NCC, SDK y una app.", en: "Read field mappings to transform data between NCC, the SDK, and an app.", with: ["data.contacts.create", "data.leads.update"] },
+        { sdk: "data.templates.list", es: "Obtener plantillas aprobadas para respuestas, prompts o mensajes de campaña.", en: "Fetch approved templates for responses, prompts, or campaign messages.", with: ["ai.predict", "users.chat.sendMessage"] },
+        { sdk: "data.dispositions.list", es: "Listar disposiciones disponibles para auditoria o configuracion de campañas.", en: "List available dispositions for auditing or campaign setup.", with: ["data.campaigns.get", "analytics.workitems.history"] },
+        { sdk: "data.dispositions.create", es: "Crear disposiciones con acciones, flags y tipos de workitem para una campaña.", en: "Create dispositions with actions, flags, and workitem types for a campaign.", with: ["data.campaignDispositions.attach", "data.campaigns.create"] },
+        { sdk: "data.outboundLists.list", es: "Listar listas outbound disponibles para administracion o seleccion de campaña.", en: "List available outbound lists for administration or campaign selection.", with: ["data.campaigns.list", "data.leads.list"] },
+        { sdk: "data.outboundLists.get", es: "Ver detalle de una lista antes de modificar leads o relacionarla con una campaña.", en: "Inspect a list before changing leads or attaching it to a campaign.", with: ["data.outboundLists.addLeads", "data.campaignOutboundLists.attach"] },
+        { sdk: "data.outboundLists.update", es: "Renombrar o ajustar configuracion de una lista outbound existente.", en: "Rename or adjust configuration for an existing outbound list.", with: ["data.outboundLists.get"] },
+        { sdk: "data.outboundLists.remove", es: "Eliminar listas obsoletas despues de validar que no estan en uso.", en: "Remove obsolete lists after validating they are not in use.", with: ["data.campaigns.get"] },
+        { sdk: "data.outboundLists.createMultipart", es: "Crear una lista outbound subiendo archivo o payload multipart con leads.", en: "Create an outbound list by uploading a file or multipart lead payload.", with: ["data.campaignOutboundLists.attach", "data.leads.list"] },
+        { sdk: "data.outboundLists.addLeads", es: "Agregar leads a una lista ya creada, normalmente despues de normalizar datos.", en: "Add leads to an existing list, usually after normalizing data.", with: ["data.fieldMappings.list", "data.leads.list"] },
+        { sdk: "data.campaignOutboundLists.attach", es: "Relacionar una lista outbound con una campaña para que pueda ser marcada.", en: "Attach an outbound list to a campaign so it can be dialed.", with: ["data.outboundLists.get", "data.campaigns.get"] },
+        { sdk: "data.campaignDispositions.attach", es: "Asignar una disposicion creada a una campaña especifica.", en: "Attach a created disposition to a specific campaign.", with: ["data.dispositions.create", "data.campaigns.get"] },
+        { sdk: "data.leads.list", es: "Revisar leads de una lista, monitorear estado o auditar prioridades.", en: "Review list leads, monitor status, or audit priorities.", with: ["data.outboundLists.get", "data.leads.update"] },
+        { sdk: "data.leads.update", es: "Actualizar lead globalmente, por ejemplo prioridad, datos de contacto o estado.", en: "Update a lead globally, such as priority, contact data, or status.", with: ["data.leads.list", "data.fieldMappings.list"] },
+        { sdk: "data.leads.updateForList", es: "Actualizar un lead dentro del contexto especifico de una lista outbound.", en: "Update a lead within the specific context of an outbound list.", with: ["data.outboundLists.get", "data.leads.list"] },
+        { sdk: "data.leads.remove", es: "Quitar un lead de una lista cuando ya no debe ser contactado.", en: "Remove a lead from a list when it should no longer be contacted.", with: ["data.outboundLists.get", "data.leads.list"] },
+        { sdk: "data.campaigns.list", es: "Listar campañas disponibles para construir selectores, dashboards o flujos de admin.", en: "List campaigns for selectors, dashboards, or admin flows.", with: ["data.workflows.listForCampaign", "data.outboundLists.list"] },
+        { sdk: "data.campaigns.get", es: "Obtener detalle de una campaña antes de actualizar telefonia, listas o workflow.", en: "Get campaign details before updating telephony, lists, or workflow.", with: ["data.campaigns.update", "data.workflows.update"] },
+        { sdk: "data.campaigns.create", es: "Crear campañas inbound u outbound desde una herramienta de configuracion.", en: "Create inbound or outbound campaigns from a configuration tool.", with: ["data.pstnNumbers.listUnused", "data.workflows.create"] },
+        { sdk: "data.campaigns.update", es: "Asignar caller ID, numeros, workflow u otros atributos a una campaña existente.", en: "Assign caller ID, numbers, workflow, or other attributes to an existing campaign.", with: ["data.pstnNumbers.listUnused", "data.workflows.create"] },
+        { sdk: "data.campaigns.remove", es: "Eliminar campañas de prueba o deprecadas despues de validaciones operativas.", en: "Delete test or deprecated campaigns after operational validation.", with: ["data.campaigns.get"] },
+        { sdk: "data.pstnNumbers.create", es: "Registrar un numero PSTN para poder usarlo en campañas.", en: "Register a PSTN number so it can be used in campaigns.", with: ["data.campaigns.update"] },
+        { sdk: "data.pstnNumbers.listUnused", es: "Buscar numeros libres antes de crear o actualizar una campaña inbound.", en: "Find free numbers before creating or updating an inbound campaign.", with: ["data.campaigns.create", "data.campaigns.update"] },
+        { sdk: "data.workflows.listForCampaign", es: "Ver workflows disponibles o asociados a campañas para auditoria y configuracion.", en: "Inspect workflows available or attached to campaigns for audit and setup.", with: ["data.campaigns.get", "data.workflows.update"] },
+        { sdk: "data.workflows.create", es: "Crear workflow base para una nueva campaña o flujo de atencion.", en: "Create a base workflow for a new campaign or service flow.", with: ["data.queues.create", "data.prompts.create"] },
+        { sdk: "data.workflows.update", es: "Modificar ruteo, horarios, prompts o relaciones del workflow.", en: "Modify routing, schedules, prompts, or workflow relationships.", with: ["data.businessEvents.create", "data.prompts.create"] },
+        { sdk: "data.queues.create", es: "Crear cola para enrutar llamadas o chats hacia agentes.", en: "Create a queue to route calls or chats to agents.", with: ["data.workflows.create", "data.workflows.update"] },
+        { sdk: "data.supervisorCampaigns.attach", es: "Relacionar supervisores con una campaña para control operativo.", en: "Attach supervisors to a campaign for operational oversight.", with: ["data.users.list", "data.userProfiles.list"] },
+        { sdk: "data.prompts.create", es: "Crear mensajes de audio/texto para horarios, IVR o out-of-hours.", en: "Create audio/text prompts for schedules, IVR, or out-of-hours handling.", with: ["data.workflows.update", "data.timeEvents.create"] },
+        { sdk: "data.surveys.list", es: "Listar encuestas disponibles para asignarlas a campañas.", en: "List available surveys so they can be assigned to campaigns.", with: ["data.campaigns.update", "data.campaigns.list"] },
+        { sdk: "data.timeEvents.create", es: "Definir ventanas horarias para business hours o excepciones.", en: "Define time windows for business hours or exceptions.", with: ["data.businessEvents.create", "data.businessEventTimeEvents.create"] },
+        { sdk: "data.businessEvents.create", es: "Crear evento de negocio que agrupa reglas de horario.", en: "Create a business event that groups schedule rules.", with: ["data.timeEvents.create", "data.businessEventTimeEvents.create"] },
+        { sdk: "data.businessEventTimeEvents.create", es: "Relacionar un business event con un time event para activar horarios en workflows.", en: "Link a business event with a time event to activate schedules in workflows.", with: ["data.businessEvents.create", "data.timeEvents.create"] },
+        { sdk: "data.userProfiles.list", es: "Consultar perfiles para validar permisos o construir experiencias por rol.", en: "Read profiles to validate permissions or build role-aware experiences.", with: ["users.session.get", "users.acd.updateLogin"] },
+        { sdk: "data.users.list", es: "Listar usuarios NCC para seleccionar supervisores o validar propietarios.", en: "List NCC users to select supervisors or validate ownership.", with: ["data.userProfiles.list", "data.supervisorCampaigns.attach"] }
+      ];
+      const combinedFlows = [
+        { titleEs: "Asistente de agente con AI", titleEn: "AI agent assistant", bodyEs: "Lista workitems, genera sugerencia con AI y envia el mensaje aprobado al chat.", bodyEn: "List workitems, generate an AI suggestion, and send the approved reply to chat.", steps: ["users.workitems.list", "ai.predict", "users.chat.sendMessage"] },
+        { titleEs: "Creacion de campaña inbound", titleEn: "Inbound campaign creation", bodyEs: "Busca numeros libres, crea campaña, asigna supervisores, crea disposiciones, cola/workflow y conecta horarios o prompts.", bodyEn: "Find free numbers, create the campaign, attach supervisors, create dispositions, create queue/workflow, and connect schedules or prompts.", steps: ["data.pstnNumbers.listUnused", "data.campaigns.create", "data.supervisorCampaigns.attach", "data.dispositions.create", "data.campaignDispositions.attach", "data.queues.create", "data.workflows.create", "data.campaigns.update"] },
+        { titleEs: "Carga outbound con leads", titleEn: "Outbound lead upload", bodyEs: "Crea lista, agrega leads normalizados y la adjunta a una campaña.", bodyEn: "Create a list, add normalized leads, and attach it to a campaign.", steps: ["data.outboundLists.createMultipart", "data.outboundLists.addLeads", "data.campaignOutboundLists.attach"] },
+        { titleEs: "Actualizacion de contacto desde una interaccion", titleEn: "Contact update from an interaction", bodyEs: "Busca contacto por identificador, crea si no existe y actualiza datos capturados.", bodyEn: "Search a contact by identifier, create it if missing, and update captured data.", steps: ["data.contacts.list", "data.contacts.create", "data.contacts.update"] },
+        { titleEs: "Business hours con mensajes", titleEn: "Business hours with prompts", bodyEs: "Crea eventos de tiempo y negocio, los relaciona y actualiza el workflow con el prompt.", bodyEn: "Create time and business events, link them, and update the workflow with the prompt.", steps: ["data.timeEvents.create", "data.businessEvents.create", "data.businessEventTimeEvents.create", "data.prompts.create", "data.workflows.update"] },
+        { titleEs: "Historial de interacciones", titleEn: "Interaction history", bodyEs: "Busca workitems historicos, abre el detalle analitico y cruza disposiciones o campañas.", bodyEn: "Search historical workitems, open analytic detail, and cross-check dispositions or campaigns.", steps: ["analytics.workitems.history", "analytics.workitems.get", "data.dispositions.list", "data.campaigns.list"] },
+        { titleEs: "Asignacion de encuesta a campañas", titleEn: "Survey assignment to campaigns", bodyEs: "Lista encuestas y campañas, selecciona una encuesta y actualiza varias campañas con surveyId.", bodyEn: "List surveys and campaigns, select a survey, and update multiple campaigns with surveyId.", steps: ["data.surveys.list", "data.campaigns.list", "data.campaigns.update"] }
+      ];
+
+      function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, (char) => ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          "\"": "&quot;",
+          "'": "&#039;"
+        }[char]));
+      }
+
+      function renderUseCases(language) {
+        const useCasesBody = document.getElementById("endpointUseCases");
+        const flows = document.getElementById("combinedFlows");
+        useCasesBody.innerHTML = endpointUseCases.map((item) => `
+          <tr>
+            <td><code>${escapeHtml(item.sdk)}</code></td>
+            <td>${escapeHtml(language === "en" ? item.en : item.es)}</td>
+            <td>${item.with.map((method) => `<code>${escapeHtml(method)}</code>`).join(" ")}</td>
+          </tr>
+        `).join("");
+        flows.innerHTML = combinedFlows.map((flow) => `
+          <article class="flow">
+            <h3>${escapeHtml(language === "en" ? flow.titleEn : flow.titleEs)}</h3>
+            <p>${escapeHtml(language === "en" ? flow.bodyEn : flow.bodyEs)}</p>
+            <p>${flow.steps.map((method) => `<code>${escapeHtml(method)}</code>`).join(" -> ")}</p>
+          </article>
+        `).join("");
+      }
+
+      function applyLanguage(language) {
+        const selected = translations[language] ? language : "es";
+        document.documentElement.lang = selected;
+        document.title = translations[selected]["document.title"];
+        document.querySelectorAll("[data-i18n]").forEach((node) => {
+          const key = node.getAttribute("data-i18n");
+          if (translations[selected][key]) node.textContent = translations[selected][key];
+        });
+        document.querySelectorAll("[data-i18n-html]").forEach((node) => {
+          const key = node.getAttribute("data-i18n-html");
+          if (translations[selected][key]) node.innerHTML = translations[selected][key];
+        });
+        filter.placeholder = translations[selected]["coverage.placeholder"];
+        renderUseCases(selected);
+        localStorage.setItem("nextiva-sdk-language", selected);
+      }
+      const savedLanguage = localStorage.getItem("nextiva-sdk-language");
+      const initialLanguage = savedLanguage || ((navigator.language || "").toLowerCase().startsWith("en") ? "en" : "es");
+      languageSelect.value = initialLanguage;
+      applyLanguage(initialLanguage);
+      languageSelect.addEventListener("change", () => applyLanguage(languageSelect.value));
+      filter.addEventListener("input", () => {
+        const query = filter.value.trim().toLowerCase();
+        rows.forEach((row) => {
+          row.hidden = query && !row.textContent.toLowerCase().includes(query);
+        });
+      });
+    </script>
+  </body>
+</html>

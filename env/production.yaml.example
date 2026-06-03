@@ -1,11 +1,7 @@
-# Variables de entorno para PRODUCCIÓN
-# Copia este archivo a env/production.yaml y rellena los valores reales.
-# NUNCA hagas commit de env/production.yaml (está en .gitignore).
+# Variables no sensibles para PRODUCCION.
+# Los secretos se guardan en Google Secret Manager y se inyectan con --set-secrets.
+# Copia este archivo a env/production.yaml si necesitas valores locales de referencia.
 
 FIRESTORE_PREFIX: "nextiq"
 LOG_EXECUTION_ID: "false"
 THRIO_KB_ID: "XXXXXXXXXXXXXXXXXXXXXXXX"
-THRIO_AUTH_TOKEN: "PEGA_EL_TOKEN_AQUI"
-THRIO_COOKIE: ""
-ADMIN_PASSWORD: "CAMBIA_ESTO"
-ENCRYPTION_SALT: "nextiq-campaigns-salt-v1"

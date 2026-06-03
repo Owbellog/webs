@@ -1,7 +1,10 @@
 const http = require("http");
+const https = require("https");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const dns = require("dns").promises;
+const net = require("net");
 const { URL } = require("url");
 const { Firestore } = require("@google-cloud/firestore");
 
@@ -11,6 +14,8 @@ const CAMPAIGNS_FILE = path.join(ROOT, "campaigns.json");
 const USERS_FILE = path.join(ROOT, "users.json");
 const WIELAND_CONTACTS_FILE = path.join(ROOT, "wieland-contacts.json");
 const WIELAND_UPLOAD_LOGS_FILE = path.join(ROOT, "wieland-upload-logs.json");
+const WIDGET_STATE_FILE = path.join(ROOT, "widget-state.json");
+const WIDGET_DRAFT_FILE = path.join(ROOT, "widget-draft.json");
 
 loadEnv(path.join(ROOT, ".env"));
 
@@ -20,10 +25,15 @@ const DEFAULT_API_URL = process.env.THRIO_API_URL || "https://mancity.thrio.io/d
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
 const ENCRYPTION_SALT = process.env.ENCRYPTION_SALT || "nextiq-campaigns-salt-v1";
 const FIRESTORE_PREFIX = sanitizeFirestorePrefix(process.env.FIRESTORE_PREFIX || "nextiq");
+const FIRESTORE_DATABASE_ID = String(process.env.FIRESTORE_DATABASE_ID || "").trim();
 const FIRESTORE_COLLECTION = process.env.FIRESTORE_COLLECTION || `${FIRESTORE_PREFIX}_campaigns`;
 const USERS_COLLECTION = `${FIRESTORE_PREFIX}_users`;
 const WIELAND_CONTACTS_COLLECTION = `${FIRESTORE_PREFIX}_wieland_contacts`;
 const WIELAND_UPLOAD_LOGS_COLLECTION = `${FIRESTORE_PREFIX}_wieland_upload_logs`;
+const WIDGET_STATE_COLLECTION = `${FIRESTORE_PREFIX}_widget_state`;
+const WIDGET_DRAFT_COLLECTION = `${FIRESTORE_PREFIX}_widget_draft`;
+const NCC_BUILDER_ADMIN_ACCOUNTS_COLLECTION = `${FIRESTORE_PREFIX}_ncc_builder_admin_accounts`;
+const NCC_BUILDER_AI_CONFIG_COLLECTION = `${FIRESTORE_PREFIX}_ncc_builder_ai_config`;
 const SESSION_EXPIRY_SECONDS = 8 * 60 * 60; // 8 hours
 const SESSION_COOKIE_NAME = "niq_sess";
 const WIELAND_SESSION_COOKIE_NAME = "niq_w_sess";
@@ -116,7 +126,7 @@ function decryptSecret(value) {
 }
 
 // Fields that must be encrypted at rest
-const SECRET_FIELDS = ["token", "cookie", "geminiApiKey", "questionsGeminiApiKey", "wielandNccCredential", "summaryagenticAiApiKey", "summaryagenticHubspotToken", "pulseformsAiApiKey", "pulseformsSugarPassword", "pulseformsSugarClientSecret"];
+const SECRET_FIELDS = ["token", "cookie", "geminiApiKey", "questionsGeminiApiKey", "wielandNccCredential", "summaryagenticAiApiKey", "summaryagenticHubspotToken", "pulseformsAiApiKey", "pulseformsSugarPassword", "pulseformsSugarClientSecret", "pulseformsWidgetStateReadToken"];
 
 function encryptCampaignSecrets(campaign) {
   const result = { ...campaign };
@@ -797,8 +807,43 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/pulseforms/agent-session") {
+    await handlePulseFormsAgentSession(req, res);
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/pulseforms/config") {
     await handlePulseFormsConfig(req, res, url);
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/pulseforms/widget-config") {
+    await handlePulseFormsWidgetConfig(req, res, url);
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/pulseforms/widget-contact") {
+    await handlePulseFormsWidgetContact(req, res, url);
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/pulseforms/widget-accounts") {
+    await handlePulseFormsWidgetAccounts(req, res, url);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/pulseforms/widget-contact") {
+    await handlePulseFormsWidgetContactCreate(req, res);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/pulseforms/widget-opportunity") {
+    await handlePulseFormsWidgetOpportunity(req, res);
+    return;
+  }
+
+  if (req.method === "PATCH" && url.pathname === "/api/pulseforms/widget-opportunity") {
+    await handlePulseFormsWidgetOpportunityPatch(req, res);
     return;
   }
 
@@ -809,6 +854,16 @@ async function handleRequest(req, res) {
 
   if (req.method === "POST" && url.pathname === "/api/pulseforms/submit") {
     await handlePulseFormsSubmit(req, res);
+    return;
+  }
+
+  if (url.pathname === "/api/widget-state" || url.pathname === "/api/pulseforms/widget-state") {
+    await handleWidgetState(req, res, url);
+    return;
+  }
+
+  if (url.pathname === "/api/widget-draft" || url.pathname === "/api/pulseforms/widget-draft") {
+    await handleWidgetDraft(req, res, url);
     return;
   }
 
@@ -861,6 +916,16 @@ async function handleRequest(req, res) {
 
   if (url.pathname.startsWith("/api/thrio-data/")) {
     await handleThrioData(req, res, url);
+    return;
+  }
+
+  if (url.pathname === "/api/workitem-history" || url.pathname.startsWith("/api/workitem-history/")) {
+    await handleWorkitemHistory(req, res, url);
+    return;
+  }
+
+  if (url.pathname === "/api/workitem-dispositions") {
+    await handleWorkitemDispositions(req, res, url);
     return;
   }
 
@@ -1104,9 +1169,9 @@ async function detectClientQuestionsWithGemini(messages, config) {
     generationConfig: { responseMimeType: "application/json", temperature: 0.2 }
   };
 
-  const upstream = await fetch(`${endpoint}?key=${apiKey}`, {
+  const upstream = await fetch(endpoint, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
     body: JSON.stringify(body)
   });
 
@@ -2834,6 +2899,55 @@ Rules (strictly follow):
   }
 }
 
+async function handlePulseFormsAgentSession(req, res) {
+  let body;
+  try { body = await readJson(req); } catch {
+    sendJson(res, 400, { ok: false, active: false, error: "Invalid JSON body" });
+    return;
+  }
+
+  const rawToken = String(
+    body.token ||
+    body.agentToken ||
+    body.authorization ||
+    body.Authorization ||
+    req.headers["x-agent-token"] ||
+    ""
+  ).trim();
+
+  if (!rawToken) {
+    sendJson(res, 400, { ok: false, active: false, error: "Missing agent token." });
+    return;
+  }
+
+  try {
+    const upstream = await fetch("https://astonvilla.thrio.io/users/api/session", {
+      method: "GET",
+      headers: {
+        "Authorization": rawToken,
+        "Content-Type": "application/json"
+      }
+    });
+    const text = await upstream.text();
+    let session = {};
+    if (text) {
+      try {
+        session = JSON.parse(text);
+      } catch {
+        session = { raw: text.slice(0, 1000) };
+      }
+    }
+    if (!upstream.ok) {
+      const message = session.error || session.message || session.error_description || `Agent session API returned ${upstream.status}.`;
+      sendJson(res, 401, { ok: false, active: false, error: message });
+      return;
+    }
+    sendJson(res, 200, { ok: true, active: true, session });
+  } catch (error) {
+    sendJson(res, 502, { ok: false, active: false, error: `Agent session validation failed: ${error.message}` });
+  }
+}
+
 async function handlePulseFormsConfig(req, res, url) {
   try {
     const campaignId = String(url.searchParams.get("campaign") || "").trim();
@@ -2856,6 +2970,317 @@ async function handlePulseFormsConfig(req, res, url) {
     });
   } catch (error) {
     sendJson(res, 500, { configured: false, error: error.message });
+  }
+}
+
+async function handlePulseFormsWidgetConfig(req, res, url) {
+  try {
+    const campaignId = String(url.searchParams.get("campaign") || "").trim();
+    if (!campaignId) { sendJson(res, 400, { ok: false, error: "Missing ?campaign= parameter." }); return; }
+
+    const campaigns = await getEffectiveCampaigns();
+    const config = campaigns.find((c) => c.id === campaignId);
+    if (!config) { sendJson(res, 404, { ok: false, error: `Campaign "${campaignId}" not found.` }); return; }
+
+    const sugar = config.pulseforms?.sugar || {};
+    if (config.pulseforms?.enabled === false || sugar.enabled !== true) {
+      sendJson(res, 400, { ok: false, error: "PulseForms Sugar CRM is not enabled for this campaign." });
+      return;
+    }
+
+    sendJson(res, 200, {
+      ok: true,
+      campaign: { id: config.id, name: config.name },
+      config: {
+        SUGAR_BASE_URL: String(sugar.baseUrl || "").trim().replace(/\/+$/g, ""),
+        SUGAR_API_VERSION: sugar.apiVersion || "v11_1",
+        CONTACT_LOOKUP_MODULE: sugar.queryModule || "Contacts",
+        CONTACT_LOOKUP_FIELD: sugar.queryField || "phone_work",
+        CONTACT_MODULE: sugar.contactModule || sugar.queryModule || "Contacts",
+        TICKET_MODULE: sugar.ticketModule || "tic_Tickets",
+        NEEDS_ASSESSMENT_MODULE: sugar.needsAssessmentModule || "NA_NeedsAssessment",
+        OPPORTUNITY_MODULE: sugar.submitModule || "Opportunities",
+        MAX_FIELDS_PER_REQUEST: sugar.maxFieldsPerRequest || 100,
+        NCC_EVENT_ORIGIN: sugar.nccEventOrigin || "*"
+      }
+    });
+  } catch (error) {
+    sendJson(res, 500, { ok: false, error: error.message });
+  }
+}
+
+async function getPulseFormsWidgetConnection(campaignId) {
+  if (!campaignId) throw new Error("Missing campaign.");
+  const campaigns = await getEffectiveCampaigns();
+  const config = campaigns.find((c) => c.id === campaignId);
+  if (!config) {
+    const error = new Error(`Campaign "${campaignId}" not found.`);
+    error.status = 404;
+    throw error;
+  }
+  const connection = buildPulseFormsSugarConnection(config);
+  if (config.pulseforms?.enabled === false || !connection.enabled) {
+    const error = new Error("PulseForms Sugar CRM is not enabled for this campaign.");
+    error.status = 400;
+    throw error;
+  }
+  assertPulseFormsSugarConnection(connection);
+  return connection;
+}
+
+function pulseFormsPhoneVariants(phone) {
+  const normalized = String(phone || "").trim();
+  const digits = normalized.replace(/\D/g, "");
+  const variants = [normalized];
+  if (digits) {
+    variants.push(digits);
+    variants.push(`+${digits}`);
+    if (digits.length === 10) variants.push(`+1${digits}`);
+    if (digits.length === 11 && digits.startsWith("1")) variants.push(`+${digits}`);
+  }
+  return [...new Set(variants.map((value) => String(value || "").trim()).filter(Boolean))];
+}
+
+function pulseFormsContactLookupFields(connection) {
+  const configured = String(connection.queryField || "phone_work")
+    .split(",")
+    .map((field) => field.trim());
+  return [...new Set([...configured, "phone_work", "phone_mobile", "phone_home", "phone_other"].filter(Boolean))];
+}
+
+function pulseFormsAccountFields() {
+  return [
+    "id",
+    "name",
+    "billing_address_street",
+    "billing_address_city",
+    "billing_address_state",
+    "billing_address_country",
+    "billing_address_postalcode"
+  ].join(",");
+}
+
+async function getPulseFormsSugarAccount(connection, accountId) {
+  const id = String(accountId || "").trim();
+  if (!id) return null;
+  return fetchPulseFormsSugar(
+    connection,
+    "GET",
+    `/rest/${encodeURIComponent(connection.apiVersion)}/Accounts/${encodeURIComponent(id)}?fields=${encodeURIComponent(pulseFormsAccountFields())}`
+  );
+}
+
+async function lookupPulseFormsSugarAccount(connection, accountName) {
+  const name = String(accountName || "").trim();
+  if (!name) return null;
+  const filter = new URLSearchParams();
+  filter.set("filter[0][name][$equals]", name);
+  filter.set("fields", pulseFormsAccountFields());
+  filter.set("max_num", "1");
+  const result = await fetchPulseFormsSugar(
+    connection,
+    "GET",
+    `/rest/${encodeURIComponent(connection.apiVersion)}/Accounts/filter?${filter.toString()}`
+  );
+  return Array.isArray(result.records) ? result.records[0] || null : null;
+}
+
+async function searchPulseFormsSugarAccounts(connection, query) {
+  const name = String(query || "").trim();
+  if (!name) return [];
+  const filter = new URLSearchParams();
+  filter.set("filter[0][name][$starts]", name);
+  filter.set("fields", pulseFormsAccountFields());
+  filter.set("max_num", "10");
+  const result = await fetchPulseFormsSugar(
+    connection,
+    "GET",
+    `/rest/${encodeURIComponent(connection.apiVersion)}/Accounts/filter?${filter.toString()}`
+  );
+  return Array.isArray(result.records) ? result.records : [];
+}
+
+function mergePulseFormsContactAccount(contact = {}, account = {}) {
+  if (!account?.id && !account?.name) return contact;
+  return {
+    ...contact,
+    account_id: account.id || contact.account_id,
+    account_name: account.name || contact.account_name,
+    billing_address_street: account.billing_address_street || contact.billing_address_street,
+    billing_address_city: account.billing_address_city || contact.billing_address_city,
+    billing_address_state: account.billing_address_state || contact.billing_address_state,
+    billing_address_country: account.billing_address_country || contact.billing_address_country,
+    billing_address_postalcode: account.billing_address_postalcode || contact.billing_address_postalcode,
+    account
+  };
+}
+
+async function enrichPulseFormsContactAccount(connection, contact = {}) {
+  try {
+    const accountId = String(contact.account_id || "").trim();
+    const accountName = String(contact.account_name || "").trim();
+    const account = accountId
+      ? await getPulseFormsSugarAccount(connection, accountId)
+      : await lookupPulseFormsSugarAccount(connection, accountName);
+    return mergePulseFormsContactAccount(contact, account || {});
+  } catch {
+    return contact;
+  }
+}
+
+async function preparePulseFormsContactValues(connection, values = {}) {
+  const accountName = String(values.account_name || values.account || "").trim();
+  const accountId = String(values.account_id || "").trim();
+  if (!accountName && !accountId) return values;
+
+  // Account search returns the selected id and address to the widget. Re-reading
+  // the Account adds latency to Contact create and Sugar may time out there.
+  if (accountId && accountName) {
+    return { ...values, account_id: accountId, account_name: accountName };
+  }
+
+  const account = accountId
+    ? await getPulseFormsSugarAccount(connection, accountId)
+    : await lookupPulseFormsSugarAccount(connection, accountName);
+  if (!account) {
+    const error = new Error(accountId
+      ? `Account id "${accountId}" was not found in Sugar Accounts.`
+      : `Account "${accountName}" was not found in Sugar Accounts.`);
+    error.status = 422;
+    throw error;
+  }
+
+  return {
+    ...values,
+    account_id: account.id || values.account_id,
+    account_name: account.name || accountName,
+    billing_address_street: values.billing_address_street || account.billing_address_street,
+    billing_address_city: values.billing_address_city || account.billing_address_city,
+    billing_address_state: values.billing_address_state || account.billing_address_state,
+    billing_address_country: values.billing_address_country || account.billing_address_country,
+    billing_address_postalcode: values.billing_address_postalcode || account.billing_address_postalcode
+  };
+}
+
+async function handlePulseFormsWidgetAccounts(req, res, url) {
+  try {
+    const campaignId = String(url.searchParams.get("campaign") || "").trim();
+    const query = String(url.searchParams.get("q") || url.searchParams.get("name") || "").trim();
+    if (query.length < 2) {
+      sendJson(res, 400, { ok: false, error: "Type at least 2 characters to search Accounts." });
+      return;
+    }
+    const connection = await getPulseFormsWidgetConnection(campaignId);
+    const accounts = await searchPulseFormsSugarAccounts(connection, query);
+    sendJson(res, 200, { ok: true, accounts });
+  } catch (error) {
+    sendJson(res, error.status || 500, { ok: false, error: error.message });
+  }
+}
+
+async function handlePulseFormsWidgetContact(req, res, url) {
+  try {
+    const campaignId = String(url.searchParams.get("campaign") || "").trim();
+    const phone = String(url.searchParams.get("phone") || url.searchParams.get("ani") || url.searchParams.get("callerId") || "").trim();
+    if (!phone) { sendJson(res, 400, { ok: false, error: "Missing phone, ani, or callerId." }); return; }
+
+    const connection = await getPulseFormsWidgetConnection(campaignId);
+    const fields = "id,first_name,last_name,account_id,account_name,email1,phone_work,phone_mobile,phone_home,phone_other,billing_address_city,billing_address_state,billing_address_country,billing_address_postalcode,billing_address_street";
+    for (const lookupField of pulseFormsContactLookupFields(connection)) {
+      for (const value of pulseFormsPhoneVariants(phone)) {
+        const filter = new URLSearchParams();
+        filter.set(`filter[0][${lookupField}][$equals]`, value);
+        filter.set("fields", fields);
+        filter.set("max_num", "1");
+        const result = await fetchPulseFormsSugar(
+          connection,
+          "GET",
+          `/rest/${encodeURIComponent(connection.apiVersion)}/${encodeURIComponent(connection.queryModule)}/filter?${filter.toString()}`
+        );
+        const record = Array.isArray(result.records) ? result.records[0] || null : null;
+        if (record) {
+          const contact = await enrichPulseFormsContactAccount(connection, record);
+          sendJson(res, 200, { ok: true, contact, matchedField: lookupField });
+          return;
+        }
+      }
+    }
+
+    sendJson(res, 200, { ok: true, contact: null });
+  } catch (error) {
+    sendJson(res, error.status || 500, { ok: false, error: error.message });
+  }
+}
+
+async function handlePulseFormsWidgetContactCreate(req, res) {
+  try {
+    let body;
+    try { body = await readJson(req); } catch { sendJson(res, 400, { ok: false, error: "Invalid JSON body" }); return; }
+    const campaignId = String(body.campaign || "").trim();
+    const payload = body.payload && typeof body.payload === "object" ? body.payload : {};
+    if (!Object.keys(payload).length) { sendJson(res, 400, { ok: false, error: "Missing contact payload." }); return; }
+
+    const connection = await getPulseFormsWidgetConnection(campaignId);
+    const module = connection.contactModule || "Contacts";
+    const contactValues = await preparePulseFormsContactValues(connection, payload);
+    const created = await createPulseFormsSugarRecord(connection, module, buildPulseFormsContactPayload(contactValues));
+    sendJson(res, 200, { ok: true, contact: created.record, id: created.id, module });
+  } catch (error) {
+    sendJson(res, error.status || 500, { ok: false, error: error.message });
+  }
+}
+
+async function handlePulseFormsWidgetOpportunity(req, res) {
+  try {
+    let body;
+    try { body = await readJson(req); } catch { sendJson(res, 400, { ok: false, error: "Invalid JSON body" }); return; }
+    const campaignId = String(body.campaign || "").trim();
+    const payload = body.payload && typeof body.payload === "object" ? body.payload : {};
+    if (!Object.keys(payload).length) { sendJson(res, 400, { ok: false, error: "Missing opportunity payload." }); return; }
+
+    const connection = await getPulseFormsWidgetConnection(campaignId);
+    const callId = String(
+      body.callId ||
+      body.call_id ||
+      payload.ncc_call_id_c ||
+      payload.callId ||
+      payload.call_id ||
+      ""
+    ).trim();
+    const result = await createPulseFormsSugarWorkflow(connection, payload, {
+      campaignId,
+      callId,
+      ticketOnly: body.ticketOnly === true,
+      skipNeedsAssessment: body.skipNeedsAssessment === true
+    });
+    sendJson(res, 200, { ok: true, ...result });
+  } catch (error) {
+    sendJson(res, error.status || 500, { ok: false, error: error.message });
+  }
+}
+
+async function handlePulseFormsWidgetOpportunityPatch(req, res) {
+  try {
+    let body;
+    try { body = await readJson(req); } catch { sendJson(res, 400, { ok: false, error: "Invalid JSON body" }); return; }
+    const campaignId = String(body.campaign || "").trim();
+    const id = String(body.id || "").trim();
+    const payload = body.payload && typeof body.payload === "object" ? body.payload : {};
+    if (!id) { sendJson(res, 400, { ok: false, error: "Missing opportunity id." }); return; }
+    if (!Object.keys(payload).length) { sendJson(res, 400, { ok: false, error: "Missing opportunity payload." }); return; }
+
+    const connection = await getPulseFormsWidgetConnection(campaignId);
+    const module = pulseFormsTicketModule(connection);
+    const sugarPayload = await buildPulseFormsSugarSubmitPayload(connection, payload, { mode: "patch", module });
+    const result = await fetchPulseFormsSugar(
+      connection,
+      "PATCH",
+      `/rest/${encodeURIComponent(connection.apiVersion)}/${encodeURIComponent(module)}/${encodeURIComponent(id)}`,
+      sugarPayload
+    );
+    sendJson(res, 200, { ok: true, record: result, id });
+  } catch (error) {
+    sendJson(res, error.status || 500, { ok: false, error: error.message });
   }
 }
 
@@ -2979,6 +3404,256 @@ async function handlePulseFormsSubmit(req, res) {
   }
 }
 
+function widgetStateDocId(campaignId, callId) {
+  const raw = `${String(campaignId || "").trim()}_${String(callId || "").trim()}`;
+  return raw.replace(/[^A-Za-z0-9_.-]/g, "_").slice(0, 700);
+}
+
+function readWidgetStateAuthToken(req) {
+  const auth = String(req.headers.authorization || "").trim();
+  if (/^Bearer\s+/i.test(auth)) return auth.replace(/^Bearer\s+/i, "").trim();
+  return String(req.headers["x-widget-state-token"] || req.headers["x-pulseforms-token"] || "").trim();
+}
+
+async function getCampaignById(campaignId) {
+  const campaigns = await getEffectiveCampaigns();
+  return campaigns.find((c) => c.id === campaignId) || null;
+}
+
+async function saveWidgetStateRecord(record) {
+  if (firestore) {
+    await firestore.collection(WIDGET_STATE_COLLECTION).doc(record.docId).set(record, { merge: true });
+    return;
+  }
+  const existing = fs.existsSync(WIDGET_STATE_FILE)
+    ? JSON.parse(fs.readFileSync(WIDGET_STATE_FILE, "utf8") || "{}")
+    : {};
+  existing[record.docId] = record;
+  fs.writeFileSync(WIDGET_STATE_FILE, `${JSON.stringify(existing, null, 2)}\n`, "utf8");
+}
+
+async function readWidgetStateRecord(docId) {
+  if (firestore) {
+    const doc = await firestore.collection(WIDGET_STATE_COLLECTION).doc(docId).get();
+    return doc.exists ? doc.data() : null;
+  }
+  if (!fs.existsSync(WIDGET_STATE_FILE)) return null;
+  const existing = JSON.parse(fs.readFileSync(WIDGET_STATE_FILE, "utf8") || "{}");
+  return existing[docId] || null;
+}
+
+async function deleteWidgetStateRecord(docId) {
+  if (firestore) {
+    await firestore.collection(WIDGET_STATE_COLLECTION).doc(docId).delete();
+    return;
+  }
+  if (!fs.existsSync(WIDGET_STATE_FILE)) return;
+  const existing = JSON.parse(fs.readFileSync(WIDGET_STATE_FILE, "utf8") || "{}");
+  delete existing[docId];
+  fs.writeFileSync(WIDGET_STATE_FILE, `${JSON.stringify(existing, null, 2)}\n`, "utf8");
+}
+
+async function saveWidgetDraftRecord(record) {
+  if (firestore) {
+    await firestore.collection(WIDGET_DRAFT_COLLECTION).doc(record.docId).set(record, { merge: true });
+    return;
+  }
+  const existing = fs.existsSync(WIDGET_DRAFT_FILE)
+    ? JSON.parse(fs.readFileSync(WIDGET_DRAFT_FILE, "utf8") || "{}")
+    : {};
+  existing[record.docId] = record;
+  fs.writeFileSync(WIDGET_DRAFT_FILE, `${JSON.stringify(existing, null, 2)}\n`, "utf8");
+}
+
+async function readWidgetDraftRecord(docId) {
+  if (firestore) {
+    const doc = await firestore.collection(WIDGET_DRAFT_COLLECTION).doc(docId).get();
+    return doc.exists ? doc.data() : null;
+  }
+  if (!fs.existsSync(WIDGET_DRAFT_FILE)) return null;
+  const existing = JSON.parse(fs.readFileSync(WIDGET_DRAFT_FILE, "utf8") || "{}");
+  return existing[docId] || null;
+}
+
+async function deleteWidgetDraftRecord(docId) {
+  if (firestore) {
+    await firestore.collection(WIDGET_DRAFT_COLLECTION).doc(docId).delete();
+    return;
+  }
+  if (!fs.existsSync(WIDGET_DRAFT_FILE)) return;
+  const existing = JSON.parse(fs.readFileSync(WIDGET_DRAFT_FILE, "utf8") || "{}");
+  delete existing[docId];
+  fs.writeFileSync(WIDGET_DRAFT_FILE, `${JSON.stringify(existing, null, 2)}\n`, "utf8");
+}
+
+function sanitizeWidgetStateIds(ids = {}) {
+  return {
+    contactId: String(ids.contactId || ids.contact_id || "").trim(),
+    ticketId: String(ids.ticketId || ids.ticket_id || ids.opportunityId || "").trim(),
+    needsAssessmentId: String(ids.needsAssessmentId || ids.needs_assessment_id || "").trim()
+  };
+}
+
+function mergeWidgetStateIds(current = {}, next = {}) {
+  const existing = sanitizeWidgetStateIds(current);
+  const incoming = sanitizeWidgetStateIds(next);
+  return {
+    contactId: incoming.contactId || existing.contactId,
+    ticketId: incoming.ticketId || existing.ticketId,
+    needsAssessmentId: incoming.needsAssessmentId || existing.needsAssessmentId
+  };
+}
+
+async function checkpointWidgetStateIds(campaignId, callId, ids = {}) {
+  const normalizedCampaign = String(campaignId || "").trim();
+  const normalizedCallId = String(callId || "").trim();
+  if (!normalizedCampaign || !normalizedCallId) return sanitizeWidgetStateIds(ids);
+  const docId = widgetStateDocId(normalizedCampaign, normalizedCallId);
+  const existing = await readWidgetStateRecord(docId);
+  const mergedIds = mergeWidgetStateIds(existing?.ids || {}, ids);
+  if (!mergedIds.contactId && !mergedIds.ticketId && !mergedIds.needsAssessmentId) return mergedIds;
+  await saveWidgetStateRecord({
+    docId,
+    campaign: normalizedCampaign,
+    callId: normalizedCallId,
+    ids: mergedIds,
+    createdAt: existing?.createdAt || Date.now(),
+    updatedAt: Date.now()
+  });
+  return mergedIds;
+}
+
+async function handleWidgetDraft(req, res, url) {
+  try {
+    const method = String(req.method || "GET").toUpperCase();
+    const campaignId = String(url.searchParams.get("campaign") || "").trim();
+    const callId = String(url.searchParams.get("callId") || url.searchParams.get("callid") || url.searchParams.get("workitemid") || url.searchParams.get("workitemId") || "").trim();
+    if (!campaignId) { sendJson(res, 400, { ok: false, error: "Missing campaign." }); return; }
+    if (!callId) { sendJson(res, 400, { ok: false, error: "Missing callId." }); return; }
+    const campaign = await getCampaignById(campaignId);
+    if (!campaign) { sendJson(res, 404, { ok: false, error: `Campaign "${campaignId}" not found.` }); return; }
+    const docId = widgetStateDocId(campaignId, callId);
+
+    if (method === "POST") {
+      let body;
+      try { body = await readJson(req); } catch { sendJson(res, 400, { ok: false, error: "Invalid JSON body." }); return; }
+      const values = body.values && typeof body.values === "object" ? body.values : {};
+      await saveWidgetDraftRecord({
+        docId,
+        campaign: campaignId,
+        callId,
+        values,
+        currentTab: Number(body.currentTab || 0) || 0,
+        createdAt: body.createdAt || Date.now(),
+        updatedAt: Date.now()
+      });
+      sendJson(res, 200, { ok: true, campaign: campaignId, callId, saved: true });
+      return;
+    }
+
+    if (method === "DELETE") {
+      await deleteWidgetDraftRecord(docId);
+      sendJson(res, 200, { ok: true, campaign: campaignId, callId, deleted: true });
+      return;
+    }
+
+    if (method !== "GET") {
+      sendJson(res, 405, { ok: false, error: "Method not allowed." });
+      return;
+    }
+
+    const record = await readWidgetDraftRecord(docId);
+    if (!record) {
+      sendJson(res, 404, { ok: false, error: "Widget draft not found." });
+      return;
+    }
+    sendJson(res, 200, {
+      ok: true,
+      campaign: campaignId,
+      callId,
+      values: record.values || {},
+      currentTab: Number(record.currentTab || 0) || 0,
+      updatedAt: record.updatedAt || null
+    });
+  } catch (error) {
+    sendJson(res, 500, { ok: false, error: error.message });
+  }
+}
+
+async function handleWidgetState(req, res, url) {
+  try {
+    const method = String(req.method || "GET").toUpperCase();
+    const campaignId = String(url.searchParams.get("campaign") || "").trim();
+    const callId = String(url.searchParams.get("callId") || url.searchParams.get("callid") || url.searchParams.get("workitemid") || url.searchParams.get("workitemId") || "").trim();
+    if (!campaignId) { sendJson(res, 400, { ok: false, error: "Missing campaign." }); return; }
+    if (!callId) { sendJson(res, 400, { ok: false, error: "Missing callId." }); return; }
+
+    const campaign = await getCampaignById(campaignId);
+    if (!campaign) { sendJson(res, 404, { ok: false, error: `Campaign "${campaignId}" not found.` }); return; }
+    const docId = widgetStateDocId(campaignId, callId);
+
+    if (method === "POST") {
+      let body;
+      try { body = await readJson(req); } catch { sendJson(res, 400, { ok: false, error: "Invalid JSON body." }); return; }
+      const ids = mergeWidgetStateIds((await readWidgetStateRecord(docId))?.ids || {}, body.ids || body);
+      if (!ids.contactId && !ids.ticketId && !ids.needsAssessmentId) {
+        sendJson(res, 400, { ok: false, error: "Missing contactId, ticketId, or needsAssessmentId." });
+        return;
+      }
+      await saveWidgetStateRecord({
+        docId,
+        campaign: campaignId,
+        callId,
+        ids,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      });
+      sendJson(res, 200, { ok: true, campaign: campaignId, callId, saved: true });
+      return;
+    }
+
+    if (method !== "GET") {
+      sendJson(res, 405, { ok: false, error: "Method not allowed." });
+      return;
+    }
+
+    const configuredToken = String(campaign.pulseformsWidgetStateReadToken || "").trim();
+    const token = readWidgetStateAuthToken(req);
+    if (!configuredToken) {
+      sendJson(res, 403, { ok: false, error: "Widget state read token is not configured for this campaign." });
+      return;
+    }
+    const providedTokenBuffer = Buffer.from(token);
+    const configuredTokenBuffer = Buffer.from(configuredToken);
+    if (!token || providedTokenBuffer.length !== configuredTokenBuffer.length || !crypto.timingSafeEqual(providedTokenBuffer, configuredTokenBuffer)) {
+      sendJson(res, 401, { ok: false, error: "Unauthorized." });
+      return;
+    }
+
+    const record = await readWidgetStateRecord(docId);
+    if (!record) {
+      sendJson(res, 404, { ok: false, error: "Widget state not found or already consumed." });
+      return;
+    }
+
+    if (url.searchParams.get("consume") === "1" || url.searchParams.get("consume") === "true") {
+      await deleteWidgetStateRecord(docId);
+      await deleteWidgetDraftRecord(docId);
+    }
+
+    sendJson(res, 200, {
+      ok: true,
+      consumed: url.searchParams.get("consume") === "1" || url.searchParams.get("consume") === "true",
+      campaign: campaignId,
+      callId,
+      ids: sanitizeWidgetStateIds(record.ids || {}),
+      updatedAt: record.updatedAt || null
+    });
+  } catch (error) {
+    sendJson(res, 500, { ok: false, error: error.message });
+  }
+}
+
 function buildPulseFormsSubmitMappedValues(values = {}, mappings = {}) {
   const output = {};
   for (const [formFieldId, targetField] of Object.entries(mappings || {})) {
@@ -2989,6 +3664,982 @@ function buildPulseFormsSubmitMappedValues(values = {}, mappings = {}) {
     output[key] = value;
   }
   return output;
+}
+
+function cleanPulseFormsSugarValue(value) {
+  if (value === undefined || value === null || value === "") return undefined;
+  return value;
+}
+
+function pulseFormsDefaultCloseDate() {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() + 30);
+  return date.toISOString().slice(0, 10);
+}
+
+function isPulseFormsOpportunityModule(moduleName) {
+  return String(moduleName || "").toLowerCase() === "opportunities";
+}
+
+function buildPulseFormsOpportunityBasePayload(values = {}) {
+  const fullName = `${values.first_name || ""} ${values.last_name || ""}`.trim();
+  const project = values.project_type_c || values.tool_type_c || "Tube Tool";
+  const payload = {
+    name: cleanPulseFormsSugarValue(values.name || `${fullName || "NCC opportunity"} - ${project}`),
+    sales_stage: cleanPulseFormsSugarValue(values.sales_stage || values.sales_stage_c || "Prospecting"),
+    date_closed: cleanPulseFormsSugarValue(values.date_closed || values.expected_close_date || pulseFormsDefaultCloseDate()),
+    description: cleanPulseFormsSugarValue(values.description),
+    amount: cleanPulseFormsSugarValue(values.amount)
+  };
+  return Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== undefined));
+}
+
+const pulseFormsSugarMetadataCache = new Map();
+
+async function getPulseFormsSugarModuleFields(connection, moduleName) {
+  const module = String(moduleName || "").trim();
+  if (!module) return null;
+  const key = `${connection.baseUrl}|${connection.apiVersion}|${module}`;
+  if (pulseFormsSugarMetadataCache.has(key)) return pulseFormsSugarMetadataCache.get(key);
+  try {
+    const params = new URLSearchParams({ type_filter: "modules", module_filter: module });
+    const metadata = await fetchPulseFormsSugar(
+      connection,
+      "GET",
+      `/rest/${encodeURIComponent(connection.apiVersion)}/metadata?${params.toString()}`
+    );
+    const fields = metadata?.modules?.[module]?.fields;
+    const fieldSet = fields && typeof fields === "object" ? new Set(Object.keys(fields)) : null;
+    pulseFormsSugarMetadataCache.set(key, fieldSet);
+    return fieldSet;
+  } catch {
+    pulseFormsSugarMetadataCache.set(key, null);
+    return null;
+  }
+}
+
+function extractPulseFormsSugarTemplateFields(template) {
+  const source = template?.fields && typeof template.fields === "object"
+    ? template.fields
+    : template?.record?.fields && typeof template.record.fields === "object"
+      ? template.record.fields
+      : template?.data?.fields && typeof template.data.fields === "object"
+        ? template.data.fields
+        : template?.modules && typeof template.modules === "object"
+          ? Object.values(template.modules).find((module) => module?.fields && typeof module.fields === "object")?.fields
+        : null;
+
+  if (source) {
+    return Object.entries(source)
+      .map(([name, meta]) => ({
+        name,
+        label: String(meta?.vname || meta?.label || meta?.name || "").replace(/:$/, ""),
+        type: String(meta?.type || meta?.dbType || meta?.dbtype || ""),
+        required: meta?.required === true || meta?.is_required === true,
+        readonly: meta?.readonly === true || meta?.calculated === true || meta?.source === "non-db"
+      }))
+      .filter((field) => field.name && !field.name.startsWith("_"))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  if (template && typeof template === "object" && !Array.isArray(template)) {
+    return Object.keys(template)
+      .filter((name) => !name.startsWith("_") && !["acl", "module", "following", "my_favorite"].includes(name))
+      .sort((a, b) => a.localeCompare(b))
+      .map((name) => ({ name, label: "", type: typeof template[name], required: false, readonly: false }));
+  }
+
+  return [];
+}
+
+async function buildPulseFormsSugarSubmitPayload(connection, values = {}, options = {}) {
+  const module = options.module || connection.submitModule || "Opportunities";
+  const mappings = connection.submitFieldMappings || connection.fieldMappings || {};
+  const mappedValues = buildPulseFormsSubmitMappedValues(values, mappings);
+  const hasMappings = Object.keys(mappedValues).length > 0;
+  let payload = hasMappings ? mappedValues : values;
+  const isPatch = options.mode === "patch";
+
+  if (isPulseFormsOpportunityModule(module) && !isPatch) {
+    payload = {
+      ...buildPulseFormsOpportunityBasePayload(values),
+      ...(hasMappings ? mappedValues : {})
+    };
+  }
+
+  const moduleFields = await getPulseFormsSugarModuleFields(connection, module);
+  if (moduleFields) {
+    if (isPulseFormsOpportunityModule(module) && !hasMappings) {
+      for (const [key, value] of Object.entries(values || {})) {
+        if (!moduleFields.has(key)) continue;
+        const cleaned = cleanPulseFormsSugarValue(value);
+        if (cleaned !== undefined) payload[key] = cleaned;
+      }
+    }
+    payload = Object.fromEntries(
+      Object.entries(payload).filter(([key, value]) => moduleFields.has(key) && cleanPulseFormsSugarValue(value) !== undefined)
+    );
+  } else {
+    payload = Object.fromEntries(
+      Object.entries(payload).filter(([, value]) => cleanPulseFormsSugarValue(value) !== undefined)
+    );
+  }
+
+  if (!Object.keys(payload).length) throw new Error("No valid values available to send to Sugar CRM.");
+  return payload;
+}
+
+function pulseFormsTicketModule(connection) {
+  return connection.ticketModule || "tic_Tickets";
+}
+
+function pulseFormsNeedsAssessmentModule(connection) {
+  return connection.needsAssessmentModule || "NA_NeedsAssessment";
+}
+
+function splitPulseFormsName(name = "") {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return { first_name: "", last_name: "Unknown" };
+  if (parts.length === 1) return { first_name: "", last_name: parts[0] };
+  return { first_name: parts.slice(0, -1).join(" "), last_name: parts.at(-1) };
+}
+
+const USA_STATE_CODES = new Set([
+  "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY", "DC"
+]);
+
+const USA_STATE_NAMES = {
+  alabama: "AL", alaska: "AK", arizona: "AZ", arkansas: "AR", california: "CA", colorado: "CO", connecticut: "CT", delaware: "DE", florida: "FL", georgia: "GA", hawaii: "HI", idaho: "ID", illinois: "IL", indiana: "IN", iowa: "IA", kansas: "KS", kentucky: "KY", louisiana: "LA", maine: "ME", maryland: "MD", massachusetts: "MA", michigan: "MI", minnesota: "MN", mississippi: "MS", missouri: "MO", montana: "MT", nebraska: "NE", nevada: "NV", "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM", "new york": "NY", "north carolina": "NC", "north dakota": "ND", ohio: "OH", oklahoma: "OK", oregon: "OR", pennsylvania: "PA", "rhode island": "RI", "south carolina": "SC", "south dakota": "SD", tennessee: "TN", texas: "TX", utah: "UT", vermont: "VT", virginia: "VA", washington: "WA", "west virginia": "WV", wisconsin: "WI", wyoming: "WY", "district of columbia": "DC"
+};
+
+function normalizeUsState(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const code = raw.toUpperCase();
+  if (USA_STATE_CODES.has(code)) return code;
+  return USA_STATE_NAMES[raw.toLowerCase()] || "";
+}
+
+function buildPulseFormsContactPayload(values = {}) {
+  const split = splitPulseFormsName(values.contact_name || values.name || "");
+  const state = normalizeUsState(values.billing_address_state);
+  const country = String(values.billing_address_country || "").trim();
+  const payload = {
+    first_name: cleanPulseFormsSugarValue(values.first_name || split.first_name),
+    last_name: cleanPulseFormsSugarValue(values.last_name || split.last_name || "Unknown"),
+    title: cleanPulseFormsSugarValue(values.contact_title || values.title),
+    marketing_title_c: cleanPulseFormsSugarValue(values.marketing_title_c || values.marketing_title),
+    lead_source: cleanPulseFormsSugarValue(values.lead_source || values.contact_lead_source),
+    phone_work: cleanPulseFormsSugarValue(values.phone_work || values.contact_phone),
+    phone_mobile: cleanPulseFormsSugarValue(values.phone_mobile),
+    email1: cleanPulseFormsSugarValue(values.email1 || values.contact_email),
+    account_id: cleanPulseFormsSugarValue(values.account_id),
+    account_name: cleanPulseFormsSugarValue(values.account_name),
+    primary_address_street: cleanPulseFormsSugarValue(values.billing_address_street),
+    primary_address_city: cleanPulseFormsSugarValue(values.billing_address_city),
+    primary_address_postalcode: cleanPulseFormsSugarValue(values.billing_address_postalcode)
+  };
+  if (state) {
+    payload.primary_address_state = state;
+    payload.primary_address_country = cleanPulseFormsSugarValue(country || "USA");
+  } else if (country && !/^(us|usa|u\.s\.a\.|united states|united states of america)$/i.test(country)) {
+    payload.primary_address_country = country;
+  }
+  return payload;
+}
+
+function buildPulseFormsTicketBasePayload(values = {}) {
+  const project = values.project_type_c || values.tool_type_c || "Needs Assessment";
+  const company = values.account_name || values.contact_name || values.name || "NCC";
+  return {
+    name: cleanPulseFormsSugarValue(values.ticket_name || values.name || `${company} - ${project}`),
+    status: cleanPulseFormsSugarValue(values.status),
+    priority: cleanPulseFormsSugarValue(values.priority || values.priority_c),
+    description: cleanPulseFormsSugarValue(values.description || values.pipe_rattling_notes_c || values.tube_notes_c || values.mf_join_notes_c),
+    account_name: cleanPulseFormsSugarValue(values.account_name),
+    contact_id: cleanPulseFormsSugarValue(values.contact_id || values.contact_id_c)
+  };
+}
+
+function buildPulseFormsTicketCreatePayload(values = {}, ticketBase = {}, contactId = "") {
+  return {
+    name: ticketBase.name,
+    status: ticketBase.status,
+    priority: ticketBase.priority,
+    ncc_call_id_c: cleanPulseFormsSugarValue(values.ncc_call_id_c),
+    ncc_agent_c: cleanPulseFormsSugarValue(values.ncc_agent_c),
+    ncc_queue_c: cleanPulseFormsSugarValue(values.ncc_queue_c),
+    call_date_c: cleanPulseFormsSugarValue(values.call_date_c),
+    call_duration_c: cleanPulseFormsSugarValue(values.call_duration_c)
+  };
+}
+
+function pulseFormsTicketNumberName(ticketRecord = {}) {
+  const number = ticketRecord.case_number
+    || ticketRecord.case_number_c
+    || ticketRecord.ticketnumber
+    || ticketRecord.ticket_number
+    || ticketRecord.number;
+  if (number === undefined || number === null || number === "") return "";
+  return String(number).trim();
+}
+
+function buildPulseFormsNeedsAssessmentBasePayload(values = {}, ticketId = "", ticketRecord = {}) {
+  const project = values.project_type_c || "Needs Assessment";
+  const ticketNumberName = pulseFormsTicketNumberName(ticketRecord);
+  return {
+    name: cleanPulseFormsSugarValue(ticketNumberName || values.needs_assessment_name || `${project} - ${values.account_name || values.contact_name || "NCC"}`),
+    description: cleanPulseFormsSugarValue(values.description || values.pipe_rattling_notes_c || values.tube_notes_c || values.mf_join_notes_c),
+    case_id: cleanPulseFormsSugarValue(ticketId),
+    parent_id: cleanPulseFormsSugarValue(ticketId)
+  };
+}
+
+const PULSEFORMS_NEEDS_ASSESSMENT_ALIASES = {
+  pipe_type_c: "pipetype_c",
+  pipe_od_c: "pipeod_c",
+  pipe_weight_c: "paperweight_c",
+  pipe_joint_id_c: "pipeconnid_c",
+  head_preference_c: "rattlingheadpreference_c",
+  cutter_head_qty_c: "cutterheadqty_c",
+  cone_cutter_qty_c: "conecutterqty_c",
+  straight_cutter_qty_c: "straightcutterqty_c",
+  cutter_pin_qty_c: "cutterpinqty_c",
+  arm_qty_c: "armqty_c",
+  arm_pin_qty_c: "armpinqty_c",
+  plate_qty_c: "plateqty_c",
+  air_motor_qty_c: "airmotorqty_c",
+  blade_paddle_qty_c: "bladeqty_c",
+  rotor_qty_c: "rotorqty_c",
+  thrust_plate_qty_c: "thrustplateqty_c",
+  operating_hose_qty_c: "operatinghoseqty_c",
+  pipe_rattling_notes_c: "piperattlingnotes_c",
+
+  mf_primary_industry_c: "primaryindustry_c",
+  mf_part_print_supplied_c: "part_print_c",
+  mf_number_of_parts_c: "number_parts_c",
+  mf_part_material_c: "partmaterial_c",
+  mf_material_hardness_c: "materialhardness_c",
+  mf_stock_left_on_part_c: "stockleftpart_c",
+  mf_surface_type_c: "mf_burn_surface_c",
+  mf_machine_type_c: "machinetype_c",
+  mf_thru_coolant_required_c: "mf_thrucoolant_c",
+
+  mf_id_bore_style_c: "mf_burn_holetype_c",
+  mf_id_bore_diameter_c: "borediameter_c",
+  mf_id_bore_depth_length_c: "mf_burn_boredepth_c",
+  mf_id_bore_clearance_c: "mf_boreclearance_c",
+  mf_id_interruptions_in_bore_c: "interruptionbore_c",
+  mf_id_desired_finish_c: "desiredfinish_c",
+  mf_id_shank_style_c: "shankstyle_c",
+  mf_id_shank_size_c: "idburn_shanksize_c",
+  mf_id_roll_style_c: "idburn_rollstyle_c",
+  mf_id_consumables_c: "mf_burn_cons_c",
+  mf_id_burnishing_notes_c: "mf_burnishingnotes_c",
+
+  mf_od_burnished_diameter_c: "borediameter2_c",
+  mf_od_burnished_length_c: "underheadlengthspecial_c",
+  mf_od_head_type_c: "odhandtype_c",
+  mf_od_shank_size_c: "shanksize_c",
+  mf_od_desired_finish_c: "oddesiredfinish_c",
+  mf_od_roll_radius_c: "odrollradius_c",
+  mf_od_roll_type_c: "mfburn_odrolltype_c",
+  mf_od_burnishing_notes_c: "odburnishingnotes_c",
+
+  mf_face_burnished_angle_c: "mfburn_angle_c",
+  mf_face_burnished_length_c: "mfburn_angleburnishedlength_c",
+  mf_face_desired_finish_c: "mfburn_angleface_desiredfini_c",
+
+  mf_iru_shank_style_c: "mfiru_shankstyle_c",
+  mf_iru_bore_diameter_roll_c: "mfiru_borediameter_c",
+  mf_iru_number_of_lands_c: "mfiru_lands_c",
+  mf_iru_number_of_grooves_c: "mfiru_groove_c",
+  mf_iru_actuation_point_c: "mfiru_actuationpoint_c",
+  mf_iru_recess_corner_config_c: "mfiru_recesscorner_c",
+  mf_iru_length_restriction_c: "mfiru_lengthrestriction_c",
+  mf_iru_required_coating_c: "mfiru_coating_c",
+
+  mf_join_part_number_c: "toolnumberormarkings_c",
+  mf_join_tube_od_c: "mechjoin_tubeod_c",
+  mf_join_tube_wall_thickness_c: "mf_tubewallthickness_c",
+  mf_join_expansion_roll_length_c: "expansionlength_c",
+  mf_join_reach_c: "reach_c",
+  mf_join_number_rolls_required_c: "mechjoin_numberrolls_c",
+  mf_join_consumables_c: "consumables_mechjoin_c",
+  mf_join_notes_c: "notes_mechjoin_c",
+
+  amount: "budget",
+  budgetary_quote_c: "budgetary",
+  new_credit_terms_c: "revisedcreditterms",
+  latest_delivery_date_c: "latestdeliverydate",
+  preferred_shipping_method_c: "shpmethod_c",
+  po_job_number_c: "reference",
+
+  vessel_type_c: "vesseltype",
+  power_source_c: "pumppowerrequirements",
+  space_constraints_c: "specialreach",
+  tube_sheet_thick1_c: "tubesheetthicknessend1_c",
+  tube_sheet_thick2_c: "tubesheetthicknessend2_c",
+  tube_id_c: "tubeid",
+  tube_od_c: "tubeod_text_c",
+  tube_material_c: "tubematerial_c",
+  num_tubes_c: "vesselnumberoftubes",
+  tube_length_c: "vessellengthoftubes",
+  tube_notes_c: "notes",
+
+  deposit_composition_c: "composition",
+  flush_c: "flush",
+  tube_surface_c: "cleaningsurface",
+  tube_cleaning_notes_c: "tubecleaning_custom_c",
+  tube_tester_c: "testerstyle",
+  num_tubes_checked_c: "numberoftubestotest",
+
+  num_tubes_plugged_c: "numberoftubestoplug",
+  material_cert_required_c: "materialcertification",
+  plug_type_c: "tubeplugstyle",
+
+  num_tubes_remove_c: "numberoftubestoremove",
+  motor_power_c: "removalpowerrequirement",
+  max_tube_sheet_diameter_c: "maxtubesheetdiameter",
+  required_voltage_c: "tubebundlerequiredvoltage",
+  pulling_position_c: "pullingposition",
+  cutting_ends_c: "tubecuts",
+  tube_sheet_grooved_c: "removalgrooves_yn_c",
+  pulling_subtype: "pullers",
+
+  num_tubes_rolled_c: "numberexpanderrolls_c",
+  roll_length_c: "rolllength_c",
+  step_rolling_c: "steprolling",
+  seal_welded_tubes_c: "sealweldedtubes",
+  expansion_type_c: "expansiontype_c",
+  handhole_seat_grinder_c: "handholeseatgrinder_c",
+  seat_grinder_width_c: "seatgrinderwidth"
+};
+
+const PULSEFORMS_MULTI_ENUM_FIELDS = new Set([
+  "mf_application_c",
+  "mf_burn_surface_c",
+  "idburn_rollstyle_c",
+  "mf_burn_cons_c",
+  "mf_iruconsumables_c",
+  "consumables_mechjoin_c",
+  "rattlingheadpreference_c",
+  "composition",
+  "tubeplugstyle",
+  "pullers",
+  "testconsumables",
+  "plugaccessories",
+  "tubebundleconsumables",
+  "removalknockouttooling",
+  "pullingconsumables",
+  "installconsumables",
+  "expansionpreptools",
+  "expansionaccessories"
+]);
+
+const PULSEFORMS_BOOL_FIELDS = new Set([
+  "budgetary",
+  "revisedcreditterms",
+  "materialcertification",
+  "removalgrooves_yn_c",
+  "steprolling",
+  "sealweldedtubes",
+  "handholeseatgrinder_c"
+]);
+
+function addPulseFormsNeedsAssessmentAliases(payload = {}) {
+  const output = { ...payload };
+  removePulseFormsPipeRattlingFieldsIfNeeded(output);
+  for (const [formField, sugarField] of Object.entries(PULSEFORMS_NEEDS_ASSESSMENT_ALIASES)) {
+    if (output[sugarField] !== undefined && output[sugarField] !== null && output[sugarField] !== "") continue;
+    const value = output[formField];
+    if (value !== undefined && value !== null && value !== "") output[sugarField] = value;
+  }
+  addPulseFormsCheckedValues(output, "testconsumables", {
+    test_seals_washers_c: "Seals & Washer Sets",
+    support_tube_assemblies_c: "Support Tube Assemblies",
+    test_extensions_c: "Extensions"
+  });
+  addPulseFormsCheckedValues(output, "plugaccessories", {
+    plug_torque_wrench_c: "Torque Wrench",
+    plug_removal_kit_c: "Removal Kit",
+    one_rev_tube_cutter_c: "One-Rev Tube Cutter",
+    tube_end_facer_c: "Tube End Facer",
+    brushes_for_cleaning_c: "Brushes for Cleaning"
+  });
+  addPulseFormsCheckedValues(output, "tubebundleconsumables", {
+    speedcut_blades_c: "Blades",
+    mechanical_clamp_c: "Mechanical Clamp",
+    support_table_c: "Support Table"
+  });
+  addPulseFormsCheckedValues(output, "removalknockouttooling", {
+    pneumatic_hammer_c: "Pneumatic Hammer",
+    wall_reducing_tools_c: "Wall Reducing Tools",
+    knockout_tools_c: "Knockout Tools",
+    collapsing_tools_c: "Collapsing Tools",
+    jumbo_tube_buster_c: "Jumbo Tube Buster",
+    jumbo_knockout_tools_c: "Jumbo Knockout Tools"
+  });
+  addPulseFormsCheckedValues(output, "pullingconsumables", {
+    collet_set_c: "Collet Set",
+    collet_draw_bar_c: "Draw Bar",
+    collet_nose_piece_c: "Nose Piece",
+    collet_counter_balance_c: "Counter Balance",
+    collet_pump_c: "Pump",
+    super_collet_set_c: "Collet Set",
+    super_draw_bar_c: "Draw Bar",
+    super_nose_piece_c: "Nose Piece",
+    super_counter_balance_c: "Counter Balance",
+    super_pump_c: "Pump",
+    super_tie_rod_c: "Tie Rod",
+    manual_spears_nose_piece_c: "Spears Nose Piece",
+    manual_stub_tugger_c: "Stub Tugger",
+    manual_spears_c: "Spears",
+    manual_horseshoe_lock_c: "Horseshoe Lock",
+    manual_spear_adapter_c: "Spear Adapter",
+    manual_counter_balance_c: "Counter Balance",
+    manual_pump_c: "Pump",
+    cyclgrip_counter_balance_c: "Counter Balance",
+    cyclgrip_pump_c: "Pump",
+    stub_spears_c: "Spears",
+    stub_collet_set_c: "Collet Set",
+    stub_counter_balance_c: "Counter Balance",
+    stub_nose_piece_c: "Nose Piece",
+    stub_pump_c: "Pump",
+    tube_tugger_spears_c: "Spears",
+    tube_tugger_collet_set_c: "Collet Set",
+    tube_tugger_counter_balance_c: "Counter Balance",
+    tube_tugger_nose_piece_c: "Nose Piece",
+    tube_tugger_pump_c: "Pump"
+  });
+  addPulseFormsCheckedValues(output, "installconsumables", {
+    roll_sets_c: "Roll Sets",
+    mandrels_c: "Mandrels",
+    cages_c: "Cages"
+  });
+  addPulseFormsCheckedValues(output, "expansionpreptools", {
+    grooving_tool_c: "Grooving Tool",
+    tube_gauge_c: "Tube Gauge",
+    tube_pilots_c: "Tube Pilots",
+    tube_facers_c: "Tube Facers",
+    installation_brushes_c: "Brushes"
+  });
+  addPulseFormsCheckedValues(output, "expansionaccessories", {
+    rolling_motors_c: "Rolling Motors",
+    chucks_adapters_c: "Chucks/Adapters",
+    elc_110_220_c: "ELC 110/220",
+    lubricant_bead_coolant_c: "Lubricant/Bead Coolant"
+  });
+  if (String(output.tube_orientation_c || "").toLowerCase().includes("curved")) output.tubebend_c = true;
+  for (const field of PULSEFORMS_BOOL_FIELDS) {
+    if (output[field] !== undefined) output[field] = normalizePulseFormsBool(output[field]);
+  }
+  if (output.rattlingheadpreference_c !== undefined) {
+    output.rattlingheadpreference_c = normalizePulseFormsHeadPreference(output.rattlingheadpreference_c);
+  }
+  for (const field of PULSEFORMS_MULTI_ENUM_FIELDS) {
+    if (field === "rattlingheadpreference_c" || output[field] === undefined) continue;
+    output[field] = normalizePulseFormsMultiEnum(output[field]);
+  }
+  if (!output.notes && output.pipe_rattling_notes_c) output.notes = output.pipe_rattling_notes_c;
+  return output;
+}
+
+function removePulseFormsPipeRattlingFieldsIfNeeded(output = {}) {
+  if (String(output.project_type_c || "").trim() === "pipe_rattling") return;
+  [
+    "pipe_budget_usd_c",
+    "pipe_budgetary_quote_c",
+    "pipe_type_c",
+    "pipe_od_c",
+    "pipe_weight_c",
+    "pipe_joint_id_c",
+    "head_preference_c",
+    "cutter_head_qty_c",
+    "cone_cutter_qty_c",
+    "straight_cutter_qty_c",
+    "cutter_pin_qty_c",
+    "arm_qty_c",
+    "arm_pin_qty_c",
+    "plate_qty_c",
+    "air_motor_qty_c",
+    "blade_paddle_qty_c",
+    "rotor_qty_c",
+    "thrust_plate_qty_c",
+    "operating_hose_qty_c",
+    "pipe_rattling_notes_c",
+    "pipetype_c",
+    "pipeod_c",
+    "paperweight_c",
+    "pipeconnid_c",
+    "rattlingheadpreference_c",
+    "cutterheadqty_c",
+    "conecutterqty_c",
+    "straightcutterqty_c",
+    "cutterpinqty_c",
+    "armqty_c",
+    "armpinqty_c",
+    "plateqty_c",
+    "airmotorqty_c",
+    "bladeqty_c",
+    "rotorqty_c",
+    "thrustplateqty_c",
+    "operatinghoseqty_c",
+    "piperattlingnotes_c"
+  ].forEach((field) => {
+    delete output[field];
+  });
+}
+
+function addPulseFormsCheckedValues(output, targetField, fieldMap) {
+  const existing = normalizePulseFormsMultiEnum(output[targetField] || []);
+  const values = Array.isArray(existing) ? [...existing] : [];
+  for (const [sourceField, targetValue] of Object.entries(fieldMap || {})) {
+    if (!normalizePulseFormsBool(output[sourceField])) continue;
+    values.push(targetValue);
+  }
+  if (values.length) output[targetField] = [...new Set(values)];
+}
+
+function normalizePulseFormsBool(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return false;
+  if (["true", "yes", "y", "1", "si", "sí"].includes(normalized)) return true;
+  if (["false", "no", "n", "0"].includes(normalized)) return false;
+  return Boolean(value);
+}
+
+function normalizePulseFormsMultiEnum(value) {
+  if (Array.isArray(value)) return [...new Set(value.map((item) => String(item || "").trim()).filter(Boolean))];
+  if (value === undefined || value === null || value === "") return value;
+  return [...new Set(String(value).split(",").map((item) => item.trim()).filter(Boolean))];
+}
+
+function normalizePulseFormsHeadPreference(value) {
+  const rawValues = Array.isArray(value) ? value : String(value || "").split(",");
+  const optionMap = {
+    nopreference: "nopreference",
+    "no preference": "nopreference",
+    singlepin: "singlepin",
+    "single pin": "singlepin",
+    "single pin head": "singlepin",
+    ettchead: "ettchead",
+    "ettc head": "ettchead",
+    etphead: "etphead",
+    "etp head": "etphead",
+    springhead: "springhead",
+    "spring head": "springhead",
+    swingarm: "swingarm",
+    "swing arm": "swingarm",
+    "swing arm head": "swingarm"
+  };
+  const values = rawValues
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .map((item) => optionMap[item.toLowerCase()] || item)
+    .filter(Boolean);
+  return [...new Set(values)];
+}
+
+async function filterPulseFormsPayloadForModule(connection, module, payload) {
+  const fields = await getPulseFormsSugarModuleFields(connection, module);
+  const cleaned = Object.fromEntries(
+    Object.entries(payload || {}).filter(([, value]) => cleanPulseFormsSugarValue(value) !== undefined)
+  );
+  if (!fields) return cleaned;
+  return Object.fromEntries(Object.entries(cleaned).filter(([key]) => fields.has(key)));
+}
+
+async function createPulseFormsSugarRecord(connection, module, payload) {
+  const finalPayload = await filterPulseFormsPayloadForModule(connection, module, payload);
+  if (!Object.keys(finalPayload).length) throw new Error(`No valid values available to create ${module}.`);
+  const created = await fetchPulseFormsSugar(
+    connection,
+    "POST",
+    `/rest/${encodeURIComponent(connection.apiVersion)}/${encodeURIComponent(module)}`,
+    finalPayload
+  );
+  const id = created.id || created._id || "";
+  if (!id) throw new Error(`Sugar did not return an id for ${module}.`);
+  return { record: created, id };
+}
+
+async function getPulseFormsSugarRecord(connection, module, id, fields = "") {
+  const recordId = String(id || "").trim();
+  if (!recordId) return null;
+  const query = fields ? `?fields=${encodeURIComponent(fields)}` : "";
+  return fetchPulseFormsSugar(
+    connection,
+    "GET",
+    `/rest/${encodeURIComponent(connection.apiVersion)}/${encodeURIComponent(module)}/${encodeURIComponent(recordId)}${query}`
+  );
+}
+
+function pulseFormsTicketLookupFields() {
+  return "id,name,case_number,case_number_c,ticketnumber,ticket_number,number,ncc_call_id_c,date_entered";
+}
+
+async function findPulseFormsTicketByCallId(connection, module, callId, moduleFields) {
+  const normalizedCallId = String(callId || "").trim();
+  if (!normalizedCallId || (moduleFields && !moduleFields.has("ncc_call_id_c"))) return null;
+  const filter = new URLSearchParams();
+  filter.set("filter[0][ncc_call_id_c][$equals]", normalizedCallId);
+  filter.set("fields", pulseFormsTicketLookupFields());
+  filter.set("max_num", "1");
+  filter.set("order_by", "date_entered:desc");
+  const result = await fetchPulseFormsSugar(
+    connection,
+    "GET",
+    `/rest/${encodeURIComponent(connection.apiVersion)}/${encodeURIComponent(module)}/filter?${filter.toString()}`
+  );
+  return Array.isArray(result.records) ? result.records[0] || null : null;
+}
+
+async function findPulseFormsTicketByName(connection, module, name) {
+  const normalizedName = String(name || "").trim();
+  if (!normalizedName) return null;
+  const filter = new URLSearchParams();
+  filter.set("filter[0][name][$equals]", normalizedName);
+  filter.set("fields", pulseFormsTicketLookupFields());
+  filter.set("max_num", "1");
+  filter.set("order_by", "date_entered:desc");
+  const result = await fetchPulseFormsSugar(
+    connection,
+    "GET",
+    `/rest/${encodeURIComponent(connection.apiVersion)}/${encodeURIComponent(module)}/filter?${filter.toString()}`
+  );
+  return Array.isArray(result.records) ? result.records[0] || null : null;
+}
+
+async function findPulseFormsTicketForWorkflow(connection, module, callId, name, moduleFields) {
+  return await findPulseFormsTicketByCallId(connection, module, callId, moduleFields)
+    || await findPulseFormsTicketByName(connection, module, name);
+}
+
+async function recoverPulseFormsTicketAfterCreateError(connection, module, callId, name, moduleFields) {
+  const delays = [0, 1500, 3000, 6000, 10000];
+  let lastError = null;
+  for (const delay of delays) {
+    if (delay) await sleep(delay);
+    try {
+      const ticket = await findPulseFormsTicketForWorkflow(connection, module, callId, name, moduleFields);
+      if (ticket?.id) return ticket;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (lastError) throw lastError;
+  return null;
+}
+
+async function runPulseFormsSugarWorkflowStep(label, work) {
+  try {
+    return await work();
+  } catch (error) {
+    throw new Error(`${label} failed: ${error.message}`);
+  }
+}
+
+const pulseFormsSugarModuleMetadataCache = new Map();
+
+async function getPulseFormsSugarModuleMetadataFields(connection, moduleName) {
+  const module = String(moduleName || "").trim();
+  if (!module) return null;
+  const key = `${connection.baseUrl}|${connection.apiVersion}|metadata|${module}`;
+  if (pulseFormsSugarModuleMetadataCache.has(key)) return pulseFormsSugarModuleMetadataCache.get(key);
+  try {
+    const params = new URLSearchParams({ type_filter: "modules", module_filter: module });
+    const metadata = await fetchPulseFormsSugar(
+      connection,
+      "GET",
+      `/rest/${encodeURIComponent(connection.apiVersion)}/metadata?${params.toString()}`
+    );
+    const fields = metadata?.modules?.[module]?.fields || null;
+    pulseFormsSugarModuleMetadataCache.set(key, fields);
+    return fields;
+  } catch {
+    pulseFormsSugarModuleMetadataCache.set(key, null);
+    return null;
+  }
+}
+
+async function findPulseFormsSugarLinkName(connection, fromModule, toModule, preferred = []) {
+  const fields = await getPulseFormsSugarModuleMetadataFields(connection, fromModule);
+  const lowerToModule = String(toModule || "").toLowerCase();
+  if (fields && typeof fields === "object") {
+    for (const name of preferred) {
+      if (fields[name]) return name;
+    }
+    for (const [name, meta] of Object.entries(fields)) {
+      if (String(meta?.type || "").toLowerCase() !== "link") continue;
+      const module = String(meta?.module || meta?.related_module || meta?.module_name || "").toLowerCase();
+      if (module === lowerToModule) return name;
+    }
+  }
+  return "";
+}
+
+async function linkPulseFormsSugarRecords(connection, fromModule, fromId, toModule, toId, preferredFrom = [], preferredReverse = []) {
+  const fromLink = await findPulseFormsSugarLinkName(connection, fromModule, toModule, preferredFrom);
+  const attempts = [];
+  if (fromLink) attempts.push({ module: fromModule, id: fromId, link: fromLink, remoteId: toId });
+  const reverseLink = await findPulseFormsSugarLinkName(connection, toModule, fromModule, preferredReverse);
+  if (reverseLink) attempts.push({ module: toModule, id: toId, link: reverseLink, remoteId: fromId });
+  if (!attempts.length) {
+    for (const link of preferredFrom.filter(Boolean)) attempts.push({ module: fromModule, id: fromId, link, remoteId: toId });
+    for (const link of preferredReverse.filter(Boolean)) attempts.push({ module: toModule, id: toId, link, remoteId: fromId });
+  }
+
+  let lastError = null;
+  const tried = new Set();
+  for (const attempt of attempts) {
+    const key = `${attempt.module}:${attempt.id}:${attempt.link}:${attempt.remoteId}`;
+    if (tried.has(key)) continue;
+    tried.add(key);
+    try {
+      await fetchPulseFormsSugar(
+        connection,
+        "POST",
+        `/rest/${encodeURIComponent(connection.apiVersion)}/${encodeURIComponent(attempt.module)}/${encodeURIComponent(attempt.id)}/link/${encodeURIComponent(attempt.link)}/${encodeURIComponent(attempt.remoteId)}`,
+        {}
+      );
+      return attempt;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw new Error(`Could not relate ${fromModule} ${fromId} with ${toModule} ${toId}${lastError ? `: ${lastError.message}` : "."}`);
+}
+
+async function createPulseFormsSugarWorkflow(connection, values = {}, workflow = {}) {
+  const contactModule = connection.contactModule || "Contacts";
+  const ticketModule = pulseFormsTicketModule(connection);
+  const needsAssessmentModule = pulseFormsNeedsAssessmentModule(connection);
+  const campaignId = String(workflow.campaignId || "").trim();
+  const callId = String(workflow.callId || values.ncc_call_id_c || "").trim();
+  const savedWorkflowState = campaignId && callId
+    ? sanitizeWidgetStateIds((await readWidgetStateRecord(widgetStateDocId(campaignId, callId)))?.ids || {})
+    : sanitizeWidgetStateIds({});
+  let contactId = String(
+    values.contact_id ||
+    values.contact_id_c ||
+    savedWorkflowState.contactId ||
+    ""
+  ).trim();
+  let ticketId = String(
+    values.ticket_id ||
+    values.ticketId ||
+    values.sugar_opportunity_id_c ||
+    savedWorkflowState.ticketId ||
+    ""
+  ).trim();
+  let needsAssessmentId = String(
+    values.needs_assessment_id ||
+    values.needsAssessmentId ||
+    savedWorkflowState.needsAssessmentId ||
+    ""
+  ).trim();
+  let contactRecord = null;
+  let ticketRecord = null;
+  let needsAssessmentRecord = null;
+  const relationWarnings = [];
+
+  if (!contactId && !workflow.ticketOnly) {
+    const contactValues = await runPulseFormsSugarWorkflowStep(
+      "Prepare contact",
+      () => preparePulseFormsContactValues(connection, values)
+    );
+    const createdContact = await runPulseFormsSugarWorkflowStep(
+      `Create ${contactModule} contact`,
+      () => createPulseFormsSugarRecord(connection, contactModule, buildPulseFormsContactPayload(contactValues))
+    );
+    contactId = createdContact.id;
+    contactRecord = createdContact.record;
+    await checkpointWidgetStateIds(campaignId, callId, { contactId });
+  } else if (contactId) {
+    await checkpointWidgetStateIds(campaignId, callId, { contactId });
+  }
+
+  if (!ticketId) {
+  const ticketBase = buildPulseFormsTicketBasePayload({ ...values, contact_id: contactId, contact_id_c: contactId });
+  const ticketFields = await runPulseFormsSugarWorkflowStep(
+    `Load ${ticketModule} fields`,
+    () => getPulseFormsSugarModuleFields(connection, ticketModule)
+  );
+  const existingTicket = await runPulseFormsSugarWorkflowStep(
+    `Find ${ticketModule} ticket for call`,
+    () => findPulseFormsTicketForWorkflow(connection, ticketModule, callId, ticketBase.name, ticketFields)
+  );
+  if (existingTicket?.id) {
+    ticketId = existingTicket.id;
+    ticketRecord = existingTicket;
+  } else {
+    const ticketPayloadSource = buildPulseFormsTicketCreatePayload(values, ticketBase, contactId);
+    const ticketPayload = await runPulseFormsSugarWorkflowStep(
+      `Build ${ticketModule} payload`,
+      () => filterPulseFormsPayloadForModule(connection, ticketModule, ticketPayloadSource)
+    );
+    try {
+      const createdTicket = await runPulseFormsSugarWorkflowStep(
+        `Create ${ticketModule} ticket`,
+        () => createPulseFormsSugarRecord(connection, ticketModule, ticketPayload)
+      );
+      ticketId = createdTicket.id;
+      ticketRecord = createdTicket.record;
+    } catch (error) {
+      console.warn("PulseForms Ticket create returned an error; attempting recovery.", {
+        ticketModule,
+        callId,
+        ticketName: ticketBase.name,
+        payloadKeys: Object.keys(ticketPayload),
+        error: error.message
+      });
+      const timedOutTicket = await runPulseFormsSugarWorkflowStep(
+        `Recover ${ticketModule} ticket after create error`,
+        () => recoverPulseFormsTicketAfterCreateError(connection, ticketModule, callId, ticketBase.name, ticketFields)
+      );
+      if (!timedOutTicket?.id) throw error;
+      ticketId = timedOutTicket.id;
+      ticketRecord = timedOutTicket;
+      relationWarnings.push(`Ticket create returned an error, but the existing Ticket for NCC call ${callId} was recovered.`);
+    }
+  }
+  await checkpointWidgetStateIds(campaignId, callId, { contactId, ticketId });
+  } else {
+    await checkpointWidgetStateIds(campaignId, callId, { contactId, ticketId });
+  }
+
+  if (workflow.ticketOnly) {
+    return {
+      record: ticketRecord,
+      id: ticketId,
+      ticket: { module: ticketModule, id: ticketId, record: ticketRecord },
+      contact: contactId ? { module: contactModule, id: contactId, record: contactRecord } : null,
+      needsAssessment: null,
+      contactRelationSkipped: true,
+      needsAssessmentSkipped: true,
+      relationWarnings
+    };
+  }
+
+  try {
+    await linkPulseFormsSugarRecords(
+      connection,
+      ticketModule,
+      ticketId,
+      contactModule,
+      contactId,
+      [
+        connection.ticketContactLink,
+        "tic_tickets_contacts",
+        "contacts",
+        "contact",
+        "primary_contact"
+      ],
+      [
+        connection.contactTicketLink,
+        "tic_tickets_contacts",
+        "tic_tickets",
+        "cases",
+        "case",
+        "tickets"
+      ]
+    );
+  } catch (error) {
+    relationWarnings.push(`Contact relation warning: ${error.message}`);
+  }
+
+  if (workflow.skipNeedsAssessment) {
+    return {
+      record: ticketRecord,
+      id: ticketId,
+      ticket: { module: ticketModule, id: ticketId, record: ticketRecord },
+      contact: { module: contactModule, id: contactId, record: contactRecord },
+      needsAssessment: null,
+      needsAssessmentSkipped: true,
+      relationWarnings
+    };
+  }
+
+  if (!needsAssessmentId) {
+    if (!ticketRecord) {
+      ticketRecord = await runPulseFormsSugarWorkflowStep(
+        `Load ${ticketModule} ticket`,
+        () => getPulseFormsSugarRecord(connection, ticketModule, ticketId, pulseFormsTicketLookupFields())
+      );
+    }
+    const needsBase = buildPulseFormsNeedsAssessmentBasePayload(values, ticketId, ticketRecord || {});
+    const needsFields = await runPulseFormsSugarWorkflowStep(
+      `Load ${needsAssessmentModule} fields`,
+      () => getPulseFormsSugarModuleFields(connection, needsAssessmentModule)
+    );
+    const needsPayload = await runPulseFormsSugarWorkflowStep(
+      `Build ${needsAssessmentModule} payload`,
+      () => filterPulseFormsPayloadForModule(connection, needsAssessmentModule, addPulseFormsNeedsAssessmentAliases({
+        ...(needsFields ? values : {}),
+        ...needsBase,
+        contact_id: contactId,
+        case_id: ticketId,
+        parent_id: ticketId
+      }))
+    );
+    const createdNeedsAssessment = await runPulseFormsSugarWorkflowStep(
+      `Create ${needsAssessmentModule} needs assessment`,
+      () => createPulseFormsSugarRecord(connection, needsAssessmentModule, needsPayload)
+    );
+    needsAssessmentId = createdNeedsAssessment.id;
+    needsAssessmentRecord = createdNeedsAssessment.record;
+    await checkpointWidgetStateIds(campaignId, callId, { contactId, ticketId, needsAssessmentId });
+  } else {
+    await checkpointWidgetStateIds(campaignId, callId, { contactId, ticketId, needsAssessmentId });
+  }
+
+  try {
+    await linkPulseFormsSugarRecords(
+      connection,
+      ticketModule,
+      ticketId,
+      needsAssessmentModule,
+      needsAssessmentId,
+      [
+        connection.ticketNeedsAssessmentLink,
+        "na_needsassessment_tic_tickets",
+        "cases_na_needsassessment_1",
+        "cases_na_needsassessment",
+        "na_needsassessment_cases_1",
+        "na_needsassessment_cases",
+        "na_needsassessment",
+        "na_needsassessments",
+        "needs_assessments",
+        "needsassessment"
+      ],
+      [
+        connection.needsAssessmentTicketLink,
+        "na_needsassessment_tic_tickets",
+        "cases_na_needsassessment_1",
+        "cases_na_needsassessment",
+        "na_needsassessment_cases_1",
+        "na_needsassessment_cases"
+      ]
+    );
+  } catch (error) {
+    relationWarnings.push(`Needs Assessment relation warning: ${error.message}`);
+  }
+
+  return {
+    record: ticketRecord,
+    id: ticketId,
+    ticket: { module: ticketModule, id: ticketId, record: ticketRecord },
+    contact: { module: contactModule, id: contactId, record: contactRecord },
+    needsAssessment: {
+      module: needsAssessmentModule,
+      id: needsAssessmentId,
+      record: needsAssessmentRecord
+    },
+    relationWarnings
+  };
 }
 
 function extractDeepValue(data, fieldPath) {
@@ -3030,12 +4681,24 @@ function buildPulseFormsSugarConnection(config) {
     clientId: String(sugar.clientId || "sugar").trim() || "sugar",
     clientSecret: String(config.pulseformsSugarClientSecret || "").trim(),
     platform: String(sugar.platform || "base").trim() || "base",
+    apiVersion: String(sugar.apiVersion || "v11_1").trim() || "v11_1",
+    maxFieldsPerRequest: Math.max(1, Math.min(100, parseInt(sugar.maxFieldsPerRequest || 100, 10) || 100)),
+    nccEventOrigin: String(sugar.nccEventOrigin || "*").trim() || "*",
     queryEnabled: sugar.queryEnabled !== false,
+    contactModule: String(sugar.contactModule || sugar.queryModule || "Contacts").trim() || "Contacts",
+    ticketModule: String(sugar.ticketModule || "tic_Tickets").trim() || "tic_Tickets",
+    needsAssessmentModule: String(sugar.needsAssessmentModule || "NA_NeedsAssessment").trim() || "NA_NeedsAssessment",
+    ticketContactLink: String(sugar.ticketContactLink || "").trim(),
+    contactTicketLink: String(sugar.contactTicketLink || "").trim(),
+    ticketNeedsAssessmentLink: String(sugar.ticketNeedsAssessmentLink || "").trim(),
+    needsAssessmentTicketLink: String(sugar.needsAssessmentTicketLink || "").trim(),
     queryModule: String(sugar.queryModule || "Contacts").trim() || "Contacts",
     queryField: String(sugar.queryField || "phone_work").trim() || "phone_work",
     queryParam: String(sugar.queryParam || "phone").trim() || "phone",
     submitEnabled: sugar.submitEnabled !== false,
-    submitModule: String(sugar.submitModule || "Leads").trim() || "Leads",
+    submitModule: String(sugar.submitModule || "Opportunities").trim() || "Opportunities",
+    queryFieldMappings: sugar.queryFieldMappings || sugar.fieldMappings || {},
+    submitFieldMappings: sugar.submitFieldMappings || sugar.fieldMappings || {},
     fieldMappings: sugar.fieldMappings || {}
   };
 }
@@ -3048,7 +4711,8 @@ function assertPulseFormsSugarConnection(connection) {
 
 async function getPulseFormsSugarToken(connection) {
   assertPulseFormsSugarConnection(connection);
-  const response = await fetch(`${connection.baseUrl}/rest/v11/oauth2/token`, {
+  const apiVersion = encodeURIComponent(connection.apiVersion || "v11_1");
+  const response = await fetch(`${connection.baseUrl}/rest/${apiVersion}/oauth2/token`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -3068,6 +4732,15 @@ async function getPulseFormsSugarToken(connection) {
 }
 
 async function fetchPulseFormsSugar(connection, method, path, body = null) {
+  const result = await fetchPulseFormsSugarRaw(connection, method, path, body);
+  if (!result.ok) {
+    const payload = result.payload || {};
+    throw new Error(`Sugar API failed (${result.status}): ${payload.error_message || payload.error_description || payload.error || "Request failed"}`);
+  }
+  return result.payload;
+}
+
+async function fetchPulseFormsSugarRaw(connection, method, path, body = null) {
   const token = await getPulseFormsSugarToken(connection);
   const response = await fetch(`${connection.baseUrl}${path}`, {
     method,
@@ -3078,10 +4751,7 @@ async function fetchPulseFormsSugar(connection, method, path, body = null) {
     body: body ? JSON.stringify(body) : undefined
   });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(`Sugar API failed (${response.status}): ${payload.error_message || payload.error_description || payload.error || "Request failed"}`);
-  }
-  return payload;
+  return { ok: response.ok, status: response.status, payload };
 }
 
 async function queryPulseFormsSugar(connection, identifiers = {}) {
@@ -3093,11 +4763,11 @@ async function queryPulseFormsSugar(connection, identifiers = {}) {
   const result = await fetchPulseFormsSugar(
     connection,
     "GET",
-    `/rest/v11/${encodeURIComponent(connection.queryModule)}/filter?${filter.toString()}`
+    `/rest/${encodeURIComponent(connection.apiVersion)}/${encodeURIComponent(connection.queryModule)}/filter?${filter.toString()}`
   );
   const record = Array.isArray(result.records) ? result.records[0] : result;
   const values = {};
-  for (const [formFieldId, sugarField] of Object.entries(connection.fieldMappings || {})) {
+  for (const [formFieldId, sugarField] of Object.entries(connection.queryFieldMappings || connection.fieldMappings || {})) {
     const value = extractDeepValue(record, sugarField);
     if (value !== undefined && value !== null) values[formFieldId] = String(value);
   }
@@ -3105,13 +4775,11 @@ async function queryPulseFormsSugar(connection, identifiers = {}) {
 }
 
 async function submitPulseFormsSugar(connection, values = {}) {
-  const mappedValues = buildPulseFormsSubmitMappedValues(values, connection.fieldMappings || {});
-  const payload = Object.keys(mappedValues).length ? mappedValues : values;
-  if (!Object.keys(payload).length) throw new Error("No values available to send to Sugar CRM.");
+  const payload = await buildPulseFormsSugarSubmitPayload(connection, values);
   return fetchPulseFormsSugar(
     connection,
     "POST",
-    `/rest/v11/${encodeURIComponent(connection.submitModule)}`,
+    `/rest/${encodeURIComponent(connection.apiVersion)}/${encodeURIComponent(connection.submitModule)}`,
     payload
   );
 }
@@ -3138,6 +4806,167 @@ function parseFixedParams(fixedParamsStr) {
   return result;
 }
 
+const ALLOWED_DATA_SOURCE_METHODS = new Set(["GET", "POST", "PATCH"]);
+const BLOCKED_DATA_SOURCE_HOSTS = new Set([
+  "localhost",
+  "metadata.google.internal"
+]);
+const BLOCKED_DATA_SOURCE_HEADERS = new Set([
+  "connection",
+  "host",
+  "metadata",
+  "metadata-flavor",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "transfer-encoding",
+  "upgrade"
+]);
+const DATA_SOURCE_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+
+function normalizeDataSourceHostname(hostname) {
+  return String(hostname || "").trim().toLowerCase().replace(/\.$/, "");
+}
+
+function parseIpv4Address(address) {
+  const parts = String(address || "").split(".");
+  if (parts.length !== 4) return null;
+  const octets = parts.map((part) => Number(part));
+  if (octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) {
+    return null;
+  }
+  return octets;
+}
+
+function isBlockedIpv4Address(address) {
+  const octets = parseIpv4Address(address);
+  if (!octets) return true;
+  const [a, b] = octets;
+  return a === 0
+    || a === 10
+    || a === 127
+    || (a === 169 && b === 254)
+    || (a === 172 && b >= 16 && b <= 31)
+    || (a === 192 && b === 168)
+    || (a === 100 && b >= 64 && b <= 127)
+    || (a === 192 && b === 0)
+    || (a === 198 && (b === 18 || b === 19))
+    || a >= 224;
+}
+
+function isBlockedIpv6Address(address) {
+  const normalized = String(address || "").toLowerCase();
+  if (!normalized) return true;
+  if (normalized === "::" || normalized === "::1") return true;
+  const firstHextet = normalized.split(":")[0] || "";
+  if (firstHextet.length >= 2 && firstHextet.startsWith("f")) {
+    const secondNibble = parseInt(firstHextet.charAt(1), 16);
+    if (secondNibble >= 8 && secondNibble <= 11) return true; // fe80::/10
+    if (firstHextet.startsWith("fc") || firstHextet.startsWith("fd")) return true; // fc00::/7
+  }
+  if (normalized.startsWith("::ffff:")) {
+    return isBlockedIpv4Address(normalized.slice("::ffff:".length));
+  }
+  return false;
+}
+
+function isBlockedDataSourceAddress(address) {
+  const family = net.isIP(address);
+  if (family === 4) return isBlockedIpv4Address(address);
+  if (family === 6) return isBlockedIpv6Address(address);
+  return true;
+}
+
+async function validateDataSourceUrl(rawUrl) {
+  let urlObj;
+  try {
+    urlObj = new URL(String(rawUrl || ""));
+  } catch {
+    throw new Error("Data source URL is invalid.");
+  }
+
+  if (!["http:", "https:"].includes(urlObj.protocol)) {
+    throw new Error(`Data source URL scheme "${urlObj.protocol}" is not allowed.`);
+  }
+  if (urlObj.username || urlObj.password) {
+    throw new Error("Data source URL credentials are not allowed.");
+  }
+
+  const hostname = normalizeDataSourceHostname(urlObj.hostname);
+  if (!hostname || BLOCKED_DATA_SOURCE_HOSTS.has(hostname)) {
+    throw new Error(`Data source host "${hostname || "(empty)"}" is not allowed.`);
+  }
+
+  const records = await dns.lookup(hostname, { all: true, verbatim: true });
+  if (!records.length) {
+    throw new Error(`Data source host "${hostname}" could not be resolved.`);
+  }
+
+  const safeRecords = records.filter((record) => !isBlockedDataSourceAddress(record.address));
+  if (safeRecords.length !== records.length || !safeRecords.length) {
+    throw new Error(`Data source host "${hostname}" resolves to a private or restricted address.`);
+  }
+
+  return { urlObj, address: safeRecords[0].address, family: safeRecords[0].family };
+}
+
+function sanitizeDataSourceHeaders(headers) {
+  const sanitized = {};
+  if (!headers || typeof headers !== "object" || Array.isArray(headers)) {
+    return sanitized;
+  }
+
+  for (const [name, value] of Object.entries(headers)) {
+    const headerName = String(name || "").trim();
+    const normalizedName = headerName.toLowerCase();
+    if (!headerName || BLOCKED_DATA_SOURCE_HEADERS.has(normalizedName)) continue;
+    if (value === undefined || value === null) continue;
+    if (Array.isArray(value)) {
+      sanitized[headerName] = value.map((item) => String(item));
+    } else if (["string", "number", "boolean"].includes(typeof value)) {
+      sanitized[headerName] = String(value);
+    }
+  }
+
+  return sanitized;
+}
+
+function requestDataSourceUrl(urlObj, fetchOptions, pinnedAddress, pinnedFamily) {
+  return new Promise((resolve, reject) => {
+    const transport = urlObj.protocol === "https:" ? https : http;
+    const req = transport.request(urlObj, {
+      method: fetchOptions.method,
+      headers: fetchOptions.headers,
+      lookup: (_hostname, _options, callback) => callback(null, pinnedAddress, pinnedFamily),
+      timeout: 8000
+    }, (response) => {
+      const chunks = [];
+      let totalBytes = 0;
+
+      response.on("data", (chunk) => {
+        totalBytes += chunk.length;
+        if (totalBytes > DATA_SOURCE_MAX_RESPONSE_BYTES) {
+          req.destroy(new Error("Data source response is too large."));
+          return;
+        }
+        chunks.push(chunk);
+      });
+
+      response.on("end", () => {
+        resolve({
+          ok: response.statusCode >= 200 && response.statusCode < 300,
+          status: response.statusCode,
+          text: Buffer.concat(chunks).toString("utf8")
+        });
+      });
+    });
+
+    req.on("timeout", () => req.destroy(new Error("Data source request timed out.")));
+    req.on("error", reject);
+    if (fetchOptions.body) req.write(fetchOptions.body);
+    req.end();
+  });
+}
+
 async function fetchSummaryDataSource(source, identifiers) {
   // Merge: fixedParams first (defaults), then identifiers (URL params override)
   const fixed = parseFixedParams(source.fixedParams);
@@ -3162,7 +4991,10 @@ async function fetchSummaryDataSource(source, identifiers) {
     resolvedUrl = urlObj.toString();
   }
 
-  const method = source.method || "GET";
+  const method = String(source.method || "GET").trim().toUpperCase();
+  if (!ALLOWED_DATA_SOURCE_METHODS.has(method)) {
+    throw new Error(`Data source method "${method}" is not allowed.`);
+  }
 
   let parsedHeaders = {};
   try {
@@ -3171,22 +5003,22 @@ async function fetchSummaryDataSource(source, identifiers) {
     parsedHeaders = {};
   }
 
+  const { urlObj, address, family } = await validateDataSourceUrl(resolvedUrl);
   const fetchOptions = {
     method,
-    headers: { "Content-Type": "application/json", ...parsedHeaders },
-    signal: AbortSignal.timeout(8000)
+    headers: { "Content-Type": "application/json", ...sanitizeDataSourceHeaders(parsedHeaders) }
   };
 
   if (["POST", "PATCH"].includes(method) && source.bodyTemplate) {
     fetchOptions.body = interpolateSummaryBodyTemplate(source.bodyTemplate, merged);
   }
 
-  const response = await fetch(resolvedUrl, fetchOptions);
+  const response = await requestDataSourceUrl(urlObj, fetchOptions, address, family);
   if (!response.ok) {
     throw new Error(`Data source returned HTTP ${response.status}`);
   }
 
-  const text = await response.text();
+  const text = response.text;
   try {
     return JSON.parse(text);
   } catch {
@@ -3669,7 +5501,7 @@ function extractBalancedJson(text, openChar, closeChar) {
   return "";
 }
 
-async function callAiForSummary(provider, apiKey, model, systemPrompt, contextText) {
+async function callAiForSummary(provider, apiKey, model, systemPrompt, contextText, options = {}) {
   if (provider === "claude") {
     return callClaudeForSummary(apiKey, model, systemPrompt, contextText);
   }
@@ -3677,7 +5509,7 @@ async function callAiForSummary(provider, apiKey, model, systemPrompt, contextTe
     return callOpenAiForSummary(apiKey, model, systemPrompt, contextText);
   }
   // Default: Gemini
-  return callGeminiForSummary(apiKey, model, systemPrompt, contextText);
+  return callGeminiForSummary(apiKey, model, systemPrompt, contextText, options);
 }
 
 function normalizePulseFormsAiFiles(files) {
@@ -3846,8 +5678,9 @@ async function callOpenAiForPulseFormsFields(apiKey, model, systemPrompt, contex
   return text;
 }
 
-async function callGeminiForSummary(apiKey, model, systemPrompt, contextText) {
+async function callGeminiForSummary(apiKey, model, systemPrompt, contextText, options = {}) {
   const endpoint = buildGeminiEndpoint("https://generativelanguage.googleapis.com", model || "gemini-2.5-flash");
+  const maxOutputTokens = Math.max(1024, Math.min(Number(options.maxOutputTokens) || 8192, 32768));
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
@@ -3857,7 +5690,7 @@ async function callGeminiForSummary(apiKey, model, systemPrompt, contextText) {
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: systemPrompt }] },
       contents: [{ parts: [{ text: contextText }] }],
-      generationConfig: { temperature: 0.2, maxOutputTokens: 8192, responseMimeType: "application/json" }
+      generationConfig: { temperature: 0.2, maxOutputTokens, responseMimeType: "application/json" }
     }),
     signal: AbortSignal.timeout(120000)
   });
@@ -3868,7 +5701,11 @@ async function callGeminiForSummary(apiKey, model, systemPrompt, contextText) {
   }
 
   const payload = await response.json();
+  const finishReason = payload?.candidates?.[0]?.finishReason;
   const text = payload?.candidates?.[0]?.content?.parts?.map((p) => p?.text || "").join("").trim();
+  if (finishReason === "MAX_TOKENS") {
+    throw new Error(`Gemini response was truncated at ${maxOutputTokens} output tokens.`);
+  }
   if (!text) throw new Error("Gemini returned an empty response.");
   return text;
 }
@@ -3971,7 +5808,7 @@ async function resolveCampaignSelectionAsync(selection) {
   let match = null;
 
   if (campaignId) {
-    match = campaigns.find((item) => item.id === campaignId);
+    match = campaigns.find((item) => item.id === campaignId || item.name === campaignId || item.history?.widgetId === campaignId);
     if (!match) {
       throwConfig(`Unknown campaign "${campaignId}".`);
     }
@@ -4044,6 +5881,112 @@ async function handleAdmin(req, res, url) {
   }
 
   clearAdminAttempts(ip);
+
+  if (req.method === "GET" && url.pathname === "/api/admin/ncc-builder/survey-ai-config") {
+    const session = getSessionFromRequest(req);
+    if (!session || session.role !== "admin") {
+      sendJson(res, 403, { error: "Admin role required to manage Survey Designer AI config." });
+      return;
+    }
+    try {
+      if (!firestore) { sendJson(res, 503, { error: "Firestore is not available." }); return; }
+      const aiConfig = await readNccBuilderSurveyAiConfig();
+      sendJson(res, 200, publicNccBuilderAiConfig(aiConfig));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message, details: error.details });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/admin/ncc-builder/survey-ai-config") {
+    const session = getSessionFromRequest(req);
+    if (!session || session.role !== "admin") {
+      sendJson(res, 403, { error: "Admin role required to manage Survey Designer AI config." });
+      return;
+    }
+    let body;
+    try { body = await readJson(req); } catch { sendJson(res, 400, { error: "Invalid JSON." }); return; }
+    try {
+      if (!firestore) { sendJson(res, 503, { error: "Firestore is not available." }); return; }
+      const provider = normalizeNccBuilderAiProvider(body.provider);
+      const model = String(body.model || "").trim() || defaultAiModel(provider);
+      const apiKey = String(body.apiKey || "").trim();
+      const ref = firestore.collection(NCC_BUILDER_AI_CONFIG_COLLECTION).doc("survey_designer");
+      const existingDoc = await ref.get();
+      const existing = existingDoc.exists ? existingDoc.data() : {};
+      if (!apiKey && !existing?.apiKey) {
+        sendJson(res, 400, { error: "API key is required the first time this provider is configured." });
+        return;
+      }
+      const now = new Date().toISOString();
+      const doc = {
+        provider,
+        model,
+        apiKey: apiKey ? encryptSecret(apiKey) : existing.apiKey,
+        updatedAt: now,
+        createdAt: existing?.createdAt || now
+      };
+      await ref.set(doc, { merge: true });
+      sendJson(res, 200, publicNccBuilderAiConfig(doc));
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message, details: error.details });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/admin/pulseforms/sugar-template") {
+    let body;
+    try { body = await readJson(req); } catch {
+      sendJson(res, 400, { error: "Invalid JSON." });
+      return;
+    }
+    try {
+      const requested = normalizeCampaign(body.campaign || {});
+      const campaigns = await readCampaigns();
+      const saved = campaigns.find((item) => item.id === requested.id) || {};
+      const campaign = {
+        ...requested,
+        pulseformsSugarPassword: requested.pulseformsSugarPassword || saved.pulseformsSugarPassword || "",
+        pulseformsSugarClientSecret: requested.pulseformsSugarClientSecret || saved.pulseformsSugarClientSecret || ""
+      };
+      const connection = buildPulseFormsSugarConnection(campaign);
+      if (!connection.enabled) throw new Error("PulseForms Sugar CRM is not enabled.");
+      assertPulseFormsSugarConnection(connection);
+      const module = connection.submitModule || "Opportunities";
+      const templatePath = `/rest/${encodeURIComponent(connection.apiVersion)}/${encodeURIComponent(module)}/template`;
+      const templateResult = await fetchPulseFormsSugarRaw(
+        connection,
+        "GET",
+        templatePath
+      );
+      let source = "template";
+      let fields = [];
+      if (templateResult.ok) {
+        fields = extractPulseFormsSugarTemplateFields(templateResult.payload);
+      } else if (templateResult.status === 404) {
+        const params = new URLSearchParams({ type_filter: "modules", module_filter: module });
+        const metadata = await fetchPulseFormsSugar(
+          connection,
+          "GET",
+          `/rest/${encodeURIComponent(connection.apiVersion)}/metadata?${params.toString()}`
+        );
+        fields = extractPulseFormsSugarTemplateFields(metadata);
+        source = "metadata";
+      } else {
+        const payload = templateResult.payload || {};
+        throw new Error(`Sugar API failed (${templateResult.status}): ${payload.error_message || payload.error_description || payload.error || "Request failed"}`);
+      }
+      sendJson(res, 200, {
+        ok: true,
+        module,
+        source,
+        fields
+      });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message });
+    }
+    return;
+  }
 
   // ── User management (admin role required) ──────────────────────────────
   if (req.method === "GET" && url.pathname === "/api/admin/users") {
@@ -4314,7 +6257,7 @@ async function resolveCampaignConfigAsync(selection) {
   let match = null;
 
   if (campaignId) {
-    match = campaigns.find((item) => item.id === campaignId);
+    match = campaigns.find((item) => item.id === campaignId || item.name === campaignId || item.history?.widgetId === campaignId);
     if (!match) {
       throwConfig(`Unknown campaign "${campaignId}".`);
     }
@@ -4492,6 +6435,16 @@ function normalizeWielandListButtons(listButtons = {}) {
   };
 }
 
+function normalizeHistoryConfig(input = {}) {
+  const campaignIds = Array.isArray(input.campaignIds)
+    ? input.campaignIds
+    : String(input.campaignIds || input.campaignId || "").split(/\n|,/);
+  return {
+    widgetId: slugify(input.widgetId || input.id || ""),
+    campaignIds: Array.from(new Set(campaignIds.map((id) => String(id || "").trim()).filter(Boolean)))
+  };
+}
+
 function normalizeCampaign(input) {
   const id = slugify(input.id || input.name || input.domain);
   if (!id) {
@@ -4520,6 +6473,7 @@ function normalizeCampaign(input) {
     ).trim(),
     token: String(input.token || "").trim(),
     cookie: String(input.cookie || "").trim(),
+    history: normalizeHistoryConfig(input.history || {}),
     agentUserId: String(
       input.agentUserId
       || input.agent_user_id
@@ -4587,6 +6541,7 @@ function normalizeCampaign(input) {
     pulseformsAiApiKey: String(input.pulseformsAiApiKey || "").trim(),
     pulseformsSugarPassword: String(input.pulseformsSugarPassword || "").trim(),
     pulseformsSugarClientSecret: String(input.pulseformsSugarClientSecret || "").trim(),
+    pulseformsWidgetStateReadToken: String(input.pulseformsWidgetStateReadToken || "").trim(),
     pulseforms: normalizePulseFormsConfig(input.pulseforms || {}),
     apiAccessToken: String(input.apiAccessToken || "").trim(),
     ui: normalizeUiConfig(input.ui || input)
@@ -5164,12 +7119,24 @@ function normalizePulseFormsSugarConfig(input) {
     username: String(src.username || "").trim(),
     clientId: String(src.clientId || "sugar").trim() || "sugar",
     platform: String(src.platform || "base").trim() || "base",
+    apiVersion: String(src.apiVersion || "v11_1").trim() || "v11_1",
+    maxFieldsPerRequest: Math.max(1, Math.min(100, parseInt(src.maxFieldsPerRequest || 100, 10) || 100)),
+    nccEventOrigin: String(src.nccEventOrigin || "*").trim() || "*",
     queryEnabled: src.queryEnabled !== false,
+    contactModule: cleanModule(src.contactModule || src.queryModule, "Contacts"),
+    ticketModule: cleanModule(src.ticketModule, "tic_Tickets"),
+    needsAssessmentModule: cleanModule(src.needsAssessmentModule, "NA_NeedsAssessment"),
+    ticketContactLink: String(src.ticketContactLink || "").trim(),
+    contactTicketLink: String(src.contactTicketLink || "").trim(),
+    ticketNeedsAssessmentLink: String(src.ticketNeedsAssessmentLink || "").trim(),
+    needsAssessmentTicketLink: String(src.needsAssessmentTicketLink || "").trim(),
     queryModule: cleanModule(src.queryModule, "Contacts"),
     queryField: String(src.queryField || "phone_work").trim() || "phone_work",
     queryParam: String(src.queryParam || "phone").trim() || "phone",
     submitEnabled: src.submitEnabled !== false,
-    submitModule: cleanModule(src.submitModule, "Leads"),
+    submitModule: cleanModule(src.submitModule, "Opportunities"),
+    queryFieldMappings: sanitizeStringMapping(src.queryFieldMappings || src.fieldMappings || {}),
+    submitFieldMappings: sanitizeStringMapping(src.submitFieldMappings || src.fieldMappings || {}),
     fieldMappings: sanitizeStringMapping(src.fieldMappings || {})
   };
 }
@@ -5414,6 +7381,137 @@ async function fetchWorkitems(config) {
 
   const payload = await upstream.json();
   return Array.isArray(payload?.objects) ? payload.objects : [];
+}
+
+function buildWorkitemHistoryHeaders(config) {
+  const headers = {
+    "Authorization": config.token,
+    "Content-Type": "application/json"
+  };
+  if (config.cookie) {
+    headers["Cookie"] = config.cookie;
+  }
+  return headers;
+}
+
+async function fetchJsonUpstream(url, headers) {
+  const upstream = await fetch(url, { method: "GET", headers });
+  const text = await upstream.text();
+  let payload = {};
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    payload = { raw: text };
+  }
+  if (!upstream.ok) {
+    const detail = typeof payload === "object"
+      ? (payload.error || payload.message || payload.error_description || text)
+      : text;
+    throw new Error(`Upstream returned ${upstream.status}${detail ? `: ${String(detail).slice(0, 300)}` : "."}`);
+  }
+  return payload;
+}
+
+function appendWorkitemHistoryParams(sourceParams, targetParams) {
+  const allowed = [
+    "rows",
+    "start",
+    "q",
+    "maxHeight",
+    "rangeType",
+    "rangeFrom",
+    "rangeTo",
+    "dispositionId",
+    "sort",
+    "filter",
+    "where",
+    "timezone"
+  ];
+  for (const key of allowed) {
+    if (sourceParams.has(key)) {
+      for (const value of sourceParams.getAll(key)) targetParams.append(key, value);
+    }
+  }
+  if (!targetParams.has("rows")) targetParams.set("rows", "100");
+  if (!targetParams.has("start")) targetParams.set("start", "0");
+  if (!targetParams.has("q")) targetParams.set("q", "");
+  if (!targetParams.has("maxHeight")) targetParams.set("maxHeight", "500px");
+  if (!targetParams.has("rangeType")) targetParams.set("rangeType", "today");
+}
+
+function appendWorkitemHistoryCampaignFilters(sourceParams, targetParams, config) {
+  const explicitIds = [];
+  for (const value of sourceParams.getAll("campaignId")) {
+    String(value || "").split(",").forEach((id) => {
+      const normalized = id.trim();
+      if (normalized) explicitIds.push(normalized);
+    });
+  }
+  const configuredIds = Array.isArray(config?.history?.campaignIds) ? config.history.campaignIds : [];
+  const ids = explicitIds.length ? explicitIds : configuredIds;
+  for (const id of Array.from(new Set(ids))) {
+    targetParams.append("campaignId", id);
+  }
+}
+
+async function handleWorkitemHistory(req, res, url) {
+  try {
+    if (req.method !== "GET") {
+      sendJson(res, 405, { ok: false, error: "Method not allowed" });
+      return;
+    }
+
+    const selection = readSelection(url.searchParams);
+    const config = applyTokenOverride(await resolveCampaignConfigAsync(selection), req);
+    const domain = sanitizeDomain(config.domain);
+    if (!domain) throwConfig(`Campaign "${config.id}" is missing a Thrio domain.`);
+
+    const detailMatch = url.pathname.match(/^\/api\/workitem-history\/([^/]+)$/);
+    const headers = buildWorkitemHistoryHeaders(config);
+
+    if (detailMatch) {
+      const workitemId = decodeURIComponent(detailMatch[1] || "").trim();
+      if (!workitemId) throwConfig("Missing workitem id.");
+      const params = new URLSearchParams();
+      if (url.searchParams.has("rangeType")) params.set("rangeType", url.searchParams.get("rangeType") || "today");
+      else params.set("rangeType", "today");
+      const upstreamUrl = `https://${domain}/analytics/api/types/workitems/${encodeURIComponent(workitemId)}?${params.toString()}`;
+      const detail = await fetchJsonUpstream(upstreamUrl, headers);
+      sendJson(res, 200, { ok: true, workitemId, detail });
+      return;
+    }
+
+    const params = new URLSearchParams();
+    appendWorkitemHistoryParams(url.searchParams, params);
+    appendWorkitemHistoryCampaignFilters(url.searchParams, params, config);
+    const upstreamUrl = `https://${domain}/analytics/api/v1/types/workitems/history?${params.toString()}`;
+    const history = await fetchJsonUpstream(upstreamUrl, headers);
+    sendJson(res, 200, { ok: true, history });
+  } catch (error) {
+    const status = error.code === "CONFIG" ? 400 : 502;
+    sendJson(res, status, { ok: false, error: error.message });
+  }
+}
+
+async function handleWorkitemDispositions(req, res, url) {
+  try {
+    if (req.method !== "GET") {
+      sendJson(res, 405, { ok: false, error: "Method not allowed" });
+      return;
+    }
+
+    const selection = readSelection(url.searchParams);
+    const config = applyTokenOverride(await resolveCampaignConfigAsync(selection), req);
+    const domain = sanitizeDomain(config.domain);
+    if (!domain) throwConfig(`Campaign "${config.id}" is missing a Thrio domain.`);
+
+    const upstreamUrl = `https://${domain}/data/api/types/disposition`;
+    const dispositions = await fetchJsonUpstream(upstreamUrl, buildWorkitemHistoryHeaders(config));
+    sendJson(res, 200, { ok: true, dispositions });
+  } catch (error) {
+    const status = error.code === "CONFIG" ? 400 : 502;
+    sendJson(res, status, { ok: false, error: error.message });
+  }
 }
 
 async function sendAgentChatMessage(config, input) {
@@ -7957,6 +10055,763 @@ function profileDisplayName(profile) {
   return profile?.localizations?.name?.en?.value || profile?.name || profile?.label || "";
 }
 
+function nccBuilderObjectId(item, suffix = "") {
+  return String(
+    item?._id ||
+    (suffix ? item?.[`${suffix}Id`] : "") ||
+    item?.id ||
+    ""
+  ).trim();
+}
+
+function nccBuilderUserProfileId(user) {
+  return String(
+    user?.userProfileId ||
+    user?.userprofileId ||
+    user?.profileId ||
+    user?.userProfile?._id ||
+    user?.userProfile?.userprofileId ||
+    ""
+  ).trim();
+}
+
+function isNccBuilderSupervisorProfile(profile) {
+  const label = String(profile?.label || "").toUpperCase();
+  const name = profileDisplayName(profile).toLowerCase();
+  return (
+    label.includes("ADMIN") ||
+    label.includes("SUPERVISOR") ||
+    name.includes("administrator") ||
+    name.includes("administrador") ||
+    name.includes("admin") ||
+    name.includes("supervisor")
+  );
+}
+
+function nccBuilderUserDisplayName(user) {
+  return String(
+    user?.name ||
+    user?.fullName ||
+    [user?.firstName, user?.lastName].filter(Boolean).join(" ") ||
+    user?.username ||
+    user?.email ||
+    nccBuilderObjectId(user, "user")
+  ).trim();
+}
+
+function nccBuilderSupervisorsFromUsers(usersData, profilesData) {
+  const profiles = nccObjectList(profilesData);
+  const profileById = new Map();
+  profiles.forEach((profile) => {
+    [profile?._id, profile?.userprofileId, profile?.id].forEach((id) => {
+      const key = String(id || "").trim();
+      if (key) profileById.set(key, profile);
+    });
+  });
+  return nccObjectList(usersData)
+    .map((user) => {
+      const profileId = nccBuilderUserProfileId(user);
+      const profile = profileById.get(profileId) || user?.userProfile || null;
+      return {
+        id: nccBuilderObjectId(user, "user"),
+        name: nccBuilderUserDisplayName(user),
+        username: String(user?.username || user?.email || "").trim(),
+        profileId,
+        profileName: profileDisplayName(profile),
+        profileLabel: String(profile?.label || "").trim(),
+        allowed: isNccBuilderSupervisorProfile(profile)
+      };
+    })
+    .filter((user) => user.id && user.allowed)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function normalizeNccBuilderCluster(value) {
+  const clean = sanitizeDomain(value);
+  if (!clean) return "";
+  return clean.includes(".") ? clean : `${clean}.thrio.io`;
+}
+
+function publicNccBuilderAdminAccount(account) {
+  return {
+    id: account.id || "",
+    tenant: account.tenant || "",
+    cluster: account.cluster || "",
+    domain: account.domain || account.cluster || "",
+    timezone: account.timezone || "",
+    username: account.username || "",
+    userReportId: account.userReportId || account.reportId || "",
+    lastTestOk: account.lastTestOk === true,
+    lastTestAt: account.lastTestAt || null,
+    updatedAt: account.updatedAt || null,
+    createdAt: account.createdAt || null
+  };
+}
+
+async function loginNccBuilderStoredAdmin(account) {
+  const username = String(account.username || "").trim();
+  const password = decryptSecret(String(account.password || ""));
+  const domain = normalizeNccBuilderCluster(account.cluster || account.domain);
+  if (!username || !password || !domain) throw new Error("Stored admin account is missing username, password, or cluster.");
+  const basic = Buffer.from(`${username}:${password}`, "utf8").toString("base64");
+  const tokenResponse = await fetch("https://login.thrio.com/provider/token-with-authorities", {
+    method: "GET",
+    headers: { "Content-Type": "application/json", Authorization: `Basic ${basic}` }
+  });
+  const tokenText = await tokenResponse.text();
+  let tokenData;
+  try { tokenData = tokenText ? JSON.parse(tokenText) : {}; } catch { tokenData = tokenText; }
+  if (!tokenResponse.ok) {
+    const error = new Error("Failed to get NCC token for stored admin account.");
+    error.status = tokenResponse.status;
+    error.details = tokenData;
+    throw error;
+  }
+  const providerToken = extractNccToken(tokenData);
+  if (!providerToken) throw new Error("Login provider did not return a token for stored admin account.");
+  const config = {
+    token: providerToken,
+    domain,
+    baseUrl: buildNccBuilderBaseUrl(domain),
+    headers: { "Content-Type": "application/json" }
+  };
+  const loginResponse = await nccBuilderFetch(config, "/login", "POST", {}, "/users/api");
+  if (!loginResponse.ok) {
+    const error = new Error("Failed to login to NCC users API for stored admin account.");
+    error.status = loginResponse.status;
+    error.details = loginResponse.data;
+    throw error;
+  }
+  const sessionToken = extractNccToken(loginResponse.data) || providerToken;
+  config.token = sessionToken;
+  config.domain = extractNccDomain(loginResponse.data, sessionToken) || domain;
+  config.baseUrl = buildNccBuilderBaseUrl(config.domain);
+  const validation = await validateNccBuilderAdmin(config);
+  return { config, validation };
+}
+
+async function readNccBuilderAdminAccounts() {
+  if (!firestore) return [];
+  const snapshot = await firestore.collection(NCC_BUILDER_ADMIN_ACCOUNTS_COLLECTION).orderBy("tenant").get();
+  return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+}
+
+function normalizeNccBuilderAiProvider(value) {
+  const provider = String(value || "gemini").trim().toLowerCase();
+  return ["gemini", "openai", "claude"].includes(provider) ? provider : "gemini";
+}
+
+function publicNccBuilderAiConfig(config) {
+  if (!config || !config.apiKey) {
+    return {
+      configured: false,
+      provider: "gemini",
+      model: defaultAiModel("gemini"),
+      updatedAt: null
+    };
+  }
+  const provider = normalizeNccBuilderAiProvider(config.provider);
+  return {
+    configured: true,
+    provider,
+    model: config.model || defaultAiModel(provider),
+    updatedAt: config.updatedAt || null
+  };
+}
+
+async function readNccBuilderSurveyAiConfig() {
+  if (!firestore) return null;
+  const doc = await firestore.collection(NCC_BUILDER_AI_CONFIG_COLLECTION).doc("survey_designer").get();
+  return doc.exists ? { id: doc.id, ...doc.data() } : null;
+}
+
+function buildNccBuilderSurveyAiPrompt() {
+  return [
+    "You are a Senior NCC Survey Architect specialized in Nextiva Contact Center.",
+    "Generate complete NCC survey designs from a user story that look like production NCC agent forms, not generic blank forms.",
+    "Return ONLY valid JSON. No markdown, no prose outside JSON.",
+    "Allowed NCC components: panel, input, textarea, select, boolean, html, label, action, move, url, chat, separator.",
+    "Every element must contain: type, component, properties, _id, show, selected.",
+    "Every panel properties object must contain: direction, alignment, width, vertical, showHeader, panelShadow.",
+
+    "VISUAL STRUCTURE — flat column layout (production NCC pattern):",
+    "1. ROOT panel (one per survey step): type=panel, main=true, direction=column, vertical=fit, width=100%, panelShadow=false, margin=0px, showHeader=false. Never use panelShadow=true on any panel.",
+    "2. SECTION GROUPS inside the root panel: each logical section starts with a BANNER LABEL (type=html, component=label) followed by FIELD ROW panels. No wrapper panel around each section.",
+    "3. BANNER LABEL: properties.label must be plain text — the section title only. Do NOT add inline HTML styles. The renderer applies the banner style automatically.",
+    "4. FIELD ROWS below each banner: type=panel, direction=row, panelShadow=false, showHeader=false, margin=0px 0px 2px 0px, width=100%.",
+    "5. Fields in row panels: width=48% for paired fields. Full-width fields (textarea, major selects): width=98%, in their own row panel.",
+    "6. All input/select/boolean/textarea: fontSize=13, margin=0px 5px 4px 5px.",
+    "7. NAVIGATION ROW at the bottom of each root panel: type=panel, direction=row, alignment=flex-end, panelShadow=false, showHeader=false.",
+    "Example pattern for one root panel: [root panel] → [banner label: 'Customer Information'] → [row: firstName + lastName] → [row: phone + email] → [banner label: 'Account Details'] → [row: accountNumber + accountType] → [nav row: Back + Next].",
+
+    "Never use panelShadow=true anywhere.",
+    "For section titles always use a plain text string in properties.label of a type=html, component=label element — never add HTML markup to the label value.",
+    "Use top-level main panels with properties main=true, direction=column, vertical=fit, margin=0px, width=100%.",
+    "Never use component=submit or component=button. Submit buttons must be component=action with actionType=submitSurvey.",
+    "Move buttons must use properties.panelId for the destination panel, not targetPanelId.",
+    "Use snake_case fieldnames. Never use field1, field2, data1, inputA.",
+    "Use descriptive unique IDs: panel_customer_info, input_first_name, select_issue_type, btn_next.",
+    "Use ${workitem.data.xxx} only when prefill data is likely from workflow.",
+    "Conditional visibility may use expressions like ${surveyInformation.customer_found.value} == \"true\".",
+    "For integrations, use action, url, or chat components. Do not invent external API endpoints.",
+    "Mandatory fields should be limited to truly required data such as name, phone/email, primary identifier, reason, and issue details.",
+    "Keep analysis concise. The longest part of the response must be surveyJson, not explanatory text.",
+    "Limit the survey to 4 to 6 root panels and no more than 28 fields unless customFields require more.",
+    "The entryPanelId must point to a root panel that contains visible input/select/textarea/boolean fields.",
+    "The response schema must be:",
+    "{\"analysis\":{\"functionalAnalysis\":{\"objective\":\"\",\"users\":{\"finalUser\":\"\",\"agent\":\"\"},\"flow\":\"\"},\"surveyArchitecture\":{\"panels\":[],\"navigation\":{\"entryPanelId\":\"\",\"successPanelId\":\"\",\"errorPanelId\":\"\"},\"fields\":[]},\"riskAmbiguities\":[],\"reviewChecklist\":[]},\"surveyJson\":{\"objectType\":\"survey\",\"name\":\"\",\"entryPanelId\":\"\",\"successPanelId\":\"\",\"errorPanelId\":\"\",\"components\":[]}}",
+    "Before returning, validate unique IDs, unique fieldnames, valid navigation, reachable panels, mandatory fields, conditional visibility, and allowed components."
+  ].join(" ");
+}
+
+function buildNccBuilderSurveyAiUserMessage(body) {
+  return JSON.stringify({
+    surveyName: String(body.name || "").trim() || "NCC AI Assisted Survey",
+    agentOrTeam: String(body.audience || "").trim() || "NCC agents",
+    userStory: String(body.story || "").trim(),
+    integrations: Array.isArray(body.integrations) ? body.integrations : [],
+    primaryIdentifier: String(body.primaryId || "").trim() || "account_number",
+    contactRequirement: String(body.contactMode || "phone_or_email").trim(),
+    customFields: Array.isArray(body.fields) ? body.fields : [],
+    instructions: [
+      "Create 3 to 5 logical root panels. Each root panel covers a complete workflow step (e.g. Customer Information, Case Details, Actions, Confirmation).",
+      "Do not return only a generic first name / last name / phone / email panel. Build a tenant-specific agent workflow from the story and custom fields.",
+      "Inside each root panel place MULTIPLE sections: each section = one banner label (plain text title) followed by field row panels directly in the root panel. Do NOT wrap sections in nested container panels.",
+      "Use row panels for related field pairs (width=48% each). Use full-width (width=98%) only for textareas and major selects.",
+      "Place Back/Next/Submit buttons in a navigation row panel at the bottom of each root panel, direction=row, alignment=flex-end.",
+      "Set entryPanelId to the first root panel that has data capture fields.",
+      "Include customFields when supplied. Each custom field has label, fieldname, component, and optional options.",
+      "Keep JSON compact enough to import into NCC."
+    ]
+  }, null, 2);
+}
+
+function parseNccBuilderSurveyAiResponse(rawText) {
+  const candidates = buildJsonParseCandidates(rawText);
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed?.surveyJson && parsed?.analysis) return parsed;
+    } catch { /* try next */ }
+  }
+  return null;
+}
+
+function validateNccBuilderSurveyAiJson(surveyJson) {
+  const allowed = new Set(["panel", "input", "textarea", "select", "boolean", "html", "label", "action", "move", "url", "chat", "separator"]);
+  const errors = [];
+  const ids = [];
+  const fieldnames = [];
+  const panels = new Set();
+  const moveTargets = [];
+  const seenIds = new Set();
+  const visit = (item) => {
+    if (!item || typeof item !== "object") { errors.push("Survey component must be an object."); return; }
+    const itemId = String(item._id || "").trim();
+    if (itemId && seenIds.has(itemId)) return;
+    if (itemId) seenIds.add(itemId);
+    ["type", "component", "properties", "_id", "show", "selected"].forEach((key) => {
+      if (!(key in item)) errors.push(`Missing ${key} on component ${item._id || item.component || "unknown"}.`);
+    });
+    if (!allowed.has(item.component)) errors.push(`Invalid component: ${item.component}.`);
+    if (item.type !== item.component && !(item.type === "html" && item.component === "label")) {
+      errors.push(`type/component mismatch on ${item._id || item.component}.`);
+    }
+    if (item._id) ids.push(item._id);
+    if (item.component === "panel") {
+      panels.add(item._id);
+      ["direction", "alignment", "width", "vertical", "showHeader", "panelShadow"].forEach((key) => {
+        if (!(key in (item.properties || {}))) errors.push(`Panel ${item._id} missing ${key}.`);
+      });
+    }
+    if (item.properties?.fieldname) fieldnames.push(item.properties.fieldname);
+    if (item.component === "move" && (item.properties?.panelId || item.properties?.targetPanelId)) {
+      moveTargets.push(item.properties.panelId || item.properties.targetPanelId);
+    }
+    const nested = Array.isArray(item.elements)
+      ? item.elements
+      : Array.isArray(item.components)
+        ? item.components
+        : item.children;
+    (Array.isArray(nested) ? nested : []).forEach(visit);
+  };
+  if (!surveyJson || typeof surveyJson !== "object") errors.push("surveyJson must be an object.");
+  const roots = Array.isArray(surveyJson?.components) && surveyJson.components.length
+    ? surveyJson.components
+    : nccBuilderSurveyLayoutRoots(surveyJson?.layout);
+  if (!roots.length) errors.push("surveyJson.components or surveyJson.layout is required.");
+  roots.forEach(visit);
+  const duplicateIds = ids.filter((id, index) => ids.indexOf(id) !== index);
+  const duplicateFieldnames = fieldnames.filter((fieldname, index) => fieldnames.indexOf(fieldname) !== index);
+  if (duplicateIds.length) errors.push(`Duplicate IDs: ${[...new Set(duplicateIds)].join(", ")}.`);
+  if (duplicateFieldnames.length) errors.push(`Duplicate fieldnames: ${[...new Set(duplicateFieldnames)].join(", ")}.`);
+  ["entryPanelId", "successPanelId", "errorPanelId"].forEach((key) => {
+    if (surveyJson?.[key] && !panels.has(surveyJson[key])) errors.push(`${key} points to a missing panel.`);
+  });
+  moveTargets.filter((target) => !panels.has(target)).forEach((target) => errors.push(`Move target ${target} is missing.`));
+  return errors;
+}
+
+function nccBuilderSurveyDefaultHeader() {
+  return {
+    icon: "icon-ui-header",
+    name: "Header",
+    description: "Displays navigation buttons at the top of a survey",
+    type: "header",
+    component: "header",
+    elements: [],
+    properties: {
+      showPrevious: false,
+      showOptions: false,
+      icon: "icon-next",
+      showClose: false,
+      size: "24",
+      titleFontSize: "24"
+    },
+    _id: "ncc_builder_header"
+  };
+}
+
+function nccBuilderSurveyDefaultFooter() {
+  return {
+    icon: "icon-ui-footer",
+    name: "Footer",
+    description: "Displays navigation buttons at the bottom of a survey",
+    type: "footer",
+    component: "footer",
+    elements: [],
+    properties: {
+      type: "iconButton",
+      icon: "icon-next",
+      size: "24"
+    },
+    _id: "ncc_builder_footer"
+  };
+}
+
+function nccBuilderSurveyDefaultOverlay() {
+  return {
+    icon: "icon-ui-panels",
+    name: "Overlay Panel",
+    description: "This panel will always be visible and allow the user to minimise or maximise it.",
+    type: "overlay",
+    component: "overlay",
+    elements: [],
+    properties: {
+      label: "Overlay Panel",
+      labelAlignment: "left",
+      labelFontSize: "24",
+      descriptionAlignment: "left",
+      descriptionFontSize: "24",
+      alignment: "justify",
+      canCollapse: false,
+      state: false,
+      scroll: false,
+      vertical: "full",
+      direction: "column",
+      height: 80
+    },
+    _id: "ncc_builder_overlay"
+  };
+}
+
+function nccBuilderSurveyOptionValue(option) {
+  const text = String(option || "").trim();
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || text;
+}
+
+function nccBuilderSurveyPlainTextFromHtml(value) {
+  return String(value || "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&#8599;/g, "↗")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function nccBuilderSurveySectionBanner(value) {
+  const text = (nccBuilderSurveyPlainTextFromHtml(value) || "Section").replace(/^[●•\-\s]+/, "") || "Section";
+  return `<div style="box-sizing:border-box;width:100%;padding:8px 14px;background:#1B1F3B;border-radius:6px 6px 0 0;display:flex;align-items:center;gap:8px;"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#F7A731;flex:0 0 auto;"></span><span style="font-size:12px;font-weight:700;color:#ffffff;font-family:Arial,sans-serif;letter-spacing:0.3px;">${text}</span></div>`;
+}
+
+function nccBuilderSurveyNormalizeProperties(component, properties = {}) {
+  const next = { ...(properties && typeof properties === "object" ? properties : {}) };
+  if (next.title && !next.label) next.label = next.title;
+  if ("default" in next && !("defaultValue" in next)) next.defaultValue = next.default;
+  if ("readonly" in next && !("readOnly" in next)) next.readOnly = next.readonly;
+  if (component === "panel") {
+    return {
+      label: next.label || "",
+      labelAlignment: next.labelAlignment || "left",
+      labelFontSize: next.labelFontSize || "16",
+      descriptionAlignment: next.descriptionAlignment || "left",
+      descriptionFontSize: next.descriptionFontSize || "13",
+      alignment: next.alignment || "justify",
+      canCollapse: next.canCollapse === true,
+      state: next.state === true,
+      scroll: next.scroll === true,
+      showScrollbar: next.showScrollbar === true,
+      vertical: next.vertical || "fit",
+      direction: next.direction || "column",
+      width: next.width || "100%",
+      margin: next.margin || "0px",
+      panelShadow: false,
+      showOverlay: next.showOverlay === true,
+      showHeader: false,
+      allowPanelInDashboard: next.allowPanelInDashboard === true,
+      ...(next.tabLabel ? { tabLabel: next.tabLabel } : {}),
+      ...(next.panelBorderRadius ? { panelBorderRadius: next.panelBorderRadius } : {}),
+      ...(next.panelBackgroundColor ? { panelBackgroundColor: next.panelBackgroundColor } : {}),
+      ...(next.main ? { main: true } : {})
+    };
+  }
+  if (["input", "textarea"].includes(component)) {
+    return {
+      label: next.label || "",
+      fontSize: next.fontSize || "13",
+      width: next.width || "100%",
+      ...(component === "textarea" ? { height: next.height || "80px" } : {}),
+      margin: next.margin || "4px 5px",
+      fieldname: next.fieldname || next.name || "",
+      defaultValue: next.defaultValue || "",
+      mandatory: next.mandatory === true,
+      readOnly: next.readOnly === true,
+      validateOnInput: next.validateOnInput === true,
+      sensitiveData: next.sensitiveData === true,
+      saveToLocalStorage: next.saveToLocalStorage === true
+    };
+  }
+  if (component === "boolean") {
+    return {
+      label: next.label || "",
+      fontSize: next.fontSize || "13",
+      margin: next.margin || "4px 7px",
+      fieldname: next.fieldname || next.name || "",
+      defaultValue: next.defaultValue === true,
+      mandatory: next.mandatory === true
+    };
+  }
+  if (component === "select") {
+    const options = Array.isArray(next.options) ? next.options : [];
+    return {
+      label: next.label || "",
+      fontSize: next.fontSize || "13",
+      width: next.width || "100%",
+      margin: next.margin || "4px 5px",
+      fieldname: next.fieldname || next.name || "",
+      options: options.map((option) => {
+        if (option && typeof option === "object") {
+          return {
+            label: String(option.label ?? option.value ?? ""),
+            value: String(option.value ?? option.label ?? "")
+          };
+        }
+        return { label: String(option), value: nccBuilderSurveyOptionValue(option) };
+      }).filter((option) => option.label),
+      ...(next.condition ? { condition: next.condition } : {}),
+      mandatory: next.mandatory === true
+    };
+  }
+  if (component === "move") {
+    const panelId = next.panelId || next.targetPanelId || "";
+    return {
+      label: next.label || "Next",
+      fontSize: next.fontSize || "13",
+      buttonWidth: next.buttonWidth || "140px",
+      buttonPadding: next.buttonPadding || "10px",
+      buttonMargin: next.buttonMargin || "10px 5px 5px auto",
+      variables: Array.isArray(next.variables) ? next.variables : [],
+      panelId,
+      hideApplication: next.hideApplication === true,
+      sendMessageToWorkflow: next.sendMessageToWorkflow === true,
+      properties: Array.isArray(next.properties) ? next.properties : []
+    };
+  }
+  if (component === "action") {
+    return {
+      label: next.label || "Submit",
+      fontSize: next.fontSize || "13",
+      buttonWidth: next.buttonWidth || next.width || "140px",
+      buttonPadding: next.buttonPadding || "10px",
+      buttonMargin: next.buttonMargin || next.margin || "10px 5px 5px auto",
+      actionType: next.actionType || next.type || "submitSurvey",
+      successPanelId: next.successPanelId || "panel_success",
+      errorPanelId: next.errorPanelId || "panel_error",
+      properties: Array.isArray(next.properties) ? next.properties : []
+    };
+  }
+  if (component === "label") {
+    return {
+      label: nccBuilderSurveySectionBanner(next.label || next.html || ""),
+      condition: next.condition || ""
+    };
+  }
+  if (component === "html") {
+    return {
+      html: next.html || next.label || "",
+      condition: next.condition || ""
+    };
+  }
+  return next;
+}
+
+function nccBuilderSurveyNormalizeElement(item) {
+  if (!item || typeof item !== "object") return null;
+  let component = String(item.component || item.type || "").trim();
+  const id = String(item._id || "").trim();
+  if (!component || !id) return null;
+  if (component === "submit" || component === "button") component = "action";
+  if (["banner", "heading", "title", "header", "sectionheader", "section-header"].includes(component)) component = "label";
+  if (component === "text" || component === "paragraph") component = "html";
+  const nested = Array.isArray(item.elements)
+    ? item.elements
+    : Array.isArray(item.components)
+      ? item.components
+      : item.children;
+  const normalized = {
+    ...item,
+    type: component === "label" ? "html" : component,
+    component,
+    properties: nccBuilderSurveyNormalizeProperties(component, item.properties),
+    _id: id,
+    show: (typeof item.show === "string" && item.show !== "true" && item.show !== "false" && item.show.trim())
+      ? item.show
+      : (item.show === false || item.show === "false" ? false : true),
+    selected: item.selected === true
+  };
+  delete normalized.children;
+  delete normalized.components;
+  if (Array.isArray(nested) && nested.length) {
+    normalized.elements = nested.map(nccBuilderSurveyNormalizeElement).filter(Boolean);
+  } else if (component === "panel") {
+    normalized.elements = [];
+  }
+  return normalized;
+}
+
+function nccBuilderSurveyLayoutRoots(layout = {}) {
+  if (!layout || typeof layout !== "object") return [];
+  if (Array.isArray(layout.elements)) return layout.elements;
+  const values = Object.values(layout).filter((item) => item && typeof item === "object" && (item.component || item.type));
+  if (!values.length) return [];
+  const childIds = new Set();
+  values.forEach((item) => {
+    const nested = Array.isArray(item.elements)
+      ? item.elements
+      : Array.isArray(item.components)
+        ? item.components
+        : item.children;
+    (Array.isArray(nested) ? nested : []).forEach((child) => {
+      if (child?._id) childIds.add(child._id);
+    });
+  });
+  const roots = values.filter((item) => !childIds.has(item._id));
+  return roots.length ? roots : values;
+}
+
+function nccBuilderSurveyComponentsToLayout(components = []) {
+  return {
+    elements: (Array.isArray(components) ? components : []).map(nccBuilderSurveyNormalizeElement).filter(Boolean),
+    header: nccBuilderSurveyDefaultHeader(),
+    footer: nccBuilderSurveyDefaultFooter(),
+    overlay: nccBuilderSurveyDefaultOverlay()
+  };
+}
+
+function nccBuilderSurveySystemPanel(id, title, message) {
+  return nccBuilderSurveyNormalizeElement({
+    type: "panel",
+    component: "panel",
+    _id: id,
+    show: true,
+    selected: false,
+    properties: {
+      label: "",
+      tabLabel: title,
+      direction: "column",
+      alignment: "justify",
+      width: "100%",
+      vertical: "fit",
+      showHeader: false,
+      panelShadow: false,
+      panelBackgroundColor: "#F0F2F5",
+      main: true
+    },
+    elements: [
+      {
+        type: "html",
+        component: "label",
+        _id: `${id}_banner`,
+        show: true,
+        selected: false,
+        properties: { label: title }
+      },
+      {
+        type: "html",
+        component: "html",
+        _id: `${id}_message`,
+        show: true,
+        selected: false,
+        properties: { html: `<p style="font-size:16px;text-align:center;margin:30px 0;">${message}</p>` }
+      }
+    ]
+  });
+}
+
+function nccBuilderSurveyEnsurePanel(layout, panelId, title, message) {
+  if (!panelId || nccBuilderSurveyFindPanel(layout, panelId)) return;
+  if (!Array.isArray(layout.elements)) layout.elements = [];
+  layout.elements.push(nccBuilderSurveySystemPanel(panelId, title, message));
+}
+
+function nccBuilderSurveyLayoutPanels(layout = {}) {
+  const panels = [];
+  const visit = (item) => {
+    if (!item || typeof item !== "object") return;
+    if (item.component === "panel" || item.type === "panel") panels.push(item);
+    const nested = Array.isArray(item.elements)
+      ? item.elements
+      : Array.isArray(item.components)
+        ? item.components
+        : item.children;
+    (Array.isArray(nested) ? nested : []).forEach(visit);
+  };
+  nccBuilderSurveyLayoutRoots(layout).forEach(visit);
+  return panels;
+}
+
+function nccBuilderSurveyPanelHasFields(panel) {
+  const fieldComponents = new Set(["input", "textarea", "select", "boolean"]);
+  const nested = Array.isArray(panel?.elements)
+    ? panel.elements
+    : Array.isArray(panel?.components)
+      ? panel.components
+      : panel?.children;
+  const stack = Array.isArray(nested) ? [...nested] : [];
+  while (stack.length) {
+    const item = stack.shift();
+    if (!item || typeof item !== "object") continue;
+    if (fieldComponents.has(item.component || item.type)) return true;
+    const childItems = Array.isArray(item.elements)
+      ? item.elements
+      : Array.isArray(item.components)
+        ? item.components
+        : item.children;
+    if (Array.isArray(childItems)) stack.push(...childItems);
+  }
+  return false;
+}
+
+function nccBuilderSurveyFirstFieldPanelId(layout = {}) {
+  const panels = nccBuilderSurveyLayoutPanels(layout);
+  return panels.find(nccBuilderSurveyPanelHasFields)?._id || panels[0]?._id || "";
+}
+
+function nccBuilderSurveyFindPanel(layout = {}, panelId = "") {
+  const id = String(panelId || "").trim();
+  if (!id) return null;
+  return nccBuilderSurveyLayoutPanels(layout).find((panel) => panel?._id === id) || null;
+}
+
+function nccBuilderDateToMs(value, endOfDay = false) {
+  const date = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return NaN;
+  return Date.parse(`${date}T${endOfDay ? "23:59:59" : "00:00:00"}`);
+}
+
+function extractNccBuilderReportUsers(data) {
+  return data?.rows?.[0]?.cols?.[0]?.data
+    || data?.data
+    || data?.objects
+    || data?.results
+    || [];
+}
+
+function buildNccBuilderSurveyCreatePayload(name) {
+  const surveyName = String(name || "NCC Generated Survey").trim() || "NCC Generated Survey";
+  return {
+    objectType: "survey",
+    canvasBackgroundColor: null,
+    hideSurveyBoxShadown: false,
+    type: "icon",
+    showFooter: false,
+    showTabs: false,
+    showBottomNavigatorPage: false,
+    debug: false,
+    showHeader: false,
+    allowTabinationMandatoryFields: false,
+    entryPanelId: null,
+    name: surveyName,
+    showTopNavigatorPage: false,
+    usePanelShadow: false,
+    localizations: {
+      name: {
+        en: {
+          language: "en",
+          value: surveyName
+        }
+      }
+    },
+    _adjustedByData: true,
+    _showDialPad: false,
+    _working: true,
+    _openIcon: null,
+    _closeIcon: null,
+    selected: true,
+    _selected: true,
+    height: 720,
+    width: 1200,
+    layout: {},
+    surveythemeId: "693fef1fc7093e62b03bd3f2"
+  };
+}
+
+function normalizeNccBuilderSurveyPatchPayload(surveyJson, name) {
+  const surveyName = String(surveyJson?.name || name || "NCC Generated Survey").trim() || "NCC Generated Survey";
+  const generatedLayout = surveyJson?.layout && typeof surveyJson.layout === "object" && Object.keys(surveyJson.layout).length
+    ? nccBuilderSurveyComponentsToLayout(nccBuilderSurveyLayoutRoots(surveyJson.layout))
+    : nccBuilderSurveyComponentsToLayout(surveyJson?.components);
+  const successPanelId = surveyJson?.successPanelId || "panel_success";
+  const errorPanelId = surveyJson?.errorPanelId || "panel_error";
+  nccBuilderSurveyEnsurePanel(generatedLayout, successPanelId, "Confirmation", "Survey submitted successfully.");
+  nccBuilderSurveyEnsurePanel(generatedLayout, errorPanelId, "Error", "Review required fields and try again.");
+  const panels = nccBuilderSurveyLayoutPanels(generatedLayout);
+  const firstPanelId = panels[0]?._id || "panel_header";
+  const requestedEntryPanel = nccBuilderSurveyFindPanel(generatedLayout, surveyJson?.entryPanelId);
+  const entryPanelId = requestedEntryPanel && nccBuilderSurveyPanelHasFields(requestedEntryPanel)
+    ? surveyJson.entryPanelId
+    : nccBuilderSurveyFirstFieldPanelId(generatedLayout) || surveyJson?.entryPanelId || firstPanelId;
+  const patch = {
+    ...surveyJson,
+    objectType: "survey",
+    name: surveyName,
+    entryPanelId,
+    successPanelId,
+    errorPanelId,
+    layout: generatedLayout,
+    localizations: {
+      name: {
+        en: {
+          language: "en",
+          value: surveyName
+        }
+      }
+    },
+    _adjustedByData: true,
+    _showDialPad: false,
+    _working: true,
+    selected: true,
+    _selected: true
+  };
+  delete patch.components;
+  return patch;
+}
+
 function isAdministratorProfile(session, profiles) {
   const profileId = String(session?.userProfileId || session?.userProfile?._id || session?.userProfile?.userprofileId || "").trim();
   const profile = nccObjectList(profiles).find((item) => {
@@ -8165,6 +11020,34 @@ function buildNccBuilderQueuePayload(name, assignmentType, blended) {
   };
 }
 
+function normalizeNccBuilderQueues(value, fallback = {}) {
+  const source = Array.isArray(value) ? value : [];
+  const seen = new Set();
+  const queues = source
+    .map((item) => ({
+      name: String(item?.name || "").trim(),
+      assignmentType: String(item?.assignmentType || "fifo_across_all_queues").trim() || "fifo_across_all_queues",
+      blended: item?.blended !== false,
+      useForRouting: item?.useForRouting === true
+    }))
+    .filter((queue) => {
+      const key = queue.name.toLowerCase();
+      if (!queue.name || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  if (!queues.length && fallback.name) {
+    queues.push({
+      name: String(fallback.name).trim(),
+      assignmentType: String(fallback.assignmentType || "fifo_across_all_queues").trim() || "fifo_across_all_queues",
+      blended: fallback.blended !== false,
+      useForRouting: true
+    });
+  }
+  if (queues.length && !queues.some((queue) => queue.useForRouting)) queues[0].useForRouting = true;
+  return queues;
+}
+
 function buildNccBuilderPromptPayload(name, content) {
   const text = String(content || "").trim();
   return {
@@ -8184,6 +11067,108 @@ function buildNccBuilderPromptPayload(name, content) {
     frVoiceName: "fr-CA-Neural2-A",
     name,
     ptVoiceName: "pt-PT-Standard-A"
+  };
+}
+
+const NCC_BUILDER_DISPOSITION_WORKITEM_TYPES = [
+  "Chat",
+  "Email",
+  "InboundCall",
+  "InboundFax",
+  "InboundSMS",
+  "OutboundCall",
+  "OutboundEmail",
+  "OutboundFax",
+  "OutboundSMS",
+  "PredictiveSMS",
+  "ProgressiveCall",
+  "PredictiveCall"
+];
+
+const NCC_BUILDER_DISPOSITION_ACTION_BY_NAME = {
+  "do not call": "TenantDNC",
+  "answering machine": "answeringMachine",
+  "callback": "connectedCallback",
+  "fax machine": "fax",
+  "invalid number": "invalidNumber",
+  "no answer": "noAnswer",
+  "personal callback": "connectedPersonalCallback",
+  "remove from list": "connectedHandled"
+};
+
+function nccBuilderDispositionActionForName(name) {
+  return NCC_BUILDER_DISPOSITION_ACTION_BY_NAME[String(name || "").trim().toLowerCase()] || "";
+}
+
+function normalizeNccBuilderDispositions(value) {
+  const source = Array.isArray(value) ? value : String(value || "").split(/\r?\n/);
+  const seen = new Set();
+  return source
+    .map((item) => {
+      if (item && typeof item === "object") {
+        const name = String(item.name || "").trim();
+        const action = String(item.action || "").trim();
+        const options = item.options && typeof item.options === "object" ? item.options : {};
+        const workitemTypes = Array.isArray(item.workitemTypes)
+          ? item.workitemTypes
+              .map((type) => String(type || "").trim())
+              .filter((type) => NCC_BUILDER_DISPOSITION_WORKITEM_TYPES.includes(type))
+          : [];
+        return {
+          name,
+          action,
+          includeWorkitemTypes: item.includeWorkitemTypes === true,
+          workitemTypes,
+          options: {
+            resolved: options.resolved === true,
+            connectAgain: options.connectAgain === true,
+            forceContactAssignment: options.forceContactAssignment === true,
+            forceSurveyValidation: options.forceSurveyValidation === true,
+            blockNumber: options.blockNumber === true
+          }
+        };
+      }
+      const name = String(item || "").trim();
+      return { name, action: "", includeWorkitemTypes: false, options: {} };
+    })
+    .filter((item) => {
+      const key = item.name.toLowerCase();
+      if (!item.name || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function buildNccBuilderDispositionPayload(name, disposition = {}) {
+  const cleanAction = String(disposition.action || "").trim();
+  const options = disposition.options && typeof disposition.options === "object" ? disposition.options : {};
+  const workitemTypes = Array.isArray(disposition.workitemTypes)
+    ? disposition.workitemTypes.filter((type) => NCC_BUILDER_DISPOSITION_WORKITEM_TYPES.includes(type))
+    : [];
+  return {
+    objectType: "disposition",
+    note: "",
+    workitemType: workitemTypes.length
+      ? workitemTypes
+      : (disposition.includeWorkitemTypes === true ? NCC_BUILDER_DISPOSITION_WORKITEM_TYPES : null),
+    restcallId: null,
+    callbackDate: Date.now(),
+    callbackTime: null,
+    functionId: null,
+    action: cleanAction || null,
+    useCampaignIdForDNC: false,
+    resolved: options.resolved === true,
+    forceSurveyValidation: options.forceSurveyValidation === true,
+    forceContactAssignment: options.forceContactAssignment === true,
+    blockNumber: options.blockNumber === true,
+    name,
+    connectAgain: options.connectAgain === true,
+    localizations: { name: { en: { language: "en", value: name } } },
+    _adjustedByData: true,
+    _showDialPad: false,
+    _working: true,
+    selected: true,
+    _selected: true
   };
 }
 
@@ -8647,6 +11632,448 @@ async function handleNccCampaignBuilder(req, res, url) {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/ncc-builder/supervisors") {
+    const config = getNccBuilderAuth(req, url);
+    try {
+      await validateNccBuilderAdmin(config);
+      const profilesResult = await nccBuilderFetch(config, "/userprofile");
+      if (!profilesResult.ok) {
+        sendJson(res, profilesResult.status, { error: "Unable to load NCC user profiles.", details: profilesResult.data });
+        return;
+      }
+      const usersResult = await nccBuilderFetch(config, "/user");
+      if (!usersResult.ok) {
+        sendJson(res, usersResult.status, { error: "Unable to load NCC users.", details: usersResult.data });
+        return;
+      }
+      sendJson(res, 200, {
+        objects: nccBuilderSupervisorsFromUsers(usersResult.data, profilesResult.data)
+      });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message, details: error.details });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/ncc-builder/admin-accounts") {
+    const config = getNccBuilderAuth(req, url);
+    try {
+      await validateNccBuilderAdmin(config);
+      if (!firestore) { sendJson(res, 503, { error: "Firestore is not available." }); return; }
+      const accounts = await readNccBuilderAdminAccounts();
+      sendJson(res, 200, { objects: accounts.map(publicNccBuilderAdminAccount) });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message, details: error.details });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/ncc-builder/admin-accounts") {
+    let body;
+    try { body = await readJson(req); } catch { sendJson(res, 400, { error: "Invalid JSON." }); return; }
+    const config = getNccBuilderAuth(req, url, body);
+    try {
+      await validateNccBuilderAdmin(config);
+      if (!firestore) { sendJson(res, 503, { error: "Firestore is not available." }); return; }
+      const tenant = String(body.tenant || "").trim();
+      const cluster = normalizeNccBuilderCluster(body.cluster || body.domain);
+      const timezone = String(body.timezone || "").trim();
+      const username = String(body.username || "").trim();
+      const password = String(body.password || "");
+      if (!tenant || !cluster || !username || !password) {
+        sendJson(res, 400, { error: "tenant, cluster, username, and password are required." });
+        return;
+      }
+      const id = crypto.createHash("sha256").update(`${cluster}:${username}`.toLowerCase()).digest("hex").slice(0, 24);
+      const now = new Date().toISOString();
+      const doc = {
+        tenant,
+        cluster,
+        domain: cluster,
+        timezone,
+        username,
+        password: encryptSecret(password),
+        updatedAt: now,
+        createdAt: now
+      };
+      const ref = firestore.collection(NCC_BUILDER_ADMIN_ACCOUNTS_COLLECTION).doc(id);
+      const existing = await ref.get();
+      if (existing.exists) doc.createdAt = existing.data().createdAt || now;
+      await ref.set(doc, { merge: true });
+      sendJson(res, 200, { ok: true, account: publicNccBuilderAdminAccount({ id, ...doc }) });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message, details: error.details });
+    }
+    return;
+  }
+
+  const adminAccountTestMatch = url.pathname.match(/^\/api\/ncc-builder\/admin-accounts\/([^/]+)\/test$/);
+  if (req.method === "POST" && adminAccountTestMatch) {
+    const config = getNccBuilderAuth(req, url);
+    const accountId = decodeURIComponent(adminAccountTestMatch[1]);
+    try {
+      await validateNccBuilderAdmin(config);
+      if (!firestore) { sendJson(res, 503, { error: "Firestore is not available." }); return; }
+      const ref = firestore.collection(NCC_BUILDER_ADMIN_ACCOUNTS_COLLECTION).doc(accountId);
+      const doc = await ref.get();
+      if (!doc.exists) { sendJson(res, 404, { error: "Admin account not found." }); return; }
+      const account = { id: doc.id, ...doc.data() };
+      const login = await loginNccBuilderStoredAdmin(account);
+      const now = new Date().toISOString();
+      await ref.set({ lastTestOk: true, lastTestAt: now, detectedDomain: login.config.domain, updatedAt: now }, { merge: true });
+      sendJson(res, 200, { ok: true, account: publicNccBuilderAdminAccount({ ...account, lastTestOk: true, lastTestAt: now }), user: login.validation.session?.username || "" });
+    } catch (error) {
+      try {
+        if (firestore) {
+          await firestore.collection(NCC_BUILDER_ADMIN_ACCOUNTS_COLLECTION).doc(accountId).set({ lastTestOk: false, lastTestAt: new Date().toISOString() }, { merge: true });
+        }
+      } catch {}
+      sendJson(res, error.status || 500, { error: error.message, details: error.details });
+    }
+    return;
+  }
+
+  const adminAccountUserReportMatch = url.pathname.match(/^\/api\/ncc-builder\/admin-accounts\/([^/]+)\/user-report$/);
+  if (req.method === "POST" && adminAccountUserReportMatch) {
+    let body;
+    try { body = await readJson(req); } catch { sendJson(res, 400, { error: "Invalid JSON." }); return; }
+    const config = getNccBuilderAuth(req, url, body);
+    const accountId = decodeURIComponent(adminAccountUserReportMatch[1]);
+    const userReportId = String(body.userReportId || body.reportId || "").trim();
+    try {
+      await validateNccBuilderAdmin(config);
+      if (!firestore) { sendJson(res, 503, { error: "Firestore is not available." }); return; }
+      if (!userReportId) { sendJson(res, 400, { error: "userReportId is required." }); return; }
+      const ref = firestore.collection(NCC_BUILDER_ADMIN_ACCOUNTS_COLLECTION).doc(accountId);
+      const doc = await ref.get();
+      if (!doc.exists) { sendJson(res, 404, { error: "Admin account not found." }); return; }
+      const now = new Date().toISOString();
+      await ref.set({ userReportId, updatedAt: now }, { merge: true });
+      sendJson(res, 200, { ok: true, account: publicNccBuilderAdminAccount({ id: doc.id, ...doc.data(), userReportId, updatedAt: now }) });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message, details: error.details });
+    }
+    return;
+  }
+
+  const adminAccountDeleteMatch = url.pathname.match(/^\/api\/ncc-builder\/admin-accounts\/([^/]+)$/);
+  if (req.method === "DELETE" && adminAccountDeleteMatch) {
+    const config = getNccBuilderAuth(req, url);
+    const accountId = decodeURIComponent(adminAccountDeleteMatch[1]);
+    try {
+      await validateNccBuilderAdmin(config);
+      if (!firestore) { sendJson(res, 503, { error: "Firestore is not available." }); return; }
+      await firestore.collection(NCC_BUILDER_ADMIN_ACCOUNTS_COLLECTION).doc(accountId).delete();
+      sendJson(res, 200, { ok: true, deleted: accountId });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message, details: error.details });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/ncc-builder/user-reports/run") {
+    let body;
+    try { body = await readJson(req); } catch { sendJson(res, 400, { error: "Invalid JSON." }); return; }
+    const config = getNccBuilderAuth(req, url, body);
+    const accountIds = Array.isArray(body.accountIds) ? body.accountIds.map((id) => String(id || "").trim()).filter(Boolean) : [];
+    const fromMs = nccBuilderDateToMs(body.from);
+    const toMs = nccBuilderDateToMs(body.to, true);
+    const steps = [];
+    const addStep = (name, result, payload = null) => {
+      steps.push({ name, endpoint: result?.endpoint || "", status: result?.status || 0, ok: Boolean(result?.ok), payload, response: result?.data });
+    };
+    try {
+      await validateNccBuilderAdmin(config);
+      if (!firestore) { sendJson(res, 503, { error: "Firestore is not available.", steps }); return; }
+      if (!accountIds.length) { sendJson(res, 400, { error: "At least one admin account is required.", steps }); return; }
+      if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) { sendJson(res, 400, { error: "Valid date range is required.", steps }); return; }
+      const accounts = [];
+      for (const accountId of accountIds) {
+        const doc = await firestore.collection(NCC_BUILDER_ADMIN_ACCOUNTS_COLLECTION).doc(accountId).get();
+        if (doc.exists) accounts.push({ id: doc.id, ...doc.data() });
+      }
+      if (!accounts.length) { sendJson(res, 404, { error: "No selected admin accounts were found.", steps }); return; }
+      const output = [];
+      for (const account of accounts) {
+        const reportId = String(account.userReportId || account.reportId || "").trim();
+        if (!reportId) {
+          sendJson(res, 400, { error: `Report ID is not configured for ${account.tenant || account.username}.`, steps });
+          return;
+        }
+        const login = await loginNccBuilderStoredAdmin(account);
+        const rangePayload = { range: { type: "daterange", from: fromMs, to: toMs } };
+        const rangeResult = await nccBuilderFetch(login.config, `/report/${encodeURIComponent(reportId)}`, "PATCH", rangePayload);
+        addStep(`patchReportRange:${account.tenant}`, rangeResult, rangePayload);
+        if (!rangeResult.ok) { sendJson(res, rangeResult.status, { error: `Failed to patch report range for ${account.tenant}.`, steps }); return; }
+        const reportPayload = {
+          _id: reportId,
+          type: "GenericQuery",
+          startTime: String(fromMs),
+          endTime: String(toMs),
+          rangeType: "daterange",
+          timezone: account.timezone || "UTC"
+        };
+        const reportResult = await nccBuilderFetch(login.config, "/report", "POST", reportPayload, "/analytics/api");
+        addStep(`runUserReport:${account.tenant}`, reportResult, reportPayload);
+        if (!reportResult.ok) { sendJson(res, reportResult.status, { error: `Failed to run report for ${account.tenant}.`, steps }); return; }
+        output.push({
+          accountId: account.id,
+          tenant: account.tenant,
+          cluster: account.cluster,
+          timezone: account.timezone,
+          reportId,
+          rows: extractNccBuilderReportUsers(reportResult.data)
+        });
+      }
+      sendJson(res, 200, { ok: true, from: fromMs, to: toMs, accounts: output, steps });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message, details: error.details, steps });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/ncc-builder/surveys") {
+    const config = getNccBuilderAuth(req, url);
+    try {
+      await validateNccBuilderAdmin(config);
+      const result = await nccBuilderFetch(config, "/survey");
+      sendJson(res, result.status, result.ok ? { objects: nccObjectList(result.data) } : { error: "Unable to load NCC surveys.", details: result.data });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message, details: error.details });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/ncc-builder/survey-designer/ai") {
+    let body;
+    try { body = await readJson(req); } catch { sendJson(res, 400, { error: "Invalid JSON." }); return; }
+    const config = getNccBuilderAuth(req, url, body);
+    try {
+      await validateNccBuilderAdmin(config);
+      if (!firestore) { sendJson(res, 503, { error: "Firestore is not available." }); return; }
+      if (!String(body.story || "").trim()) {
+        sendJson(res, 400, { error: "User story is required." });
+        return;
+      }
+      const aiConfig = await readNccBuilderSurveyAiConfig();
+      if (!aiConfig?.apiKey) {
+        sendJson(res, 400, { error: "Survey AI provider is not configured." });
+        return;
+      }
+      const provider = normalizeNccBuilderAiProvider(aiConfig.provider);
+      const model = aiConfig.model || defaultAiModel(provider);
+      const apiKey = decryptSecret(String(aiConfig.apiKey || ""));
+      let rawText;
+      try {
+        rawText = await callAiForSummary(
+          provider,
+          apiKey,
+          model,
+          buildNccBuilderSurveyAiPrompt(),
+          buildNccBuilderSurveyAiUserMessage(body),
+          { maxOutputTokens: 24000 }
+        );
+      } catch (aiError) {
+        console.error("NCC survey AI generation failed", {
+          provider,
+          model,
+          error: aiError?.message || String(aiError)
+        });
+        sendJson(res, 502, {
+          error: "Survey AI provider call failed.",
+          provider,
+          model,
+          details: aiError?.message || String(aiError)
+        });
+        return;
+      }
+      const parsed = parseNccBuilderSurveyAiResponse(rawText);
+      if (!parsed) {
+        console.error("NCC survey AI returned invalid JSON", {
+          provider,
+          model,
+          preview: String(rawText || "").slice(0, 500)
+        });
+        sendJson(res, 502, { error: "AI did not return valid survey JSON.", provider, model, raw: String(rawText || "").slice(0, 2000) });
+        return;
+      }
+      const surveyName = String(parsed.surveyJson?.name || body.name || "NCC AI Assisted Survey").trim() || "NCC AI Assisted Survey";
+      const surveyJson = normalizeNccBuilderSurveyPatchPayload(parsed.surveyJson, surveyName);
+      const validationErrors = validateNccBuilderSurveyAiJson(surveyJson);
+      if (validationErrors.length) {
+        console.error("NCC survey AI JSON failed validation", {
+          provider,
+          model,
+          validationErrors
+        });
+        sendJson(res, 502, { error: "AI generated survey JSON failed validation.", provider, model, details: validationErrors, raw: String(rawText || "").slice(0, 2000) });
+        return;
+      }
+      sendJson(res, 200, {
+        ok: true,
+        provider,
+        model,
+        analysis: parsed.analysis,
+        surveyJson
+      });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message, details: error.details });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/ncc-builder/survey-designer/create") {
+    let body;
+    try { body = await readJson(req); } catch { sendJson(res, 400, { error: "Invalid JSON." }); return; }
+    const config = getNccBuilderAuth(req, url, body);
+    const name = String(body.name || body.surveyJson?.name || "").trim();
+    const surveyJson = body.surveyJson && typeof body.surveyJson === "object" ? body.surveyJson : null;
+    const steps = [];
+    const addStep = (stepName, result, payload = null) => {
+      steps.push({ name: stepName, endpoint: result?.endpoint || "", status: result?.status || 0, ok: Boolean(result?.ok), payload, response: result?.data });
+    };
+    try {
+      await validateNccBuilderAdmin(config);
+      if (!name) { sendJson(res, 400, { error: "Survey name is required.", steps }); return; }
+      if (!surveyJson) { sendJson(res, 400, { error: "surveyJson is required.", steps }); return; }
+      const createPayload = buildNccBuilderSurveyCreatePayload(name);
+      const createResult = await nccBuilderFetch(config, "/survey", "POST", createPayload);
+      addStep("createSurvey", createResult, createPayload);
+      if (!createResult.ok) {
+        sendJson(res, createResult.status, { error: "Failed to create NCC survey.", steps });
+        return;
+      }
+      const surveyId = nccId(createResult.data, "surveyId");
+      if (!surveyId) {
+        sendJson(res, 502, { error: "NCC did not return survey id.", steps });
+        return;
+      }
+      const patchPayload = normalizeNccBuilderSurveyPatchPayload(surveyJson, name);
+      const patchResult = await nccBuilderFetch(config, `/survey/${encodeURIComponent(surveyId)}`, "PATCH", patchPayload);
+      addStep("patchSurveyDesign", patchResult, patchPayload);
+      if (!patchResult.ok) {
+        sendJson(res, patchResult.status, { error: "Survey was created but failed to patch generated design.", surveyId, steps });
+        return;
+      }
+      const verifyResult = await nccBuilderFetch(config, `/survey/${encodeURIComponent(surveyId)}`);
+      addStep("verifySurveyLayout", verifyResult);
+      if (!verifyResult.ok) {
+        sendJson(res, verifyResult.status, { error: "Survey was patched but could not be verified.", surveyId, steps });
+        return;
+      }
+      const verifiedLayout = verifyResult.data?.layout;
+      if (!verifiedLayout || typeof verifiedLayout !== "object" || !Object.keys(verifiedLayout).length) {
+        sendJson(res, 502, { error: "Survey was created but NCC stored an empty layout.", surveyId, steps });
+        return;
+      }
+      sendJson(res, 200, {
+        ok: true,
+        surveyId,
+        created: createResult.data,
+        patched: patchResult.data,
+        verified: verifyResult.data,
+        steps
+      });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message, details: error.details, steps });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/ncc-builder/transcription-services") {
+    const config = getNccBuilderAuth(req, url);
+    try {
+      await validateNccBuilderAdmin(config);
+      const result = await nccBuilderFetch(config, "/service?q=TRANSCRIPTION");
+      sendJson(res, result.status, result.ok ? { objects: nccObjectList(result.data) } : { error: "Unable to load NCC transcription services.", details: result.data });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message, details: error.details });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/ncc-builder/generative-ai-services") {
+    const config = getNccBuilderAuth(req, url);
+    try {
+      await validateNccBuilderAdmin(config);
+      const result = await nccBuilderFetch(config, "/service?q=GENERATIVE_AI");
+      sendJson(res, result.status, result.ok ? { objects: nccObjectList(result.data) } : { error: "Unable to load NCC Summary services.", details: result.data });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message, details: error.details });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/ncc-builder/realtime-analysis-services") {
+    const config = getNccBuilderAuth(req, url);
+    try {
+      await validateNccBuilderAdmin(config);
+      const result = await nccBuilderFetch(config, "/service?q=REALTIME_ANALYSIS");
+      sendJson(res, result.status, result.ok ? { objects: nccObjectList(result.data) } : { error: "Unable to load NCC Real-Time Analysis services.", details: result.data });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message, details: error.details });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/ncc-builder/knowledge-base-services") {
+    const config = getNccBuilderAuth(req, url);
+    try {
+      await validateNccBuilderAdmin(config);
+      const result = await nccBuilderFetch(config, "/service?q=KNOWLEDGE_BASE");
+      sendJson(res, result.status, result.ok ? { objects: nccObjectList(result.data) } : { error: "Unable to load NCC KNOWLEDGE BASE services.", details: result.data });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message, details: error.details });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/ncc-builder/campaigns") {
+    const config = getNccBuilderAuth(req, url);
+    try {
+      await validateNccBuilderAdmin(config);
+      const result = await nccBuilderFetch(config, "/campaign");
+      sendJson(res, result.status, result.ok ? { objects: nccObjectList(result.data) } : { error: "Unable to load NCC campaigns.", details: result.data });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message, details: error.details });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/ncc-builder/campaign-surveys") {
+    let body;
+    try { body = await readJson(req); } catch { sendJson(res, 400, { error: "Invalid JSON." }); return; }
+    const config = getNccBuilderAuth(req, url, body);
+    const surveyId = String(body.surveyId || "").trim();
+    const campaignIds = Array.isArray(body.campaignIds)
+      ? Array.from(new Set(body.campaignIds.map((id) => String(id || "").trim()).filter(Boolean)))
+      : [];
+    const steps = [];
+    const addStep = (name, result, payload = null) => {
+      steps.push({ name, endpoint: result?.endpoint || "", status: result?.status || 0, ok: Boolean(result?.ok), payload, response: result?.data });
+    };
+    try {
+      await validateNccBuilderAdmin(config);
+      if (!surveyId) { sendJson(res, 400, { error: "Survey ID is required.", steps }); return; }
+      if (!campaignIds.length) { sendJson(res, 400, { error: "At least one campaign is required.", steps }); return; }
+      const updated = [];
+      for (const campaignId of campaignIds) {
+        const payload = { surveyId };
+        const result = await nccBuilderFetch(config, `/campaign/${encodeURIComponent(campaignId)}`, "PATCH", payload);
+        addStep(`patchCampaignSurvey:${campaignId}`, result, payload);
+        if (!result.ok) {
+          sendJson(res, result.status, { error: `Failed to patch survey on campaign "${campaignId}".`, steps });
+          return;
+        }
+        updated.push({ campaignId, surveyId });
+      }
+      sendJson(res, 200, { ok: true, surveyId, updated, steps });
+    } catch (error) {
+      sendJson(res, error.status || 500, { error: error.message, details: error.details, steps });
+    }
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/ncc-builder/create") {
     let body;
     try { body = await readJson(req); } catch { sendJson(res, 400, { error: "Invalid JSON." }); return; }
@@ -8663,13 +12090,38 @@ async function handleNccCampaignBuilder(req, res, url) {
       const workflowName = String(body.workflowName || `${campaignName} workflow`).trim();
       const scheduleName = String(body.scheduleName || `${campaignName} schedule`).trim();
       const businessEventName = String(body.businessEventName || scheduleName).trim();
+      const dispositions = normalizeNccBuilderDispositions(body.dispositions);
+      const queues = normalizeNccBuilderQueues(body.queues, {
+        name: String(body.queueName || "").trim(),
+        assignmentType: body.queueAssignmentType,
+        blended: body.queueBlended
+      });
+      const recordingPercentage = Number(body.recordingPercentage) === 100 ? 100 : 0;
+      const enableRealtimeTranscription = body.enableRealtimeTranscription === true;
+      const recordingEventsTranscription = enableRealtimeTranscription && body.recordingEventsTranscription === true;
+      const recordingAnalysisServiceId = String(body.recordingAnalysisServiceId || "").trim();
+      const generativeAIServiceId = String(body.generativeAIServiceId || "").trim();
+      const realtimeAnalysisServiceId = String(body.realtimeAnalysisServiceId || "").trim();
+      const knowledgeBaseServiceId = String(body.knowledgeBaseServiceId || "").trim();
+      const supervisorIds = Array.isArray(body.supervisorIds)
+        ? Array.from(new Set(body.supervisorIds.map((id) => String(id || "").trim()).filter(Boolean)))
+        : [];
       if (!campaignName) { sendJson(res, 400, { error: "Campaign name is required." }); return; }
       if (!workflowName) { sendJson(res, 400, { error: "Workflow name is required." }); return; }
+      if (enableRealtimeTranscription && !recordingAnalysisServiceId) {
+        sendJson(res, 400, { error: "Recording analysis service is required when realtime transcription is enabled.", steps });
+        return;
+      }
+      if ((generativeAIServiceId || realtimeAnalysisServiceId) && (!generativeAIServiceId || !realtimeAnalysisServiceId)) {
+        sendJson(res, 400, { error: "Summary and Real-Time Analysis services must be selected together.", steps });
+        return;
+      }
 
       let selectedAddress = "";
       if (campaignType === "inbound") {
         selectedAddress = normalizeNccInboundAddress(body.inboundAddress);
         if (!selectedAddress) { sendJson(res, 400, { error: "Inbound address is required.", steps }); return; }
+        if (!queues.length) { sendJson(res, 400, { error: "At least one queue is required for inbound campaigns.", steps }); return; }
       }
 
       const campaignPayload = buildNccBuilderCampaignPayload(campaignName, selectedAddress ? [selectedAddress] : []);
@@ -8679,28 +12131,87 @@ async function handleNccCampaignBuilder(req, res, url) {
       const campaignId = nccId(campaignResult.data, "campaignId");
       if (!campaignId) { sendJson(res, 502, { error: "NCC did not return campaign id.", steps }); return; }
 
+      const attachedSupervisors = [];
+      for (const userId of supervisorIds) {
+        const supervisorPayload = { campaignId, userId, _working: true };
+        const supervisorResult = await nccBuilderFetch(config, "/supervisorcampaign", "POST", supervisorPayload);
+        addStep(`attachSupervisor:${userId}`, supervisorResult, supervisorPayload);
+        if (!supervisorResult.ok) {
+          sendJson(res, supervisorResult.status, { error: `Failed to attach supervisor "${userId}" to campaign.`, steps });
+          return;
+        }
+        attachedSupervisors.push({ userId });
+      }
+
+      const createdDispositions = [];
+      for (const disposition of dispositions) {
+        const dispositionPayload = buildNccBuilderDispositionPayload(disposition.name, disposition);
+        const dispositionResult = await nccBuilderFetch(config, "/disposition", "POST", dispositionPayload);
+        addStep(`createDisposition:${disposition.name}`, dispositionResult, dispositionPayload);
+        if (!dispositionResult.ok) { sendJson(res, dispositionResult.status, { error: `Failed to create disposition "${disposition.name}".`, steps }); return; }
+        const dispositionId = nccId(dispositionResult.data, "dispositionId");
+        if (!dispositionId) { sendJson(res, 502, { error: `NCC did not return disposition id for "${disposition.name}".`, steps }); return; }
+
+        const campaignDispositionPayload = { campaignId, dispositionId, _working: true };
+        const campaignDispositionResult = await nccBuilderFetch(config, "/campaigndisposition", "POST", campaignDispositionPayload);
+        addStep(`attachDisposition:${disposition.name}`, campaignDispositionResult, campaignDispositionPayload);
+        if (!campaignDispositionResult.ok) { sendJson(res, campaignDispositionResult.status, { error: `Failed to attach disposition "${disposition.name}" to campaign.`, steps }); return; }
+        createdDispositions.push({
+          id: dispositionId,
+          name: disposition.name,
+          action: dispositionPayload.action,
+          workitemType: dispositionPayload.workitemType,
+          options: {
+            resolved: dispositionPayload.resolved,
+            connectAgain: dispositionPayload.connectAgain,
+            forceContactAssignment: dispositionPayload.forceContactAssignment,
+            forceSurveyValidation: dispositionPayload.forceSurveyValidation,
+            blockNumber: dispositionPayload.blockNumber
+          }
+        });
+      }
+
       let phonePatchPayload = null;
+      const transcriptionPatchPayload = {
+        enableRealtimeTranscription,
+        recordingEventsTranscription
+      };
+      if (enableRealtimeTranscription) {
+        transcriptionPatchPayload.recordingAnalysisServiceId = recordingAnalysisServiceId;
+      }
+      if (generativeAIServiceId && realtimeAnalysisServiceId) {
+        transcriptionPatchPayload.generativeAIServiceId = generativeAIServiceId;
+        transcriptionPatchPayload.realtimeAnalysisServiceId = [realtimeAnalysisServiceId];
+      }
+      if (knowledgeBaseServiceId) {
+        transcriptionPatchPayload.knowledgeBaseServiceId = knowledgeBaseServiceId;
+      }
       if (campaignType === "inbound") {
-        phonePatchPayload = { addresses: [selectedAddress] };
+        phonePatchPayload = { addresses: [selectedAddress], recordingPercentage, ...transcriptionPatchPayload };
       } else {
         const callerId = String(body.outboundCallerId || "").trim();
         if (!callerId) { sendJson(res, 400, { error: "Outbound caller ID is required.", steps }); return; }
-        phonePatchPayload = { callerId };
+        phonePatchPayload = { callerId, recordingPercentage, ...transcriptionPatchPayload };
       }
       const phonePatchResult = await nccBuilderFetch(config, `/campaign/${encodeURIComponent(campaignId)}`, "PATCH", phonePatchPayload);
       addStep("configureCampaignPhone", phonePatchResult, phonePatchPayload);
       if (!phonePatchResult.ok) { sendJson(res, phonePatchResult.status, { error: "Failed to configure campaign phone.", steps }); return; }
 
-      let queueId = "";
-      let queueName = "";
+      const createdQueues = [];
+      let routingQueue = null;
       if (campaignType === "inbound") {
-        queueName = String(body.queueName || `${campaignName} queue`).trim();
-        const queuePayload = buildNccBuilderQueuePayload(queueName, body.queueAssignmentType, body.queueBlended !== false);
-        const queueResult = await nccBuilderFetch(config, "/queue", "POST", queuePayload);
-        addStep("createInboundQueue", queueResult, queuePayload);
-        if (!queueResult.ok) { sendJson(res, queueResult.status, { error: "Failed to create inbound queue.", steps }); return; }
-        queueId = nccId(queueResult.data, "queueId");
-        if (!queueId) { sendJson(res, 502, { error: "NCC did not return queue id.", steps }); return; }
+        for (const queue of queues) {
+          const queuePayload = buildNccBuilderQueuePayload(queue.name, queue.assignmentType, queue.blended);
+          const queueResult = await nccBuilderFetch(config, "/queue", "POST", queuePayload);
+          addStep(`createInboundQueue:${queue.name}`, queueResult, queuePayload);
+          if (!queueResult.ok) { sendJson(res, queueResult.status, { error: `Failed to create inbound queue "${queue.name}".`, steps }); return; }
+          const queueId = nccId(queueResult.data, "queueId");
+          if (!queueId) { sendJson(res, 502, { error: `NCC did not return queue id for "${queue.name}".`, steps }); return; }
+          const createdQueue = { id: queueId, name: queue.name, assignmentType: queue.assignmentType, blended: queue.blended, useForRouting: queue.useForRouting };
+          createdQueues.push(createdQueue);
+          if (!routingQueue && queue.useForRouting) routingQueue = createdQueue;
+        }
+        if (!routingQueue) routingQueue = createdQueues[0] || null;
       }
 
       const workflowPayload = buildNccBuilderWorkflowPayload(workflowName);
@@ -8751,7 +12262,7 @@ async function handleNccCampaignBuilder(req, res, url) {
         workflowResult.data,
         businessEventName,
         promptId ? { id: promptId, name: promptName } : null,
-        queueId ? { id: queueId, name: queueName } : null
+        routingQueue
       );
       const workflowPatchResult = await nccBuilderFetch(config, `/workflow/${encodeURIComponent(workflowId)}`, "PATCH", workflowPatchPayload);
       addStep("patchWorkflowBusinessHours", workflowPatchResult, workflowPatchPayload);
@@ -8761,10 +12272,13 @@ async function handleNccCampaignBuilder(req, res, url) {
         ok: true,
         campaignId,
         workflowId,
-        queueId,
+        queueId: routingQueue?.id || "",
+        queues: createdQueues,
         businesseventId,
         timeeventId,
         promptId,
+        supervisors: attachedSupervisors,
+        dispositions: createdDispositions,
         messages: {
           inHours: String(body.inHoursMessage || "").trim(),
           outOfHours: outOfHoursMessage,
@@ -8802,7 +12316,7 @@ function createFirestoreClient() {
       process.env.K_SERVICE ||
       process.env.FUNCTION_TARGET
     ) {
-      return new Firestore();
+      return new Firestore(FIRESTORE_DATABASE_ID ? { databaseId: FIRESTORE_DATABASE_ID } : undefined);
     }
   } catch (error) {
     return null;

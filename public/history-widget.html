@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Workitem History</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=DM+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.31.0/dist/tabler-icons.min.css" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      --bg-primary: #ffffff;
+      --bg-secondary: #f5f6f8;
+      --text-primary: #111827;
+      --text-muted: #6b7280;
+      --text-hint: #9ca3af;
+      --border-faint: rgba(0,0,0,0.07);
+      --border-soft: rgba(0,0,0,0.13);
+      --accent: #111827;
+      --blue-bg: #e6f1fb;
+      --blue-text: #0c447c;
+      --blue-border: #85b7eb;
+      --warn-bg: #faeeda;
+      --warn-text: #633806;
+      --warn-border: #fac775;
+      --green-bg: #eaf3de;
+      --green-text: #27500a;
+      --green-border: #c0dd97;
+      --font-sans: 'DM Sans', system-ui, sans-serif;
+      --font-mono: 'DM Mono', ui-monospace, monospace;
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 14px;
+    }
+    body { margin: 0; font-family: var(--font-sans); color: var(--text-primary); background: var(--bg-secondary); }
+    .shell { max-width: 1380px; margin: 0 auto; padding: 24px; }
+    .header, .panel, .detail { background: var(--bg-primary); border: 0.5px solid var(--border-soft); border-radius: var(--radius-lg); }
+    .header { display: flex; align-items: center; gap: 12px; padding: 14px 16px; margin-bottom: 18px; }
+    .header-icon { width: 38px; height: 38px; display: grid; place-items: center; background: var(--blue-bg); color: var(--blue-text); border-radius: var(--radius-sm); font-size: 20px; }
+    .header-info { flex: 1; min-width: 0; }
+    h1 { margin: 0; font-size: 15px; font-weight: 700; }
+    .header-info p { margin: 2px 0 0; color: var(--text-muted); font-size: 12px; }
+    .badge { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 20px; font-size: 12px; background: var(--green-bg); color: var(--green-text); border: 0.5px solid var(--green-border); }
+    .filters { display: grid; grid-template-columns: minmax(180px, 1fr) 150px 130px 140px 140px 100px 100px auto; gap: 10px; align-items: end; margin-bottom: 14px; }
+    label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-muted); font-weight: 500; }
+    input, select, button { font: inherit; }
+    input, select { width: 100%; min-height: 38px; border: 0.5px solid var(--border-soft); border-radius: var(--radius-md); padding: 8px 10px; background: var(--bg-primary); color: var(--text-primary); outline: none; }
+    input:focus, select:focus { border-color: var(--text-hint); box-shadow: 0 0 0 3px rgba(0,0,0,0.05); }
+    .btn { min-height: 38px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 0.5px solid var(--accent); border-radius: var(--radius-md); padding: 8px 14px; background: var(--accent); color: #fff; font-weight: 700; cursor: pointer; }
+    .btn:disabled { opacity: .55; cursor: wait; }
+    .layout { display: grid; grid-template-columns: minmax(560px, 1.05fr) minmax(420px, .95fr); gap: 14px; align-items: start; }
+    .panel { overflow: hidden; }
+    .panel-head, .detail-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 13px 15px; border-bottom: 0.5px solid var(--border-faint); }
+    .section-title { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
+    .count { font-size: 12px; color: var(--text-muted); }
+    .table-wrap { max-height: calc(100vh - 205px); overflow: auto; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    th, td { padding: 10px 12px; border-bottom: 0.5px solid var(--border-faint); text-align: left; vertical-align: top; font-size: 13px; min-width: 0; }
+    th { position: sticky; top: 0; z-index: 1; background: var(--bg-primary); color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+    tr { cursor: pointer; }
+    tr:hover td, tr.is-selected td { background: var(--bg-secondary); }
+    .mono { font-family: var(--font-mono); font-size: 12px; }
+    .muted { color: var(--text-muted); }
+    .cell-main, .cell-sub { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cell-main { color: var(--text-primary); font-weight: 500; }
+    .cell-sub { margin-top: 2px; color: var(--text-muted); }
+    .cell-id { white-space: normal; overflow-wrap: anywhere; line-height: 1.25; }
+    .cell-date { white-space: nowrap; }
+    .status { margin-top: 10px; min-height: 18px; font-size: 12px; color: var(--text-muted); }
+    .status.error { color: var(--warn-text); }
+    .detail { min-height: 460px; overflow: hidden; }
+    .detail-body { padding: 14px 15px; max-height: calc(100vh - 155px); overflow: auto; }
+    .empty { color: var(--text-muted); font-size: 13px; padding: 24px 15px; }
+    .kv { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 8px 12px; align-items: start; padding: 8px 0; border-bottom: 0.5px solid var(--border-faint); }
+    .kv-key { color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
+    .kv-value { font-size: 13px; overflow-wrap: anywhere; white-space: pre-wrap; }
+    .recording-card { display: grid; gap: 8px; padding: 12px; margin-bottom: 12px; border: 0.5px solid var(--blue-border); border-radius: var(--radius-md); background: var(--blue-bg); color: var(--blue-text); }
+    .recording-card audio { width: 100%; }
+    .recording-link { color: var(--blue-text); font-size: 12px; font-weight: 700; overflow-wrap: anywhere; }
+    details { border: 0.5px solid var(--border-faint); border-radius: var(--radius-md); margin-bottom: 8px; overflow: hidden; }
+    summary { cursor: pointer; padding: 9px 10px; color: var(--text-muted); font-size: 12px; font-weight: 700; background: var(--bg-secondary); }
+    .nested { padding: 8px 10px; }
+    @media (max-width: 900px) {
+      .filters { grid-template-columns: 1fr 1fr; }
+      .filters .btn { grid-column: 1 / -1; }
+      .layout { grid-template-columns: 1fr; }
+      .detail-body, .table-wrap { max-height: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="header">
+      <div class="header-icon"><i class="ti ti-history"></i></div>
+      <div class="header-info">
+        <h1>Workitem history</h1>
+        <p id="subtitle">Loading campaign...</p>
+      </div>
+      <div class="badge"><i class="ti ti-database-search"></i> Analytics</div>
+    </header>
+
+    <form class="filters" id="filters">
+      <label>Search
+        <input id="q" name="q" type="search" placeholder="Name, phone, id..." />
+      </label>
+      <label>Range
+        <select id="rangeType" name="rangeType">
+          <option value="today">Today</option>
+          <option value="yesterday">Yesterday</option>
+          <option value="thisWeek">This week</option>
+          <option value="thisMonth">This month</option>
+        </select>
+      </label>
+      <label>Disposition
+        <select id="dispositionId" name="dispositionId">
+          <option value="">All</option>
+        </select>
+      </label>
+      <label>From
+        <input id="rangeFromDate" name="rangeFromDate" type="date" />
+      </label>
+      <label>To
+        <input id="rangeToDate" name="rangeToDate" type="date" />
+      </label>
+      <label>Rows
+        <input id="rows" name="rows" type="number" min="1" max="500" value="100" />
+      </label>
+      <label>Offset
+        <input id="start" name="start" type="number" min="0" value="0" />
+      </label>
+      <button class="btn" type="submit" id="loadBtn"><i class="ti ti-refresh"></i> Load</button>
+    </form>
+
+    <section class="layout">
+      <div class="panel">
+        <div class="panel-head">
+          <div class="section-title"><i class="ti ti-list-search"></i> Results</div>
+          <div class="count" id="count">0 records</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 32%;">Workitem</th>
+                <th style="width: 24%;">Customer</th>
+                <th style="width: 20%;">Queue / Agent</th>
+                <th style="width: 24%;">Date</th>
+              </tr>
+            </thead>
+            <tbody id="rowsBody">
+              <tr><td colspan="4" class="muted">No records loaded.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <aside class="detail">
+        <div class="detail-head">
+          <div class="section-title"><i class="ti ti-file-analytics"></i> Workitem detail</div>
+          <div class="count mono" id="selectedId"></div>
+        </div>
+        <div class="detail-body" id="detailBody">
+          <div class="empty">Select a workitem to load its detail.</div>
+        </div>
+      </aside>
+    </section>
+
+    <div class="status" id="status"></div>
+  </main>
+  <script src="./history-widget.js?v=20260526-1620"></script>
+</body>
+</html>

@@ -68,7 +68,24 @@ const pulseformsAnalyzeResult = document.getElementById("pulseformsAnalyzeResult
 const pulseformsAddFromAnalysis = document.getElementById("pulseformsAddFromAnalysis");
 const pulseformsLayoutGenerateBtn = document.getElementById("pulseformsLayoutGenerateBtn");
 const pulseformsSugarMappingRows = document.getElementById("pulseformsSugarMappingRows");
+const pulseformsSugarLookupMappingRows = document.getElementById("pulseformsSugarLookupMappingRows") || pulseformsSugarMappingRows;
+const pulseformsSugarSubmitMappingRows = document.getElementById("pulseformsSugarSubmitMappingRows") || pulseformsSugarMappingRows;
 const pulseformsSugarAddMappingButton = document.getElementById("pulseformsSugarAddMapping");
+const pulseformsSugarAddLookupMappingButton = document.getElementById("pulseformsSugarAddLookupMapping");
+const pulseformsSugarAddSubmitMappingButton = document.getElementById("pulseformsSugarAddSubmitMapping");
+const pulseformsSugarLoadSubmitTemplateButton = document.getElementById("pulseformsSugarLoadSubmitTemplate");
+const pulseformsSugarSubmitTemplateResult = document.getElementById("pulseformsSugarSubmitTemplateResult");
+const pulseformsGenerateWidgetStateTokenButton = document.getElementById("pulseformsGenerateWidgetStateToken");
+const pulseformsToggleWidgetStateTokenButton = document.getElementById("pulseformsToggleWidgetStateToken");
+const pulseformsCopyWidgetStateTokenButton = document.getElementById("pulseformsCopyWidgetStateToken");
+const historyGenerateWidgetIdButton = document.getElementById("historyGenerateWidgetId");
+const historyCopyWidgetUrlButton = document.getElementById("historyCopyWidgetUrl");
+const nccBuilderAiSection = document.getElementById("nccBuilderAiSection");
+const nccBuilderAiProvider = document.getElementById("nccBuilderAiProvider");
+const nccBuilderAiModel = document.getElementById("nccBuilderAiModel");
+const nccBuilderAiApiKey = document.getElementById("nccBuilderAiApiKey");
+const nccBuilderAiStatus = document.getElementById("nccBuilderAiStatus");
+const saveNccBuilderAiConfigButton = document.getElementById("saveNccBuilderAiConfig");
 
 const DEFAULT_WIELAND_WIDGET_TO_CONTACT_MAP = {
   firstName: "firstName",
@@ -269,12 +286,26 @@ const fields = {
   pulseformsSugarClientId: document.getElementById("pulseformsSugarClientId"),
   pulseformsSugarClientSecret: document.getElementById("pulseformsSugarClientSecret"),
   pulseformsSugarPlatform: document.getElementById("pulseformsSugarPlatform"),
+  pulseformsSugarApiVersion: document.getElementById("pulseformsSugarApiVersion"),
+  pulseformsSugarMaxFields: document.getElementById("pulseformsSugarMaxFields"),
+  pulseformsNccEventOrigin: document.getElementById("pulseformsNccEventOrigin"),
+  pulseformsWidgetStateReadToken: document.getElementById("pulseformsWidgetStateReadToken"),
+  pulseformsSugarContactModule: document.getElementById("pulseformsSugarContactModule"),
+  pulseformsSugarTicketModule: document.getElementById("pulseformsSugarTicketModule"),
+  pulseformsSugarNeedsAssessmentModule: document.getElementById("pulseformsSugarNeedsAssessmentModule"),
+  pulseformsSugarTicketContactLink: document.getElementById("pulseformsSugarTicketContactLink"),
+  pulseformsSugarContactTicketLink: document.getElementById("pulseformsSugarContactTicketLink"),
+  pulseformsSugarTicketNeedsAssessmentLink: document.getElementById("pulseformsSugarTicketNeedsAssessmentLink"),
+  pulseformsSugarNeedsAssessmentTicketLink: document.getElementById("pulseformsSugarNeedsAssessmentTicketLink"),
   pulseformsSugarQueryEnabled: document.getElementById("pulseformsSugarQueryEnabled"),
   pulseformsSugarQueryModule: document.getElementById("pulseformsSugarQueryModule"),
   pulseformsSugarQueryField: document.getElementById("pulseformsSugarQueryField"),
   pulseformsSugarQueryParam: document.getElementById("pulseformsSugarQueryParam"),
   pulseformsSugarSubmitEnabled: document.getElementById("pulseformsSugarSubmitEnabled"),
-  pulseformsSugarSubmitModule: document.getElementById("pulseformsSugarSubmitModule")
+  pulseformsSugarSubmitModule: document.getElementById("pulseformsSugarSubmitModule"),
+  historyWidgetId: document.getElementById("historyWidgetId"),
+  historyCampaignIds: document.getElementById("historyCampaignIds"),
+  historyWidgetUrl: document.getElementById("historyWidgetUrl")
 };
 
 const state = {
@@ -284,6 +315,12 @@ const state = {
   isDirty: false,
   toastTimer: null,
   currentUser: null
+};
+
+const NCC_BUILDER_AI_MODEL_DEFAULTS = {
+  gemini: "gemini-2.5-flash",
+  openai: "gpt-4o",
+  claude: "claude-sonnet-4-6"
 };
 
 function getCurrentPermissions() {
@@ -327,6 +364,67 @@ function showToast(message, isError = false) {
   state.toastTimer = setTimeout(() => {
     adminToast.classList.remove("admin-toast--visible");
   }, 3200);
+}
+
+function normalizeNccBuilderAiProvider(value) {
+  return ["gemini", "openai", "claude"].includes(value) ? value : "gemini";
+}
+
+function syncNccBuilderAiModelPlaceholder() {
+  if (!nccBuilderAiProvider || !nccBuilderAiModel) return;
+  const provider = normalizeNccBuilderAiProvider(nccBuilderAiProvider.value);
+  nccBuilderAiModel.placeholder = NCC_BUILDER_AI_MODEL_DEFAULTS[provider];
+  if (!nccBuilderAiModel.value.trim()) nccBuilderAiModel.value = NCC_BUILDER_AI_MODEL_DEFAULTS[provider];
+}
+
+function renderNccBuilderAiConfig(config = null) {
+  if (!nccBuilderAiStatus) return;
+  if (!config || config.configured !== true) {
+    nccBuilderAiStatus.textContent = "No AI provider configured for Survey Designer.";
+    return;
+  }
+  nccBuilderAiProvider.value = normalizeNccBuilderAiProvider(config.provider);
+  nccBuilderAiModel.value = config.model || NCC_BUILDER_AI_MODEL_DEFAULTS[nccBuilderAiProvider.value];
+  syncNccBuilderAiModelPlaceholder();
+  const label = nccBuilderAiProvider.options[nccBuilderAiProvider.selectedIndex]?.text || config.provider;
+  const updated = config.updatedAt ? ` Updated ${config.updatedAt}.` : "";
+  nccBuilderAiStatus.textContent = `${label} configured with ${nccBuilderAiModel.value}.${updated}`;
+}
+
+async function loadNccBuilderAiConfig() {
+  if (!nccBuilderAiSection) return;
+  try {
+    const data = await apiRequest("/api/admin/ncc-builder/survey-ai-config");
+    renderNccBuilderAiConfig(data);
+  } catch (error) {
+    nccBuilderAiStatus.textContent = error.message;
+    showToast(error.message, true);
+  }
+}
+
+async function saveNccBuilderAiConfig() {
+  if (!saveNccBuilderAiConfigButton) return;
+  saveNccBuilderAiConfigButton.disabled = true;
+  saveNccBuilderAiConfigButton.textContent = "Saving...";
+  try {
+    const data = await apiRequest("/api/admin/ncc-builder/survey-ai-config", {
+      method: "POST",
+      body: JSON.stringify({
+        provider: normalizeNccBuilderAiProvider(nccBuilderAiProvider.value),
+        model: nccBuilderAiModel.value.trim(),
+        apiKey: nccBuilderAiApiKey.value
+      })
+    });
+    nccBuilderAiApiKey.value = "";
+    renderNccBuilderAiConfig(data);
+    showToast("Survey Designer AI config saved.");
+  } catch (error) {
+    nccBuilderAiStatus.textContent = error.message;
+    showToast(error.message, true);
+  } finally {
+    saveNccBuilderAiConfigButton.disabled = false;
+    saveNccBuilderAiConfigButton.textContent = "Save AI config";
+  }
 }
 
 function renderQuestionItems(items) {
@@ -1500,8 +1598,8 @@ function addPulseFormsSourceCard(src = {}) {
         <textarea class="sa-field-description" rows="2" placeholder="Ej: Consulta contactos en Sugar CRM por telefono.">${escapeHtml(src.description || "")}</textarea>
       </div>
       <div class="sa-source-field sa-source-field--full">
-        <label>Field homologation</label>
-        <span class="admin-field-note">Mapea campos PulseForms contra los campos esperados por este CRM/API.</span>
+        <label>Field mapping for this API</label>
+        <span class="admin-field-note">Este mapping aplica solo a este endpoint. En Query lee campos de la respuesta hacia PulseForms; en Submit envia campos PulseForms hacia los campos esperados por esta API.</span>
         <div class="pf-mapping-rows" style="margin-top:8px;"></div>
         <button type="button" class="pf-add-mapping-btn">+ Add mapping</button>
       </div>
@@ -1570,20 +1668,39 @@ function updateSummaryAgenticUrls(campaignId) {
 
 function updatePulseFormsUrls(campaignId) {
   const link = document.getElementById("pulseformsOpenLink");
+  const v2Link = document.getElementById("pulseformv2OpenLink");
   const urlPhone = document.getElementById("pulseformsUrlPhone");
   const urlCustomerId = document.getElementById("pulseformsUrlCustomerId");
   const embedCode = document.getElementById("pulseformsEmbedCode");
-  const base = `${window.location.origin}${window.location.pathname.replace(/\/[^/]*$/, "/pulseforms.html")}`;
+  const widgetBase = `${window.location.origin}${window.location.pathname.replace(/\/[^/]*$/, "/widget/index.html")}`;
+  const v2Base = `${window.location.origin}${window.location.pathname.replace(/\/[^/]*$/, "/pulseformv2.html")}`;
   if (campaignId) {
-    if (link) { link.href = `./pulseforms.html?campaign=${encodeURIComponent(campaignId)}`; link.hidden = false; }
-    if (urlPhone) urlPhone.value = `${base}?campaign=${encodeURIComponent(campaignId)}&phone=+15551234567`;
-    if (urlCustomerId) urlCustomerId.value = `${base}?campaign=${encodeURIComponent(campaignId)}&customer_id=C-001`;
-    if (embedCode) embedCode.value = `<iframe src="${base}?campaign=${encodeURIComponent(campaignId)}&phone={{PHONE}}" style="width:100%;height:720px;border:none;" allow="clipboard-write"></iframe>`;
+    if (link) { link.href = `./widget/index.html?campaign=${encodeURIComponent(campaignId)}`; link.hidden = false; }
+    if (v2Link) { v2Link.href = `./pulseformv2.html?campaign=${encodeURIComponent(campaignId)}`; v2Link.hidden = false; }
+    if (urlPhone) urlPhone.value = `${v2Base}?campaign=${encodeURIComponent(campaignId)}&phone=+15551234567`;
+    if (urlCustomerId) urlCustomerId.value = `${v2Base}?campaign=${encodeURIComponent(campaignId)}&customer_id=C-001`;
+    if (embedCode) embedCode.value = `<iframe src="${v2Base}?campaign=${encodeURIComponent(campaignId)}&phone={{PHONE}}" style="width:100%;height:720px;border:none;" allow="clipboard-write"></iframe>`;
   } else {
     if (link) link.hidden = true;
+    if (v2Link) v2Link.hidden = true;
     if (urlPhone) urlPhone.value = "";
     if (urlCustomerId) urlCustomerId.value = "";
     if (embedCode) embedCode.value = "";
+  }
+}
+
+function parseAdminList(value) {
+  return String(value || "")
+    .split(/\n|,/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function updateHistoryUrls(campaignId) {
+  const widgetId = fields.historyWidgetId?.value.trim() || campaignId || "";
+  const base = `${window.location.origin}${window.location.pathname.replace(/\/[^/]*$/, "/history-widget.html")}`;
+  if (fields.historyWidgetUrl) {
+    fields.historyWidgetUrl.value = widgetId ? `${base}?campaign=${encodeURIComponent(widgetId)}` : "";
   }
 }
 
@@ -1624,6 +1741,33 @@ function readPulseFormsDataSources() {
     description: card.querySelector(".sa-field-description")?.value.trim() || "",
     fieldMappings: readPulseFormsMappings(card.querySelector(".pf-mapping-rows"))
   })).filter((s) => s.url);
+}
+
+function renderPulseFormsSugarTemplateFields(fieldsList = [], source = "Sugar") {
+  if (!pulseformsSugarSubmitTemplateResult) return;
+  pulseformsSugarSubmitTemplateResult.style.display = "block";
+  if (!fieldsList.length) {
+    pulseformsSugarSubmitTemplateResult.textContent = "No fields returned by Sugar template.";
+    return;
+  }
+  const rows = fieldsList.slice(0, 250).map((field) => `
+    <div class="sa-kv-row" style="grid-template-columns:1.2fr .8fr 1.2fr auto;">
+      <code>${escapeHtml(field.name)}</code>
+      <span>${escapeHtml(field.type || "")}</span>
+      <span>${escapeHtml(field.label || "")}</span>
+      <button type="button" class="secondary pf-template-add-field" data-field="${escapeHtml(field.name)}">Add</button>
+    </div>
+  `).join("");
+  pulseformsSugarSubmitTemplateResult.innerHTML = `
+    <div style="margin-bottom:8px;">${fieldsList.length} fields from ${escapeHtml(source)}. Click Add, then choose the PulseForms field for that Sugar parameter.</div>
+    <div class="sa-kv-list">${rows}</div>
+  `;
+  pulseformsSugarSubmitTemplateResult.querySelectorAll(".pf-template-add-field").forEach((button) => {
+    button.addEventListener("click", () => {
+      addPulseFormsMappingRow(pulseformsSugarSubmitMappingRows, "", button.dataset.field || "");
+      markDirty();
+    });
+  });
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1760,6 +1904,113 @@ pulseformsAddFieldButton?.addEventListener("click", () => {
 pulseformsSugarAddMappingButton?.addEventListener("click", () => {
   addPulseFormsMappingRow(pulseformsSugarMappingRows);
   markDirty();
+});
+
+pulseformsSugarAddLookupMappingButton?.addEventListener("click", () => {
+  addPulseFormsMappingRow(pulseformsSugarLookupMappingRows);
+  markDirty();
+});
+
+pulseformsSugarAddSubmitMappingButton?.addEventListener("click", () => {
+  addPulseFormsMappingRow(pulseformsSugarSubmitMappingRows);
+  markDirty();
+});
+
+pulseformsSugarLoadSubmitTemplateButton?.addEventListener("click", async () => {
+  pulseformsSugarLoadSubmitTemplateButton.disabled = true;
+  const previousText = pulseformsSugarLoadSubmitTemplateButton.textContent;
+  pulseformsSugarLoadSubmitTemplateButton.textContent = "Loading template...";
+  if (pulseformsSugarSubmitTemplateResult) {
+    pulseformsSugarSubmitTemplateResult.style.display = "block";
+    pulseformsSugarSubmitTemplateResult.textContent = "Loading Sugar template...";
+  }
+  try {
+    const data = await apiRequest("/api/admin/pulseforms/sugar-template", {
+      method: "POST",
+      body: JSON.stringify({ campaign: readForm() })
+    });
+    renderPulseFormsSugarTemplateFields(data.fields || [], data.source || "Sugar");
+    showToast(`Loaded ${data.fields?.length || 0} Sugar field(s) from ${data.source || "Sugar"}.`);
+  } catch (error) {
+    if (pulseformsSugarSubmitTemplateResult) {
+      pulseformsSugarSubmitTemplateResult.style.display = "block";
+      pulseformsSugarSubmitTemplateResult.textContent = `Error: ${error.message}`;
+    }
+    showToast(error.message, true);
+  } finally {
+    pulseformsSugarLoadSubmitTemplateButton.disabled = false;
+    pulseformsSugarLoadSubmitTemplateButton.textContent = previousText;
+  }
+});
+
+pulseformsGenerateWidgetStateTokenButton?.addEventListener("click", () => {
+  const input = fields.pulseformsWidgetStateReadToken;
+  if (!input) return;
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  input.value = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  showToast("Widget state token generated. Save the campaign to persist it.");
+});
+
+pulseformsToggleWidgetStateTokenButton?.addEventListener("click", () => {
+  const input = fields.pulseformsWidgetStateReadToken;
+  if (!input) return;
+  const isHidden = input.type === "password";
+  input.type = isHidden ? "text" : "password";
+  pulseformsToggleWidgetStateTokenButton.textContent = isHidden ? "Hide" : "Show";
+});
+
+pulseformsCopyWidgetStateTokenButton?.addEventListener("click", async () => {
+  const input = fields.pulseformsWidgetStateReadToken;
+  const value = input?.value || "";
+  if (!value) {
+    showToast("No widget state token to copy.", true);
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(value);
+    showToast("Widget state token copied.");
+  } catch {
+    input.focus();
+    input.select();
+    showToast("Token selected. Copy it manually.", true);
+  }
+});
+
+historyGenerateWidgetIdButton?.addEventListener("click", () => {
+  const input = fields.historyWidgetId;
+  if (!input) return;
+  const base = (fields.name?.value || fields.id?.value || "history")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32) || "history";
+  const array = new Uint8Array(4);
+  crypto.getRandomValues(array);
+  const suffix = Array.from(array).map(b => b.toString(16).padStart(2, "0")).join("");
+  input.value = `${base}-${suffix}`;
+  updateHistoryUrls(fields.id?.value.trim() || state.selectedId || "");
+  markDirty();
+  showToast("History widget ID generated. Save the campaign to persist it.");
+});
+
+historyCopyWidgetUrlButton?.addEventListener("click", async () => {
+  updateHistoryUrls(fields.id?.value.trim() || state.selectedId || "");
+  const value = fields.historyWidgetUrl?.value.trim() || "";
+  if (!value) {
+    showToast("No History widget URL to copy.", true);
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(value);
+    showToast("History widget URL copied.");
+  } catch {
+    showToast("Unable to copy URL.", true);
+  }
+});
+
+fields.historyWidgetId?.addEventListener("input", () => {
+  updateHistoryUrls(fields.id?.value.trim() || state.selectedId || "");
 });
 
 pulseformsAnalyzeFieldsBtn?.addEventListener("click", async () => {
@@ -2433,6 +2684,10 @@ logoutButton.addEventListener("click", async () => {
   location.replace(buildApiUrl("/login.html"));
 });
 
+nccBuilderAiProvider?.addEventListener("change", syncNccBuilderAiModelPlaceholder);
+saveNccBuilderAiConfigButton?.addEventListener("click", saveNccBuilderAiConfig);
+syncNccBuilderAiModelPlaceholder();
+
 addUserButton.addEventListener("click", () => {
   userFormWrap.hidden = false;
   document.getElementById("newUsername").value = "";
@@ -2643,6 +2898,8 @@ function fillForm(campaign) {
   loadWielandFieldmappingInfo();
   fields.token.value = campaign.token || "";
   fields.cookie.value = campaign.cookie || "";
+  if (fields.historyWidgetId) fields.historyWidgetId.value = campaign.history?.widgetId || "";
+  if (fields.historyCampaignIds) fields.historyCampaignIds.value = (campaign.history?.campaignIds || []).join("\n");
   fields.allowedKbIds.value = (campaign.allowedKbIds || []).join("\n");
   fields.sharedLanguage.value = campaign.ui?.shared?.language || "en";
   fields.sharedFontFamily.value = campaign.ui?.shared?.fontFamily || "";
@@ -2781,19 +3038,32 @@ function fillForm(campaign) {
   if (fields.pulseformsSugarClientId) fields.pulseformsSugarClientId.value = sugar.clientId || "sugar";
   if (fields.pulseformsSugarClientSecret) fields.pulseformsSugarClientSecret.value = campaign.pulseformsSugarClientSecret || "";
   if (fields.pulseformsSugarPlatform) fields.pulseformsSugarPlatform.value = sugar.platform || "base";
+  if (fields.pulseformsSugarApiVersion) fields.pulseformsSugarApiVersion.value = sugar.apiVersion || "v11_1";
+  if (fields.pulseformsSugarMaxFields) fields.pulseformsSugarMaxFields.value = sugar.maxFieldsPerRequest || 100;
+  if (fields.pulseformsNccEventOrigin) fields.pulseformsNccEventOrigin.value = sugar.nccEventOrigin || "*";
+  if (fields.pulseformsWidgetStateReadToken) fields.pulseformsWidgetStateReadToken.value = campaign.pulseformsWidgetStateReadToken || "";
+  if (fields.pulseformsSugarContactModule) fields.pulseformsSugarContactModule.value = sugar.contactModule || sugar.queryModule || "Contacts";
+  if (fields.pulseformsSugarTicketModule) fields.pulseformsSugarTicketModule.value = sugar.ticketModule || "tic_Tickets";
+  if (fields.pulseformsSugarNeedsAssessmentModule) fields.pulseformsSugarNeedsAssessmentModule.value = sugar.needsAssessmentModule || "NA_NeedsAssessment";
+  if (fields.pulseformsSugarTicketContactLink) fields.pulseformsSugarTicketContactLink.value = sugar.ticketContactLink || "";
+  if (fields.pulseformsSugarContactTicketLink) fields.pulseformsSugarContactTicketLink.value = sugar.contactTicketLink || "";
+  if (fields.pulseformsSugarTicketNeedsAssessmentLink) fields.pulseformsSugarTicketNeedsAssessmentLink.value = sugar.ticketNeedsAssessmentLink || "";
+  if (fields.pulseformsSugarNeedsAssessmentTicketLink) fields.pulseformsSugarNeedsAssessmentTicketLink.value = sugar.needsAssessmentTicketLink || "";
   if (fields.pulseformsSugarQueryEnabled) fields.pulseformsSugarQueryEnabled.checked = sugar.queryEnabled !== false;
   if (fields.pulseformsSugarQueryModule) fields.pulseformsSugarQueryModule.value = sugar.queryModule || "Contacts";
   if (fields.pulseformsSugarQueryField) fields.pulseformsSugarQueryField.value = sugar.queryField || "phone_work";
   if (fields.pulseformsSugarQueryParam) fields.pulseformsSugarQueryParam.value = sugar.queryParam || "phone";
   if (fields.pulseformsSugarSubmitEnabled) fields.pulseformsSugarSubmitEnabled.checked = sugar.submitEnabled !== false;
-  if (fields.pulseformsSugarSubmitModule) fields.pulseformsSugarSubmitModule.value = sugar.submitModule || "Leads";
+  if (fields.pulseformsSugarSubmitModule) fields.pulseformsSugarSubmitModule.value = sugar.submitModule || "Opportunities";
   renderPulseFormsFields(pf.formFields || []);
-  renderPulseFormsMappingRows(pulseformsSugarMappingRows, sugar.fieldMappings || {});
+  renderPulseFormsMappingRows(pulseformsSugarLookupMappingRows, sugar.queryFieldMappings || sugar.fieldMappings || {});
+  renderPulseFormsMappingRows(pulseformsSugarSubmitMappingRows, sugar.submitFieldMappings || sugar.fieldMappings || {});
   renderPulseFormsDataSources(pf.dataSources || []);
   const pfLayoutEl = document.getElementById("pulseformsActiveLayout");
   if (pfLayoutEl) pfLayoutEl.value = JSON.stringify(pf.activeLayout || null);
   renderPulseFormsActiveLayout(pf.activeLayout || null);
   updatePulseFormsUrls(campaign.id || "");
+  updateHistoryUrls(campaign.id || "");
   updateBreadcrumb(campaign.name || campaign.id || "");
   updateAdminPermissionUi();
   schedulePreviewRender();
@@ -2833,6 +3103,10 @@ function readForm() {
     wielandNccCredential: fields.wielandNccCredential.value.trim(),
     token: fields.token.value.trim(),
     cookie: fields.cookie.value.trim(),
+    history: {
+      widgetId: fields.historyWidgetId?.value.trim() || "",
+      campaignIds: parseAdminList(fields.historyCampaignIds?.value || "")
+    },
     allowedKbIds: fields.allowedKbIds.value
       .split(/\n|,/)
       .map((item) => item.trim())
@@ -2968,6 +3242,7 @@ function readForm() {
     pulseformsAiApiKey: fields.pulseformsAiApiKey?.value.trim() || "",
     pulseformsSugarPassword: fields.pulseformsSugarPassword?.value.trim() || "",
     pulseformsSugarClientSecret: fields.pulseformsSugarClientSecret?.value.trim() || "",
+    pulseformsWidgetStateReadToken: fields.pulseformsWidgetStateReadToken?.value.trim() || "",
     pulseforms: {
       enabled: fields.pulseformsEnabled?.checked !== false,
       mode: fields.pulseformsMode?.value || "query",
@@ -2980,13 +3255,25 @@ function readForm() {
         username: fields.pulseformsSugarUsername?.value.trim() || "",
         clientId: fields.pulseformsSugarClientId?.value.trim() || "sugar",
         platform: fields.pulseformsSugarPlatform?.value.trim() || "base",
+        apiVersion: fields.pulseformsSugarApiVersion?.value.trim() || "v11_1",
+        maxFieldsPerRequest: Math.max(1, Math.min(100, parseInt(fields.pulseformsSugarMaxFields?.value || "100", 10) || 100)),
+        nccEventOrigin: fields.pulseformsNccEventOrigin?.value.trim() || "*",
+        contactModule: fields.pulseformsSugarContactModule?.value.trim() || "Contacts",
+        ticketModule: fields.pulseformsSugarTicketModule?.value.trim() || "tic_Tickets",
+        needsAssessmentModule: fields.pulseformsSugarNeedsAssessmentModule?.value.trim() || "NA_NeedsAssessment",
+        ticketContactLink: fields.pulseformsSugarTicketContactLink?.value.trim() || "",
+        contactTicketLink: fields.pulseformsSugarContactTicketLink?.value.trim() || "",
+        ticketNeedsAssessmentLink: fields.pulseformsSugarTicketNeedsAssessmentLink?.value.trim() || "",
+        needsAssessmentTicketLink: fields.pulseformsSugarNeedsAssessmentTicketLink?.value.trim() || "",
         queryEnabled: fields.pulseformsSugarQueryEnabled?.checked !== false,
         queryModule: fields.pulseformsSugarQueryModule?.value.trim() || "Contacts",
         queryField: fields.pulseformsSugarQueryField?.value.trim() || "phone_work",
         queryParam: fields.pulseformsSugarQueryParam?.value.trim() || "phone",
         submitEnabled: fields.pulseformsSugarSubmitEnabled?.checked !== false,
-        submitModule: fields.pulseformsSugarSubmitModule?.value.trim() || "Leads",
-        fieldMappings: readPulseFormsMappings(pulseformsSugarMappingRows)
+        submitModule: fields.pulseformsSugarSubmitModule?.value.trim() || "Opportunities",
+        queryFieldMappings: readPulseFormsMappings(pulseformsSugarLookupMappingRows),
+        submitFieldMappings: readPulseFormsMappings(pulseformsSugarSubmitMappingRows),
+        fieldMappings: readPulseFormsMappings(pulseformsSugarSubmitMappingRows)
       },
       formFields: readPulseFormsFields(),
       dataSources: readPulseFormsDataSources(),
@@ -3227,23 +3514,42 @@ function applyDefaultUiValues() {
   if (fields.pulseformsSugarClientId) fields.pulseformsSugarClientId.value = "sugar";
   if (fields.pulseformsSugarClientSecret) fields.pulseformsSugarClientSecret.value = "";
   if (fields.pulseformsSugarPlatform) fields.pulseformsSugarPlatform.value = "base";
+  if (fields.pulseformsSugarApiVersion) fields.pulseformsSugarApiVersion.value = "v11_1";
+  if (fields.pulseformsSugarMaxFields) fields.pulseformsSugarMaxFields.value = 100;
+  if (fields.pulseformsNccEventOrigin) fields.pulseformsNccEventOrigin.value = "*";
+  if (fields.pulseformsWidgetStateReadToken) fields.pulseformsWidgetStateReadToken.value = "";
+  if (fields.pulseformsSugarContactModule) fields.pulseformsSugarContactModule.value = "Contacts";
+  if (fields.pulseformsSugarTicketModule) fields.pulseformsSugarTicketModule.value = "tic_Tickets";
+  if (fields.pulseformsSugarNeedsAssessmentModule) fields.pulseformsSugarNeedsAssessmentModule.value = "NA_NeedsAssessment";
+  if (fields.pulseformsSugarTicketContactLink) fields.pulseformsSugarTicketContactLink.value = "";
+  if (fields.pulseformsSugarContactTicketLink) fields.pulseformsSugarContactTicketLink.value = "";
+  if (fields.pulseformsSugarTicketNeedsAssessmentLink) fields.pulseformsSugarTicketNeedsAssessmentLink.value = "";
+  if (fields.pulseformsSugarNeedsAssessmentTicketLink) fields.pulseformsSugarNeedsAssessmentTicketLink.value = "";
   if (fields.pulseformsSugarQueryEnabled) fields.pulseformsSugarQueryEnabled.checked = true;
   if (fields.pulseformsSugarQueryModule) fields.pulseformsSugarQueryModule.value = "Contacts";
   if (fields.pulseformsSugarQueryField) fields.pulseformsSugarQueryField.value = "phone_work";
   if (fields.pulseformsSugarQueryParam) fields.pulseformsSugarQueryParam.value = "phone";
   if (fields.pulseformsSugarSubmitEnabled) fields.pulseformsSugarSubmitEnabled.checked = true;
-  if (fields.pulseformsSugarSubmitModule) fields.pulseformsSugarSubmitModule.value = "Leads";
+  if (fields.pulseformsSugarSubmitModule) fields.pulseformsSugarSubmitModule.value = "Opportunities";
   renderPulseFormsFields([
+    { id: "name", label: "Opportunity name", type: "text", required: true },
     { id: "first_name", label: "First name", type: "text", required: false },
     { id: "last_name", label: "Last name", type: "text", required: false },
     { id: "phone", label: "Phone", type: "phone", required: true },
-    { id: "email", label: "Email", type: "email", required: false }
+    { id: "email", label: "Email", type: "email", required: false },
+    { id: "description", label: "Description", type: "textarea", required: false },
+    { id: "amount", label: "Amount", type: "number", required: false }
   ]);
-  renderPulseFormsMappingRows(pulseformsSugarMappingRows, {
+  renderPulseFormsMappingRows(pulseformsSugarLookupMappingRows, {
     first_name: "first_name",
     last_name: "last_name",
     phone: "phone_work",
     email: "email1"
+  });
+  renderPulseFormsMappingRows(pulseformsSugarSubmitMappingRows, {
+    name: "name",
+    description: "description",
+    amount: "amount"
   });
   renderPulseFormsDataSources([
     {
@@ -3328,6 +3634,10 @@ async function initSession() {
 
     if (data.user.role === "admin" && usersSection) {
       usersSection.hidden = false;
+    }
+    if (data.user.role === "admin" && nccBuilderAiSection) {
+      nccBuilderAiSection.hidden = false;
+      await loadNccBuilderAiConfig();
     }
 
     adminGrid.hidden = false;
@@ -3646,29 +3956,21 @@ function buildWorkitemPreview(config) {
 
 function buildPulseFormsPreview(config) {
   const pf = config.pulseforms || {};
-  const sources = pf.dataSources || [];
-  const formFields = pf.formFields || [];
+  const sugar = pf.sugar || {};
+  const lookupMappings = Object.keys(sugar.queryFieldMappings || sugar.fieldMappings || {}).length;
+  const submitMappings = Object.keys(sugar.submitFieldMappings || sugar.fieldMappings || {}).length;
   return `
     <main style="padding:22px;font-family:Manrope,sans-serif;background:#f7f5f0;min-height:100%;">
       <section style="background:#fff;border:1px solid #d7deec;border-radius:12px;padding:20px;box-shadow:0 10px 24px rgba(32,42,90,.08);">
-        <h1 style="margin:0 0 6px;color:#202a5a;font-size:1.55rem;">PulseForms</h1>
-        <p style="margin:0 0 18px;color:#667085;">CRM query and submit widget · ${escapeHtml(pf.mode || "query")}</p>
+        <h1 style="margin:0 0 6px;color:#202a5a;font-size:1.55rem;">PulseForms Widget</h1>
+        <p style="margin:0 0 18px;color:#667085;">Elliott widget · Sugar workflow · NCC state read</p>
         <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;">
-          <div style="border:1px solid #d7deec;border-radius:9px;padding:12px;background:#fbfcff;"><strong>AI Provider</strong><br>${escapeHtml(pf.aiProvider || "claude")}</div>
-          <div style="border:1px solid #d7deec;border-radius:9px;padding:12px;background:#fbfcff;"><strong>Sources</strong><br>${sources.length}</div>
-          <div style="border:1px solid #d7deec;border-radius:9px;padding:12px;background:#fbfcff;"><strong>Form fields</strong><br>${formFields.length}</div>
-          ${sources.slice(0, 4).map((src) => `
-            <div style="border:1px solid #d7deec;border-radius:9px;padding:12px;background:#fbfcff;">
-              <strong>${escapeHtml(src.name || "CRM source")}</strong><br>
-              <span style="color:#667085;">${escapeHtml(src.mode || "query")} · ${escapeHtml(src.method || "GET")} · ${Object.keys(src.fieldMappings || {}).length} mappings</span>
-            </div>
-          `).join("")}
-          ${formFields.slice(0, 6).map((field) => `
-            <div style="border:1px solid #d7deec;border-radius:9px;padding:12px;background:#fff;">
-              <strong>${escapeHtml(field.label || field.id)}</strong><br>
-              <span style="color:#667085;">${escapeHtml(field.id || "")} · ${escapeHtml(field.type || "text")}${field.required ? " · required" : ""}</span>
-            </div>
-          `).join("")}
+          <div style="border:1px solid #d7deec;border-radius:9px;padding:12px;background:#fbfcff;"><strong>Sugar</strong><br>${sugar.enabled ? "Enabled" : "Disabled"}</div>
+          <div style="border:1px solid #d7deec;border-radius:9px;padding:12px;background:#fbfcff;"><strong>Lookup</strong><br>${escapeHtml(sugar.queryModule || "Contacts")} · ${escapeHtml(sugar.queryField || "phone_work")}</div>
+          <div style="border:1px solid #d7deec;border-radius:9px;padding:12px;background:#fbfcff;"><strong>Ticket module</strong><br>${escapeHtml(sugar.ticketModule || "tic_Tickets")}</div>
+          <div style="border:1px solid #d7deec;border-radius:9px;padding:12px;background:#fbfcff;"><strong>Needs Assessment</strong><br>${escapeHtml(sugar.needsAssessmentModule || "NA_NeedsAssessment")}</div>
+          <div style="border:1px solid #d7deec;border-radius:9px;padding:12px;background:#fbfcff;"><strong>Lookup mappings</strong><br>${lookupMappings}</div>
+          <div style="border:1px solid #d7deec;border-radius:9px;padding:12px;background:#fbfcff;"><strong>Submit mappings</strong><br>${submitMappings}</div>
         </div>
       </section>
     </main>`;

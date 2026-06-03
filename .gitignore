@@ -12,4 +12,5 @@ migrate-encrypt.js
 # Env vars con secretos (las plantillas *.example sí se commitean)
 env/staging.yaml
 env/production.yaml
+env/demo.yaml
 env/local.env
