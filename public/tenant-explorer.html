@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tenant Explorer — Nextiva</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      --bg: #f3f5f8;
+      --panel: #ffffff;
+      --ink: #162033;
+      --muted: #5b6474;
+      --line: #d6dde7;
+      --brand: #20406c;
+      --accent: #087f67;
+      --ok-bg: #e8f7ef;
+      --ok: #14532d;
+      --warn-bg: #fff8e1;
+      --warn: #78350f;
+      --err-bg: #fef2f2;
+      --err: #991b1b;
+      --radius: 12px;
+      --radius-sm: 8px;
+    }
+    body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--ink); font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 14px; }
+    .shell { max-width: 960px; margin: 0 auto; padding: 32px 20px 60px; }
+    header { margin-bottom: 28px; }
+    header h1 { margin: 0 0 4px; font-size: 1.5rem; font-weight: 800; }
+    header p { margin: 0; color: var(--muted); font-size: .9rem; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px 24px; margin-bottom: 16px; }
+    .card-title { font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 14px; }
+    .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+    .field { display: flex; flex-direction: column; gap: 5px; }
+    .field label { font-size: .75rem; font-weight: 700; color: var(--muted); }
+    .field input { border: 1px solid var(--line); border-radius: var(--radius-sm); background: #fff; color: var(--ink); font: inherit; font-size: .9rem; padding: 9px 11px; outline: none; transition: border-color .15s; }
+    .field input:focus { border-color: var(--brand); }
+    .field-hint { font-size: .72rem; color: var(--muted); margin-top: 2px; }
+    .actions { display: flex; align-items: center; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+    .btn { display: inline-flex; align-items: center; gap: 6px; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--panel); color: var(--ink); font: inherit; font-weight: 700; font-size: .88rem; padding: 9px 18px; cursor: pointer; transition: background .15s, border-color .15s; }
+    .btn:hover:not(:disabled) { background: var(--bg); }
+    .btn-primary { background: var(--brand); color: #fff; border-color: var(--brand); }
+    .btn-primary:hover:not(:disabled) { background: #16325a; border-color: #16325a; }
+    .btn-success { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .btn-success:hover:not(:disabled) { background: #065e4d; }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .alert { border-radius: var(--radius-sm); padding: 10px 14px; font-size: .88rem; font-weight: 600; margin-top: 12px; white-space: pre-wrap; }
+    .alert-err { background: var(--err-bg); color: var(--err); border: 1px solid #fecaca; }
+    .alert-ok { background: var(--ok-bg); color: var(--ok); border: 1px solid #bbf7d0; }
+    .alert-warn { background: var(--warn-bg); color: var(--warn); border: 1px solid #fde68a; }
+    [hidden] { display: none !important; }
+    .progress-list { display: flex; flex-direction: column; gap: 8px; }
+    .prog-item { display: flex; align-items: center; gap: 10px; font-size: .88rem; }
+    .prog-icon { width: 20px; text-align: center; flex-shrink: 0; }
+    .prog-label { flex: 1; }
+    .prog-status { font-size: .78rem; color: var(--muted); min-width: 80px; text-align: right; }
+    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--brand); border-radius: 50%; animation: spin .6s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; margin-bottom: 16px; }
+    .summary-tile { background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px 14px; }
+    .summary-tile .count { font-size: 1.6rem; font-weight: 800; line-height: 1; margin-bottom: 4px; }
+    .summary-tile .type { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+    .summary-tile.has-error { border-color: #fecaca; background: var(--err-bg); }
+    .summary-tile.has-error .count { color: var(--err); }
+    .section-list { display: flex; flex-direction: column; gap: 8px; }
+    details.section { border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
+    details.section summary { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; cursor: pointer; font-weight: 700; font-size: .9rem; background: var(--bg); list-style: none; user-select: none; }
+    details.section summary::-webkit-details-marker { display: none; }
+    details.section summary .arrow { transition: transform .2s; font-style: normal; color: var(--muted); }
+    details.section[open] summary .arrow { transform: rotate(90deg); }
+    details.section summary .badge { font-size: .72rem; font-weight: 700; background: var(--brand); color: #fff; border-radius: 999px; padding: 2px 8px; }
+    details.section summary .badge.err { background: var(--err); }
+    .raw-json { background: #0f172a; color: #e2e8f0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .78rem; padding: 16px; overflow-x: auto; max-height: 420px; overflow-y: auto; white-space: pre; margin: 0; border: none; }
+    .meta-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+    .meta-chip { font-size: .72rem; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: var(--bg); border: 1px solid var(--line); color: var(--muted); }
+    /* Entity picker */
+    .picker-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .picker-links { display: flex; gap: 10px; }
+    .picker-link { font-size: .78rem; font-weight: 700; color: var(--brand); background: none; border: none; cursor: pointer; padding: 0; text-decoration: underline; font: inherit; }
+    .picker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }
+    .picker-group { display: contents; }
+    .picker-group-label { grid-column: 1 / -1; font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 6px 0 2px; }
+    .check-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg); cursor: pointer; font-size: .88rem; font-weight: 600; transition: border-color .15s, background .15s; }
+    .check-item:hover { border-color: var(--brand); background: #fff; }
+    .check-item input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--brand); flex-shrink: 0; cursor: pointer; }
+    .check-item.is-checked { border-color: var(--brand); background: #eef3fa; }
+    /* Execution panel */
+    .exec-log { display: flex; flex-direction: column; gap: 4px; }
+    .exec-entry { display: grid; grid-template-columns: 80px 1fr; gap: 8px; font-size: .82rem; border-bottom: 1px solid var(--line); padding: 6px 0; }
+    .exec-entry:last-child { border-bottom: none; }
+    .exec-time { color: var(--muted); font-family: ui-monospace, monospace; font-size: .75rem; padding-top: 1px; }
+    .exec-msg { word-break: break-all; }
+    .exec-msg.ok { color: var(--ok); }
+    .exec-msg.err { color: var(--err); }
+    .exec-msg.info { color: var(--brand); }
+    .exec-msg.warn { color: var(--warn); }
+    .exec-toggle { font-size: .78rem; font-weight: 700; color: var(--muted); cursor: pointer; text-decoration: underline; background: none; border: none; padding: 0; font: inherit; }
+    .btn-dl-single { font-size: .72rem; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: var(--accent); color: #fff; border: none; cursor: pointer; line-height: 1.4; transition: background .15s; }
+    .btn-dl-single:hover { background: #065e4d; }
+  </style>
+</head>
+<body>
+<main class="shell">
+  <header>
+    <h1>Tenant Explorer</h1>
+    <p>Extrae toda la información de un tenant Nextiva / Thrio usando el SDK.</p>
+  </header>
+
+  <!-- Auth form -->
+  <div class="card" id="authCard">
+    <p class="card-title">Conexión al tenant</p>
+    <div class="form-grid">
+      <div class="field">
+        <label for="inputDomain">Dominio del tenant *</label>
+        <input id="inputDomain" type="text" placeholder="liverpool.thrio.io" autocomplete="off" />
+        <span class="field-hint">Solo el host, sin protocolo ni subpath.</span>
+      </div>
+      <div class="field">
+        <label for="inputUsername">Usuario</label>
+        <input id="inputUsername" type="text" placeholder="admin@empresa.com" autocomplete="username" />
+      </div>
+      <div class="field">
+        <label for="inputPassword">Contraseña</label>
+        <input id="inputPassword" type="password" autocomplete="current-password" />
+      </div>
+      <div class="field">
+        <label for="inputPageSize">Máx. registros por tipo</label>
+        <input id="inputPageSize" type="number" value="500" min="1" max="5000" />
+        <span class="field-hint">Aplica a contacts y leads.</span>
+      </div>
+    </div>
+
+    <div style="margin-top:18px;">
+      <div class="picker-header">
+        <p class="card-title" style="margin:0;">Recursos a extraer</p>
+        <div class="picker-links">
+          <button class="picker-link" onclick="setAllEntities(true)">Todos</button>
+          <button class="picker-link" onclick="setAllEntities(false)">Ninguno</button>
+        </div>
+      </div>
+      <div class="picker-grid" id="entityPicker"></div>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-primary" id="btnExtract" onclick="startExtract()">
+        <span id="btnLabel">Extraer información</span>
+      </button>
+    </div>
+    <div id="authAlert" hidden></div>
+  </div>
+
+  <!-- Progress -->
+  <div class="card" id="progressCard" hidden>
+    <p class="card-title">Extrayendo datos…</p>
+    <div class="progress-list" id="progressList"></div>
+  </div>
+
+  <!-- Results -->
+  <div id="resultsSection" hidden>
+    <div class="card">
+      <p class="card-title">Resumen del tenant</p>
+      <div id="metaRow" class="meta-row"></div>
+      <div class="summary-grid" id="summaryGrid"></div>
+      <div id="errorsAlert" hidden></div>
+      <div class="actions">
+        <button class="btn btn-success" id="btnDownloadAll" onclick="downloadAllEntities()">
+          ↓ Descargar todos los archivos
+        </button>
+        <button class="btn btn-success" id="btnDownload" onclick="downloadSnapshot()">
+          ↓ JSON completo (un archivo)
+        </button>
+        <button class="btn" onclick="resetView()">← Nueva extracción</button>
+      </div>
+    </div>
+    <div class="section-list" id="sectionList"></div>
+  </div>
+
+  <!-- Execution panel (always visible) -->
+  <div class="card" id="execCard">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+      <p class="card-title" style="margin:0;">Panel de ejecución</p>
+      <button class="exec-toggle" onclick="clearLog()">Limpiar</button>
+    </div>
+    <div style="font-size:.75rem;color:var(--muted);margin-bottom:10px;font-family:ui-monospace,monospace;" id="execUrlInfo"></div>
+    <div class="exec-log" id="execLog">
+      <div class="exec-entry"><span class="exec-time">—</span><span class="exec-msg info">Esperando acción…</span></div>
+    </div>
+  </div>
+</main>
+
+<script>
+  let lastSnapshot = null;
+
+  const ENTITY_LABELS = {
+    users:        { label: "Users",         icon: "👤", group: "Usuarios" },
+    userProfiles: { label: "User Profiles", icon: "🎭", group: "Usuarios" },
+    session:      { label: "Session",       icon: "🔐", group: "Usuarios" },
+    campaigns:    { label: "Campaigns",     icon: "📣", group: "Campañas y listas" },
+    outboundLists:{ label: "Outbound Lists",icon: "📋", group: "Campañas y listas" },
+    leads:        { label: "Leads",         icon: "🎯", group: "Campañas y listas" },
+    contacts:     { label: "Contacts",      icon: "📇", group: "Datos" },
+    dispositions: { label: "Dispositions",  icon: "🏷️", group: "Datos" },
+    templates:    { label: "Templates",     icon: "📄", group: "Datos" },
+    fieldMappings:{ label: "Field Mappings",icon: "🗺️", group: "Datos" },
+    surveys:      { label: "Surveys",       icon: "📊", group: "Datos" },
+    workflows:    { label: "Workflows",     icon: "🔀", group: "Datos" },
+    queues:       { label: "Queues",        icon: "🗂️", group: "Datos" },
+    widgets:      { label: "Widgets",       icon: "🧩", group: "Datos" },
+    reports:      { label: "Reports",       icon: "📈", group: "Datos" }
+  };
+
+  // ── Entity picker ─────────────────────────────────────────────────────────
+  function buildEntityPicker() {
+    const container = document.getElementById("entityPicker");
+    container.innerHTML = "";
+    let lastGroup = "";
+    Object.entries(ENTITY_LABELS).forEach(([key, { label, icon, group }]) => {
+      if (group !== lastGroup) {
+        lastGroup = group;
+        const g = document.createElement("div");
+        g.className = "picker-group-label";
+        g.textContent = group;
+        container.appendChild(g);
+      }
+      const item = document.createElement("label");
+      item.className = "check-item is-checked";
+      item.innerHTML = `<input type="checkbox" name="entity" value="${key}" checked />${icon} ${label}`;
+      item.querySelector("input").addEventListener("change", e => {
+        item.classList.toggle("is-checked", e.target.checked);
+      });
+      container.appendChild(item);
+    });
+  }
+
+  function setAllEntities(checked) {
+    document.querySelectorAll('#entityPicker input[name="entity"]').forEach(cb => {
+      cb.checked = checked;
+      cb.closest(".check-item").classList.toggle("is-checked", checked);
+    });
+  }
+
+  function getSelectedEntities() {
+    return [...document.querySelectorAll('#entityPicker input[name="entity"]:checked')].map(cb => cb.value);
+  }
+
+  function el(id) { return document.getElementById(id); }
+
+  // ── Execution log ─────────────────────────────────────────────────────────
+  function ts() {
+    const now = new Date();
+    return now.toTimeString().slice(0, 8) + "." + String(now.getMilliseconds()).padStart(3, "0");
+  }
+
+  function logEntry(msg, type = "info") {
+    const log = el("execLog");
+    const firstChild = log.querySelector(".exec-entry");
+    if (firstChild?.querySelector(".exec-msg")?.textContent === "Esperando acción…") {
+      log.innerHTML = "";
+    }
+    const row = document.createElement("div");
+    row.className = "exec-entry";
+    row.innerHTML = `<span class="exec-time">${ts()}</span><span class="exec-msg ${type}">${msg}</span>`;
+    log.appendChild(row);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function clearLog() {
+    el("execLog").innerHTML = `<div class="exec-entry"><span class="exec-time">—</span><span class="exec-msg info">Esperando acción…</span></div>`;
+  }
+
+  window.addEventListener("DOMContentLoaded", () => {
+    buildEntityPicker();
+    const apiUrl = new URL("api/tenant-explorer/extract", window.location.href).toString();
+    el("execUrlInfo").textContent = `Página: ${window.location.href}  |  API endpoint: ${apiUrl}`;
+  });
+
+  // ── UI helpers ────────────────────────────────────────────────────────────
+  function showAlert(containerId, msg, type = "err") {
+    const e = el(containerId);
+    e.className = `alert alert-${type}`;
+    e.textContent = msg;
+    e.hidden = false;
+  }
+
+  function hideAlert(containerId) { el(containerId).hidden = true; }
+
+  function setExtracting(busy) {
+    el("btnExtract").disabled = busy;
+    el("btnLabel").textContent = busy ? "Extrayendo…" : "Extraer información";
+  }
+
+  function buildProgressList(selected = Object.keys(ENTITY_LABELS)) {
+    const list = el("progressList");
+    list.innerHTML = "";
+    const set = new Set(selected);
+    Object.entries(ENTITY_LABELS).forEach(([key, { label, icon }]) => {
+      if (!set.has(key)) return;
+      const row = document.createElement("div");
+      row.className = "prog-item";
+      row.id = "prog-" + key;
+      row.innerHTML = `<span class="prog-icon">${icon}</span>
+        <span class="prog-label">${label}</span>
+        <span class="prog-status" id="progst-${key}"><span class="spinner"></span></span>`;
+      list.appendChild(row);
+    });
+    el("progressCard").hidden = false;
+  }
+
+  function markProgress(key, text, ok) {
+    const st = el("progst-" + key);
+    if (!st) return;
+    st.innerHTML = ok
+      ? `<span style="color:var(--accent)">✓ ${text}</span>`
+      : `<span style="color:var(--err)">✗ ${text}</span>`;
+  }
+
+  function countItems(value) {
+    if (value === null || value === undefined) return null;
+    if (Array.isArray(value)) return value.length;
+    if (typeof value === "object") return 1;
+    return 0;
+  }
+
+  function buildResults(snapshot, errors = {}) {
+    lastSnapshot = snapshot;
+
+    const meta = el("metaRow");
+    meta.innerHTML = "";
+    [snapshot.domain, new Date(snapshot.extractedAt).toLocaleString("es-ES"),
+      snapshot.session?.username || snapshot.session?.userId || ""].filter(Boolean).forEach(val => {
+      const chip = document.createElement("span");
+      chip.className = "meta-chip";
+      chip.textContent = val;
+      meta.appendChild(chip);
+    });
+
+    const grid = el("summaryGrid");
+    grid.innerHTML = "";
+    Object.entries(ENTITY_LABELS).forEach(([key, { label }]) => {
+      if (key === "session") return;
+      const tile = document.createElement("div");
+      const hasErr = Boolean(errors[key]);
+      tile.className = "summary-tile" + (hasErr ? " has-error" : "");
+      const count = countItems(snapshot[key]);
+      tile.innerHTML = `<div class="count">${count !== null ? count : "—"}</div><div class="type">${label}</div>`;
+      grid.appendChild(tile);
+    });
+
+    const errorKeys = Object.keys(errors);
+    if (errorKeys.length) {
+      showAlert("errorsAlert", "Recursos con error:\n" + errorKeys.map(k => `  • ${ENTITY_LABELS[k]?.label || k}: ${errors[k]}`).join("\n"), "warn");
+    } else {
+      hideAlert("errorsAlert");
+    }
+
+    const sectionList = el("sectionList");
+    sectionList.innerHTML = "";
+    Object.entries(ENTITY_LABELS).forEach(([key, { label, icon }]) => {
+      const value = snapshot[key];
+      const hasErr = Boolean(errors[key]);
+      const count = Array.isArray(value) ? value.length : (value ? 1 : 0);
+      const details = document.createElement("details");
+      details.className = "section";
+      const summary = document.createElement("summary");
+      summary.innerHTML = `<span>${icon} ${label}</span>
+        <span style="display:flex;align-items:center;gap:8px;">
+          <span class="badge ${hasErr ? "err" : ""}">${hasErr ? "Error" : count}</span>
+          ${!hasErr ? `<button class="btn-dl-single" data-key="${key}" title="Descargar ${label}.json">↓ JSON</button>` : ""}
+          <em class="arrow">▶</em>
+        </span>`;
+      summary.querySelector(".btn-dl-single")?.addEventListener("click", e => {
+        e.preventDefault(); e.stopPropagation();
+        downloadEntity(key);
+      });
+      details.appendChild(summary);
+      const pre = document.createElement("pre");
+      pre.className = "raw-json";
+      pre.textContent = hasErr ? `Error: ${errors[key]}` : JSON.stringify(value, null, 2);
+      details.appendChild(pre);
+      sectionList.appendChild(details);
+    });
+
+    el("resultsSection").hidden = false;
+    el("progressCard").hidden = true;
+    el("authCard").hidden = true;
+  }
+
+  function downloadSnapshot() {
+    if (!lastSnapshot) return;
+    const blob = new Blob([JSON.stringify(lastSnapshot, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const domain = (lastSnapshot.domain || "tenant").replace(/[^a-z0-9]/gi, "-");
+    const date = new Date(lastSnapshot.extractedAt).toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `tenant-snapshot-${domain}-${date}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function downloadEntity(key) {
+    if (!lastSnapshot || lastSnapshot[key] === undefined) return;
+    const domain = (lastSnapshot.domain || "tenant").replace(/[^a-z0-9]/gi, "-");
+    const date = new Date(lastSnapshot.extractedAt).toISOString().slice(0, 10);
+    const blob = new Blob([JSON.stringify(lastSnapshot[key], null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${key}-${domain}-${date}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function downloadAllEntities() {
+    if (!lastSnapshot) return;
+    const keys = Object.keys(ENTITY_LABELS).filter(k => lastSnapshot[k] !== undefined && lastSnapshot[k] !== null);
+    for (const key of keys) {
+      downloadEntity(key);
+      await new Promise(r => setTimeout(r, 200));
+    }
+  }
+
+  function resetView() {
+    lastSnapshot = null;
+    el("resultsSection").hidden = true;
+    el("progressCard").hidden = true;
+    el("authCard").hidden = false;
+    hideAlert("authAlert");
+    setExtracting(false);
+  }
+
+  // ── Main extract flow ─────────────────────────────────────────────────────
+  async function startExtract() {
+    const domain = el("inputDomain").value.trim().replace(/^https?:\/\//, "").split("/")[0];
+    const username = el("inputUsername").value.trim();
+    const password = el("inputPassword").value;
+    const pageSize = Number(el("inputPageSize").value) || 500;
+
+    const selectedEntities = getSelectedEntities();
+    if (!domain || !username || !password) {
+      showAlert("authAlert", "Dominio, usuario y contraseña son obligatorios.", "err");
+      return;
+    }
+    if (!selectedEntities.length) {
+      showAlert("authAlert", "Selecciona al menos un recurso para extraer.", "err");
+      return;
+    }
+    hideAlert("authAlert");
+    setExtracting(true);
+    buildProgressList(selectedEntities);
+
+    Object.keys(ENTITY_LABELS).forEach(key => {
+      const st = el("progst-" + key);
+      if (st) st.innerHTML = `<span class="spinner"></span>`;
+    });
+
+    // Build URL relative to current page so funciona en Cloud Functions con prefijo de path
+    const apiUrl = new URL("api/tenant-explorer/extract", window.location.href).toString();
+
+    logEntry(`POST ${apiUrl}`, "info");
+    logEntry(`Body: { domain: "${domain || "(auto)"}", username: "${username}", password: "***", pageSize: ${pageSize}, entities: [${selectedEntities.join(", ")}] }`, "info");
+
+    const t0 = Date.now();
+    let response, data;
+
+    try {
+      response = await fetch(apiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domain, username, password, pageSize, entities: selectedEntities })
+      });
+
+      const elapsed = Date.now() - t0;
+      logEntry(`Respuesta HTTP ${response.status} en ${elapsed}ms`, response.ok ? "ok" : "err");
+
+      const text = await response.text();
+      logEntry(`Body (${text.length} chars): ${text.slice(0, 500)}${text.length > 500 ? "…" : ""}`, response.ok ? "info" : "err");
+
+      try { data = JSON.parse(text); } catch { data = {}; }
+
+      if (!response.ok || data.ok === false) {
+        throw new Error(data.error || `HTTP ${response.status}`);
+      }
+
+      const { snapshot, errors = {} } = data;
+
+      const entityKeys = Object.keys(ENTITY_LABELS);
+      const ok = entityKeys.filter(k => !errors[k]);
+      const fail = entityKeys.filter(k => errors[k]);
+      logEntry(`Snapshot OK — dominio: ${snapshot.domain} | entidades OK: ${ok.length} | errores: ${fail.length}`, "ok");
+      if (fail.length) {
+        fail.forEach(k => logEntry(`  ${ENTITY_LABELS[k]?.label || k}: ${errors[k]}`, "warn"));
+      }
+
+      Object.entries(ENTITY_LABELS).forEach(([key]) => {
+        const hasErr = Boolean(errors[key]);
+        const value = snapshot[key];
+        const count = Array.isArray(value) ? value.length : (value ? 1 : 0);
+        markProgress(key, hasErr ? (errors[key] || "Error") : `${count} registros`, !hasErr);
+      });
+
+      buildResults(snapshot, errors);
+    } catch (err) {
+      const elapsed = Date.now() - t0;
+      logEntry(`Error (${elapsed}ms): ${err.message}`, "err");
+      if (data?.details) logEntry(`Detalles: ${JSON.stringify(data.details)}`, "err");
+      el("progressCard").hidden = true;
+      showAlert("authAlert", err.message || "Error desconocido.", "err");
+    } finally {
+      setExtracting(false);
+    }
+  }
+
+  el("inputPassword").addEventListener("keydown", e => { if (e.key === "Enter") startExtract(); });
+</script>
+</body>
+</html>

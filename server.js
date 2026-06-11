@@ -12,6 +12,7 @@ const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, "public");
 const CAMPAIGNS_FILE = path.join(ROOT, "campaigns.json");
 const USERS_FILE = path.join(ROOT, "users.json");
+const ADMIN_SETUP_LOCK_FILE = path.join(ROOT, "admin-setup.lock");
 const WIELAND_CONTACTS_FILE = path.join(ROOT, "wieland-contacts.json");
 const WIELAND_UPLOAD_LOGS_FILE = path.join(ROOT, "wieland-upload-logs.json");
 const WIDGET_STATE_FILE = path.join(ROOT, "widget-state.json");
@@ -27,6 +28,7 @@ if (SHOULD_LOAD_LOCAL_ENV) {
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "127.0.0.1";
 const DEFAULT_API_URL = process.env.THRIO_API_URL || "https://mancity.thrio.io/data/api/ai/prediction";
+const LEGACY_DEFAULT_THRIO_DOMAIN = "mancity.thrio.io";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
 const CAMPAIGN_ENCRYPTION_SECRET = process.env.CAMPAIGN_ENCRYPTION_SECRET || ADMIN_PASSWORD;
 if (!process.env.CAMPAIGN_ENCRYPTION_SECRET && ADMIN_PASSWORD) {
@@ -38,19 +40,26 @@ const FIRESTORE_PREFIX = sanitizeFirestorePrefix(process.env.FIRESTORE_PREFIX ||
 const FIRESTORE_DATABASE_ID = String(process.env.FIRESTORE_DATABASE_ID || "").trim();
 const FIRESTORE_COLLECTION = process.env.FIRESTORE_COLLECTION || `${FIRESTORE_PREFIX}_campaigns`;
 const USERS_COLLECTION = `${FIRESTORE_PREFIX}_users`;
+const ADMIN_META_COLLECTION = `${FIRESTORE_PREFIX}_admin_meta`;
 const WIELAND_CONTACTS_COLLECTION = `${FIRESTORE_PREFIX}_wieland_contacts`;
 const WIELAND_UPLOAD_LOGS_COLLECTION = `${FIRESTORE_PREFIX}_wieland_upload_logs`;
 const WIDGET_STATE_COLLECTION = `${FIRESTORE_PREFIX}_widget_state`;
 const WIDGET_DRAFT_COLLECTION = `${FIRESTORE_PREFIX}_widget_draft`;
+const AGENT_SESSIONS_COLLECTION = `${FIRESTORE_PREFIX}_agent_sessions`;
 const NCC_BUILDER_ADMIN_ACCOUNTS_COLLECTION = `${FIRESTORE_PREFIX}_ncc_builder_admin_accounts`;
 const NCC_BUILDER_AI_CONFIG_COLLECTION = `${FIRESTORE_PREFIX}_ncc_builder_ai_config`;
 const SESSION_EXPIRY_SECONDS = 8 * 60 * 60; // 8 hours
 const SESSION_COOKIE_NAME = "niq_sess";
+const AGENT_SESSION_COOKIE_NAME = "niq_agent_sess";
+const AGENT_SESSION_EXPIRY_SECONDS = 60 * 60; // 1 hour
 const WIELAND_SESSION_COOKIE_NAME = "niq_w_sess";
 const WIELAND_SESSION_EXPIRY_SECONDS = 4 * 60 * 60; // 4 hours
 const CAMPAIGN_PERMISSIONS = ["createCampaign", "editCampaign", "deleteCampaign"];
+const ADMIN_PASSWORD_KDF_ITERATIONS = 210_000;
+const LEGACY_ADMIN_PASSWORD_KDF_ITERATIONS = 100_000;
 
 const firestore = createFirestoreClient();
+const localAgentSessions = new Map();
 
 // Rate limiter for admin authentication (in-memory, per IP)
 const RATE_LIMIT_MAX_ATTEMPTS = 5;
@@ -62,7 +71,6 @@ const AI_RATE_LIMIT_MAX_REQUESTS = 30;
 const ADMIN_MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const MAX_JSON_BODY_BYTES = Number(process.env.MAX_JSON_BODY_BYTES || 1024 * 1024);
 const TRUST_PROXY_HEADERS = String(process.env.TRUST_PROXY_HEADERS || "").toLowerCase() === "true";
-const ALLOW_LEGACY_ADMIN_AUTH = String(process.env.ALLOW_LEGACY_ADMIN_AUTH || "").toLowerCase() === "true";
 const MAX_RATE_LIMIT_KEYS = 20_000;
 const revokedSessionTokens = new Map(); // token -> expiresAtMs
 
@@ -243,7 +251,10 @@ async function assertSafeOutboundUrl(value, label = "Outbound URL") {
 function redactCampaignSecrets(campaign) {
   const result = { ...campaign };
   for (const field of SECRET_FIELDS) {
-    if (field in result) result[field] = redactSecret(result[field]);
+    if (field in result) {
+      result[`${field}Configured`] = secretLooksPresent(result[field]);
+      result[field] = redactSecret(result[field]);
+    }
   }
   return result;
 }
@@ -306,7 +317,7 @@ function adminSecurityHeaders(extra = {}) {
 
 function isKnownSafeServerError(message) {
   const text = String(message || "");
-  return /^(AI returned|AI did not|AI generated|Could not verify token with NCC|Failed |Unable |Internal server error|Layout generation failed|PulseForms |Survey AI provider call failed|NCC did not return|TTS request failed)/.test(text);
+  return /^(AI returned|AI did not|AI generated|Could not verify token with NCC|CRM |Failed |Unable |Internal server error|Layout generation failed|PulseForms |Survey AI provider call failed|NCC did not return|TTS request failed)/.test(text);
 }
 
 function sanitizeServerResponse(status, data) {
@@ -381,7 +392,7 @@ function decryptSecret(value) {
 }
 
 // Fields that must be encrypted at rest
-const SECRET_FIELDS = ["token", "cookie", "apiAccessToken", "geminiApiKey", "questionsGeminiApiKey", "wielandNccCredential", "summaryagenticAiApiKey", "summaryagenticHubspotToken", "summaryagenticWarmToken", "pulseformsAiApiKey", "pulseformsSugarPassword", "pulseformsSugarClientSecret", "pulseformsWidgetStateReadToken"];
+const SECRET_FIELDS = ["token", "cookie", "apiAccessToken", "geminiApiKey", "questionsGeminiApiKey", "wielandNccCredential", "summaryagenticAiApiKey", "summaryagenticHubspotToken", "summaryagenticWarmToken", "pulseformsAiApiKey", "pulseformsCrmPassword", "pulseformsCrmClientSecret", "pulseformsSugarPassword", "pulseformsSugarClientSecret", "pulseformsWidgetStateReadToken"];
 
 function encryptCampaignSecrets(campaign) {
   const result = { ...campaign };
@@ -550,6 +561,111 @@ function clearWielandCookie(res) {
   );
 }
 
+function getAgentSessionSecret() {
+  return crypto.createHmac("sha256", getSessionSecret())
+    .update("nextiq-agent-session-v1")
+    .digest();
+}
+
+function createAgentSessionToken(record) {
+  const payload = Buffer.from(JSON.stringify({
+    sid: record.id,
+    campaignId: record.campaignId,
+    domain: record.domain,
+    exp: record.expiresAt
+  })).toString("base64url");
+  const sig = crypto.createHmac("sha256", getAgentSessionSecret()).update(payload).digest("hex");
+  return `${payload}.${sig}`;
+}
+
+function verifyAgentSessionToken(token) {
+  if (!token || typeof token !== "string") return null;
+  const dot = token.lastIndexOf(".");
+  if (dot === -1) return null;
+  const payload = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  let expectedSig;
+  try {
+    expectedSig = crypto.createHmac("sha256", getAgentSessionSecret()).update(payload).digest("hex");
+  } catch {
+    return null;
+  }
+  try {
+    if (sig.length !== expectedSig.length) return null;
+    if (!crypto.timingSafeEqual(Buffer.from(sig, "hex"), Buffer.from(expectedSig, "hex"))) return null;
+  } catch {
+    return null;
+  }
+  try {
+    const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (!data.sid || !data.exp || Math.floor(Date.now() / 1000) > data.exp) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function setAgentSessionCookie(res, token) {
+  res.setHeader("Set-Cookie",
+    `${AGENT_SESSION_COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=${AGENT_SESSION_EXPIRY_SECONDS}`
+  );
+}
+
+function getAgentSessionTokenFromRequest(req) {
+  const auth = String(req.headers.authorization || "");
+  if (auth.startsWith("Bearer ")) {
+    const bearer = auth.slice(7).trim();
+    if (verifyAgentSessionToken(bearer)) return bearer;
+  }
+  return parseCookies(req)[AGENT_SESSION_COOKIE_NAME] || "";
+}
+
+async function writeAgentSession(record) {
+  const stored = {
+    id: record.id,
+    campaignId: record.campaignId,
+    domain: record.domain,
+    token: encryptSecret(record.token),
+    agentUserId: record.agentUserId || "",
+    session: record.session || {},
+    expiresAt: record.expiresAt,
+    createdAt: Date.now()
+  };
+  if (firestore) {
+    await firestore.collection(AGENT_SESSIONS_COLLECTION).doc(record.id).set(stored);
+    return;
+  }
+  localAgentSessions.set(record.id, stored);
+}
+
+async function readAgentSession(id) {
+  if (!id) return null;
+  let stored = null;
+  if (firestore) {
+    const doc = await firestore.collection(AGENT_SESSIONS_COLLECTION).doc(id).get();
+    if (!doc.exists) return null;
+    stored = doc.data();
+  } else {
+    stored = localAgentSessions.get(id) || null;
+  }
+  if (!stored || Math.floor(Date.now() / 1000) > Number(stored.expiresAt || 0)) return null;
+  return {
+    ...stored,
+    token: decryptSecret(String(stored.token || ""))
+  };
+}
+
+async function getAgentSessionFromRequest(req) {
+  const token = getAgentSessionTokenFromRequest(req);
+  const payload = verifyAgentSessionToken(token);
+  if (!payload) return null;
+  const stored = await readAgentSession(payload.sid);
+  if (!stored) return null;
+  if (!constantTimeEqualString(String(stored.campaignId || ""), String(payload.campaignId || ""))) return null;
+  if (!constantTimeEqualString(String(stored.domain || ""), String(payload.domain || ""))) return null;
+  return stored;
+}
+
 function getWielandTokenFromHeader(req) {
   const auth = req.headers["authorization"] || "";
   if (!auth.startsWith("Bearer ")) return null;
@@ -669,22 +785,28 @@ async function handleWielandMe(req, res, url) {
 // ── User management ────────────────────────────────────────────────────────
 function hashPassword(password) {
   const salt = crypto.randomBytes(32).toString("hex");
-  const hash = crypto.pbkdf2Sync(password, salt, 100_000, 64, "sha512").toString("hex");
-  return { hash, salt };
+  const hash = crypto.pbkdf2Sync(password, salt, ADMIN_PASSWORD_KDF_ITERATIONS, 64, "sha512").toString("hex");
+  return { hash, salt, iterations: ADMIN_PASSWORD_KDF_ITERATIONS };
 }
 
 function verifyPassword(password, storedHash, storedSalt) {
-  let computed;
-  try {
-    computed = crypto.pbkdf2Sync(password, storedSalt, 100_000, 64, "sha512").toString("hex");
-  } catch {
-    return false;
+  const candidates = [ADMIN_PASSWORD_KDF_ITERATIONS, LEGACY_ADMIN_PASSWORD_KDF_ITERATIONS];
+  for (const iterations of candidates) {
+    let computed;
+    try {
+      computed = crypto.pbkdf2Sync(password, storedSalt, iterations, 64, "sha512").toString("hex");
+    } catch {
+      continue;
+    }
+    try {
+      if (crypto.timingSafeEqual(Buffer.from(computed, "hex"), Buffer.from(storedHash, "hex"))) {
+        return true;
+      }
+    } catch {
+      return false;
+    }
   }
-  try {
-    return crypto.timingSafeEqual(Buffer.from(computed, "hex"), Buffer.from(storedHash, "hex"));
-  } catch {
-    return false;
-  }
+  return false;
 }
 
 async function readUsers() {
@@ -717,6 +839,23 @@ async function writeUsers(users) {
     return;
   }
   fs.writeFileSync(USERS_FILE, `${JSON.stringify(users, null, 2)}\n`, "utf8");
+}
+
+async function hasAdminSetupLock() {
+  if (firestore) {
+    const doc = await firestore.collection(ADMIN_META_COLLECTION).doc("setup").get();
+    return doc.exists && doc.data()?.completed === true;
+  }
+  return fs.existsSync(ADMIN_SETUP_LOCK_FILE);
+}
+
+async function writeAdminSetupLock() {
+  const payload = { completed: true, completedAt: new Date().toISOString() };
+  if (firestore) {
+    await firestore.collection(ADMIN_META_COLLECTION).doc("setup").set(payload, { merge: true });
+    return;
+  }
+  fs.writeFileSync(ADMIN_SETUP_LOCK_FILE, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
 }
 
 function sanitizeUsername(value) {
@@ -767,7 +906,7 @@ function publicUser(user) {
 }
 
 function hasAdminPermission(session, permission) {
-  if (!session) return true; // Legacy ADMIN_PASSWORD access keeps full permissions.
+  if (!session) return false;
   if (session.role === "admin") return true;
   return Boolean(normalizeUserPermissions(session.permissions, session.role)?.[permission]);
 }
@@ -830,7 +969,8 @@ function handleAdminMe(req, res) {
 async function handleAdminSetupStatus(res) {
   try {
     const users = await readUsers();
-    sendJson(res, 200, { needsSetup: users.length === 0 });
+    const setupLocked = await hasAdminSetupLock();
+    sendJson(res, 200, { needsSetup: users.length === 0 && !setupLocked });
   } catch (err) {
     console.error("[setup-status] readUsers error:", err.message);
     // Fail safe: assume setup is done to avoid showing setup screen on Firestore timeout
@@ -840,7 +980,8 @@ async function handleAdminSetupStatus(res) {
 
 async function handleAdminSetup(req, res) {
   const users = await readUsers();
-  if (users.length > 0) {
+  const setupLocked = await hasAdminSetupLock();
+  if (users.length > 0 || setupLocked) {
     sendJson(res, 403, { error: "Setup already completed." });
     return;
   }
@@ -864,17 +1005,19 @@ async function handleAdminSetup(req, res) {
     sendJson(res, 400, { error: "Password must be at least 8 characters." });
     return;
   }
-  const { hash, salt } = hashPassword(password);
+  const { hash, salt, iterations } = hashPassword(password);
   const newUser = {
     id: username,
     username,
     passwordHash: hash,
     passwordSalt: salt,
+    passwordIterations: iterations,
     role: "admin",
     permissions: normalizeUserPermissions({}, "admin"),
     createdAt: new Date().toISOString()
   };
   await writeUsers([newUser]);
+  await writeAdminSetupLock();
   const token = createSessionToken(newUser);
   setSessionCookie(res, token);
   sendJson(res, 200, { ok: true, user: publicUser(newUser) });
@@ -902,15 +1045,27 @@ const WIDGET_API_PATHS = new Set([
   "/api/ticket", "/api/agent-quality-board"
 ]);
 
+const SENSITIVE_WIDGET_API_PATHS = new Set([
+  "/api/workitem", "/api/tts", "/api/prediction",
+  "/api/agent-next-step", "/api/questions-check", "/api/client-questions",
+  "/api/ticket", "/api/agent-quality-board"
+]);
+
 async function checkWidgetApiToken(req, res, url) {
   if (!WIDGET_API_PATHS.has(url.pathname)) return true;
   const campaignId = url.searchParams.get("campaign") || "";
+  const bodyCampaignId = req.method === "POST" && url.pathname === "/api/prediction" && req.body && typeof req.body === "object"
+    ? String(req.body.campaignId || req.body.campaign || "").trim()
+    : "";
+  const selectedCampaignId = campaignId || bodyCampaignId;
   if (!campaignId) return true; // no campaign = use default, no token enforced
   try {
     const campaigns = await readCampaigns();
-    const campaign = campaigns.find(c => c.id === campaignId);
+    const campaign = campaigns.find(c => c.id === selectedCampaignId);
     const requiredToken = campaign?.apiAccessToken ? String(campaign.apiAccessToken).trim() : "";
     if (!requiredToken) return true; // not configured → no restriction
+    const agentSession = await getAgentSessionFromRequest(req);
+    if (agentSession && String(agentSession.campaignId || "") === selectedCampaignId) return true;
     const auth = req.headers["authorization"] || "";
     const provided = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
     if (!provided || !constantTimeEqualString(provided, requiredToken)) {
@@ -1227,6 +1382,11 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (url.pathname.startsWith("/api/tenant-explorer/")) {
+    await handleTenantExplorer(req, res, url);
+    return;
+  }
+
   if (req.method !== "GET" && req.method !== "HEAD") {
     sendJson(res, 405, { error: "Method not allowed" });
     return;
@@ -1240,7 +1400,7 @@ const server = http.createServer(handleRequest);
 async function handleConfig(req, res, url) {
   try {
     const selection = readSelection(url.searchParams);
-    const config = applyTokenOverride(await resolveCampaignConfigAsync(selection), req);
+    const config = await applyTokenOverride(await resolveCampaignConfigAsync(selection), req);
     const visibleTabs = normalizeWielandVisibleTabs(config.wieland?.visibleTabs || {});
     const listButtons = normalizeWielandListButtons(config.wieland?.listButtons || {});
 
@@ -1282,7 +1442,12 @@ async function handleWorkitem(req, res, url) {
       throwConfig('Missing workitem id. Provide ?workitemid=... in the URL.');
     }
 
-    const config = applyTokenOverride(await resolveCampaignConfigAsync(selection), req);
+    const baseConfig = await resolveCampaignConfigAsync(selection);
+    if (!(await isAuthorizedForCampaign(req, baseConfig))) {
+      sendJson(res, 401, { error: "Unauthorized." });
+      return;
+    }
+    const config = await applyTokenOverride(baseConfig, req);
     const workitemData = await fetchWorkitem(config, workitemId);
 
     sendJson(res, 200, {
@@ -1381,7 +1546,12 @@ async function handleClientQuestions(req, res, url) {
 
     if (!workitemId) throwConfig("Missing workitem id.");
 
-    const config = applyTokenOverride(await resolveCampaignConfigAsync(selection), req);
+    const baseConfig = await resolveCampaignConfigAsync(selection);
+    if (!(await isAuthorizedForCampaign(req, baseConfig, { allowPublicCampaign: true }))) {
+      sendJson(res, 401, { error: "Unauthorized." });
+      return;
+    }
+    const config = await applyTokenOverride(baseConfig, req);
     const workitemData = await fetchWorkitem(config, workitemId);
     const messages = extractChecklistMessages(workitemData);
     const clientMessages = messages.filter(m => m.role !== "agent");
@@ -1497,7 +1667,12 @@ async function handleQuestionsCheck(req, res, url) {
       throwConfig('Missing workitem id. Provide ?workitemid=... in the URL.');
     }
 
-    const config = applyTokenOverride(await resolveCampaignConfigAsync(selection), req);
+    const baseConfig = await resolveCampaignConfigAsync(selection);
+    if (!(await isAuthorizedForCampaign(req, baseConfig))) {
+      sendJson(res, 401, { error: "Unauthorized." });
+      return;
+    }
+    const config = await applyTokenOverride(baseConfig, req);
     const questionsConfig = resolveQuestionsConfig(config);
     const questions = normalizeQuestionItems(questionsConfig.items || []);
 
@@ -1554,7 +1729,12 @@ async function handleAgentNextStep(req, res, url) {
       throwConfig('Missing workitem id. Provide ?workitemid=... in the URL.');
     }
 
-    const config = applyTokenOverride(await resolveCampaignConfigAsync(selection), req);
+    const baseConfig = await resolveCampaignConfigAsync(selection);
+    if (!(await isAuthorizedForCampaign(req, baseConfig))) {
+      sendJson(res, 401, { error: "Unauthorized." });
+      return;
+    }
+    const config = await applyTokenOverride(baseConfig, req);
     const workitemData = await fetchWorkitem(config, workitemId);
     const transcriptMessages = extractChecklistMessages(workitemData);
     const clientMessages = await extractClientMessages(workitemData, config);
@@ -1602,7 +1782,12 @@ async function handleTts(req, res, url) {
       return;
     }
 
-    const config = applyTokenOverride(await resolveCampaignConfigAsync(selection), req);
+    const baseConfig = await resolveCampaignConfigAsync(selection);
+    if (!(await isAuthorizedForCampaign(req, baseConfig))) {
+      sendJson(res, 401, { error: "Unauthorized." });
+      return;
+    }
+    const config = await applyTokenOverride(baseConfig, req);
     const body = await readJson(req);
     const text = String(body.text || "").trim();
     const voiceName = String(body.voiceName || "").trim();
@@ -2056,11 +2241,16 @@ async function handlePrediction(req, res) {
   }
 
   try {
-    const config = applyTokenOverride(await resolveCampaignConfigAsync({
+    const baseConfig = await resolveCampaignConfigAsync({
       campaignId: body.campaignId || body.campaign || "",
       domain: body.domain || "",
       kbIds: body.kb_ids || body.kbIds || []
-    }), req);
+    });
+    if (!(await isAuthorizedForCampaign(req, baseConfig, { allowPublicCampaign: true }))) {
+      sendJson(res, 401, { error: "Unauthorized." });
+      return;
+    }
+    const config = await applyTokenOverride(baseConfig, req);
 
     const upstream = await fetchPredictionUpstream(config, {
       message: body.message || "",
@@ -2068,6 +2258,10 @@ async function handlePrediction(req, res) {
     });
 
     const text = await upstream.text();
+    if (!upstream.ok && !text.trim()) {
+      sendJson(res, upstream.status, { error: `Prediction API returned ${upstream.status}.` });
+      return;
+    }
     res.writeHead(upstream.status, {
       "Content-Type": upstream.headers.get("content-type") || "application/json; charset=utf-8"
     });
@@ -2220,6 +2414,7 @@ async function handleSummaryAgenticSummary(req, res, url) {
     if (!saConfig.enabled) {
       throwConfig(`Summary Agentic is not enabled for campaign "${config.id}".`);
     }
+    if (!(await requireCampaignFeatureAccess(req, res, config, saConfig))) return;
 
     // Check Firestore cache
     const extraKey = Object.entries(extraParams).sort().map(([k,v]) => `${k}=${v}`).join("&");
@@ -3048,7 +3243,7 @@ async function handlePulseFormsAnalyzeUrl(req, res) {
     }
     if (!aiApiKey) { sendJson(res, 400, { error: "No AI API key configured for PulseForms." }); return; }
 
-    const systemPrompt = `You are an API configuration assistant for CRM integrations, especially Sugar CRM. Analyze the provided URL and suggest a reusable PulseForms data source template.
+    const systemPrompt = `You are an API configuration assistant for CRM integrations. Analyze the provided URL and suggest a reusable PulseForms data source template.
 Available placeholders: {{phone}}, {{customer_id}}, {{email}}, {{first_name}}, {{last_name}}, {{account_id}}, plus custom URL parameters.
 Return ONLY valid JSON with fields: name, url, fixedParams, headersJson, bodyTemplate, mode ("query" or "submit"), explanation.`;
     let rawText;
@@ -3269,7 +3464,27 @@ async function handlePulseFormsAgentSession(req, res, url) {
       sendJson(res, 401, { ok: false, active: false, error: message });
       return;
     }
-    sendJson(res, 200, { ok: true, active: true, domain, session });
+    const expiresAt = Math.floor(Date.now() / 1000) + AGENT_SESSION_EXPIRY_SECONDS;
+    const agentSession = {
+      id: crypto.randomBytes(24).toString("hex"),
+      campaignId,
+      domain,
+      token: rawToken,
+      agentUserId: String(session.userId || session._id || session.id || session.username || "").trim(),
+      session,
+      expiresAt
+    };
+    await writeAgentSession(agentSession);
+    const agentSessionToken = createAgentSessionToken(agentSession);
+    setAgentSessionCookie(res, agentSessionToken);
+    sendJson(res, 200, {
+      ok: true,
+      active: true,
+      domain,
+      session,
+      agentSessionToken,
+      expiresAt
+    });
   } catch (error) {
     sendJson(res, 502, { ok: false, active: false, error: "Agent session validation failed." });
   }
@@ -3309,9 +3524,25 @@ async function handlePulseFormsWidgetConfig(req, res, url) {
     const config = campaigns.find((c) => c.id === campaignId);
     if (!config) { sendJson(res, 404, { ok: false, error: `Campaign "${campaignId}" not found.` }); return; }
 
-    const sugar = config.pulseforms?.sugar || {};
-    if (config.pulseforms?.enabled === false || sugar.enabled !== true) {
-      sendJson(res, 400, { ok: false, error: "PulseForms Sugar CRM is not enabled for this campaign." });
+    const crm = getPulseFormsCrmConfig(config);
+    if (config.pulseforms?.enabled === false || crm.enabled !== true) {
+      sendJson(res, 200, {
+        ok: true,
+        warning: "PulseForms CRM is not enabled for this campaign.",
+        campaign: { id: config.id, name: config.name },
+        config: {
+          CRM_ENABLED: false,
+          SUGAR_ENABLED: false,
+          CONTACT_LOOKUP_MODULE: "Contacts",
+          CONTACT_LOOKUP_FIELD: "phone_work",
+          CONTACT_MODULE: "Contacts",
+          TICKET_MODULE: "tic_Tickets",
+          NEEDS_ASSESSMENT_MODULE: "NA_NeedsAssessment",
+          OPPORTUNITY_MODULE: "Opportunities",
+          MAX_FIELDS_PER_REQUEST: 100,
+          NCC_EVENT_ORIGIN: defaultCampaignOrigin(config)
+        }
+      });
       return;
     }
 
@@ -3319,16 +3550,21 @@ async function handlePulseFormsWidgetConfig(req, res, url) {
       ok: true,
       campaign: { id: config.id, name: config.name },
       config: {
-        SUGAR_BASE_URL: String(sugar.baseUrl || "").trim().replace(/\/+$/g, ""),
-        SUGAR_API_VERSION: sugar.apiVersion || "v11_1",
-        CONTACT_LOOKUP_MODULE: sugar.queryModule || "Contacts",
-        CONTACT_LOOKUP_FIELD: sugar.queryField || "phone_work",
-        CONTACT_MODULE: sugar.contactModule || sugar.queryModule || "Contacts",
-        TICKET_MODULE: sugar.ticketModule || "tic_Tickets",
-        NEEDS_ASSESSMENT_MODULE: sugar.needsAssessmentModule || "NA_NeedsAssessment",
-        OPPORTUNITY_MODULE: sugar.submitModule || "Opportunities",
-        MAX_FIELDS_PER_REQUEST: sugar.maxFieldsPerRequest || 100,
-        NCC_EVENT_ORIGIN: normalizeAllowedOrigin(sugar.nccEventOrigin) || defaultCampaignOrigin(config)
+        CRM_ENABLED: true,
+        SUGAR_ENABLED: true,
+        CRM_BASE_URL: String(crm.baseUrl || "").trim().replace(/\/+$/g, ""),
+        CRM_API_VERSION: crm.apiVersion || "v11_1",
+        CRM_PROVIDER: crm.provider || "rest-crm",
+        SUGAR_BASE_URL: String(crm.baseUrl || "").trim().replace(/\/+$/g, ""),
+        SUGAR_API_VERSION: crm.apiVersion || "v11_1",
+        CONTACT_LOOKUP_MODULE: crm.queryModule || "Contacts",
+        CONTACT_LOOKUP_FIELD: crm.queryField || "phone_work",
+        CONTACT_MODULE: crm.contactModule || crm.queryModule || "Contacts",
+        TICKET_MODULE: crm.ticketModule || "tic_Tickets",
+        NEEDS_ASSESSMENT_MODULE: crm.needsAssessmentModule || "NA_NeedsAssessment",
+        OPPORTUNITY_MODULE: crm.submitModule || "Opportunities",
+        MAX_FIELDS_PER_REQUEST: crm.maxFieldsPerRequest || 100,
+        NCC_EVENT_ORIGIN: normalizeAllowedOrigin(crm.nccEventOrigin) || defaultCampaignOrigin(config)
       }
     });
   } catch (error) {
@@ -3347,7 +3583,7 @@ async function getPulseFormsWidgetConnection(campaignId) {
   }
   const connection = buildPulseFormsSugarConnection(config);
   if (config.pulseforms?.enabled === false || !connection.enabled) {
-    const error = new Error("PulseForms Sugar CRM is not enabled for this campaign.");
+    const error = new Error("PulseForms CRM is not enabled for this campaign.");
     error.status = 400;
     throw error;
   }
@@ -3461,7 +3697,7 @@ async function preparePulseFormsContactValues(connection, values = {}) {
   if (!accountName && !accountId) return values;
 
   // Account search returns the selected id and address to the widget. Re-reading
-  // the Account adds latency to Contact create and Sugar may time out there.
+  // the Account adds latency to Contact create and the CRM may time out there.
   if (accountId && accountName) {
     return { ...values, account_id: accountId, account_name: accountName };
   }
@@ -3471,8 +3707,8 @@ async function preparePulseFormsContactValues(connection, values = {}) {
     : await lookupPulseFormsSugarAccount(connection, accountName);
   if (!account) {
     const error = new Error(accountId
-      ? `Account id "${accountId}" was not found in Sugar Accounts.`
-      : `Account "${accountName}" was not found in Sugar Accounts.`);
+      ? `Account id "${accountId}" was not found in CRM Accounts.`
+      : `Account "${accountName}" was not found in CRM Accounts.`);
     error.status = 422;
     throw error;
   }
@@ -3535,6 +3771,7 @@ async function handlePulseFormsWidgetContact(req, res, url) {
 
     sendJson(res, 200, { ok: true, contact: null });
   } catch (error) {
+    console.error("[pulseforms/widget-contact] lookup error:", error.message, error.stack);
     sendJson(res, error.status || 500, { ok: false, error: error.message });
   }
 }
@@ -3622,6 +3859,7 @@ async function handlePulseFormsQuery(req, res, url) {
 
     const pf = config.pulseforms || {};
     if (pf.enabled === false) { sendJson(res, 400, { error: "PulseForms is not enabled for this campaign." }); return; }
+    if (!(await requireCampaignFeatureAccess(req, res, config, pf))) return;
 
     const identifiers = {};
     for (const [k, v] of url.searchParams.entries()) {
@@ -3656,9 +3894,9 @@ async function handlePulseFormsQuery(req, res, url) {
       try {
         const sugarValues = await queryPulseFormsSugar(sugarConnection, identifiers);
         Object.assign(values, sugarValues);
-        sources.push({ id: "sugar-crm", name: "Sugar CRM", ok: true });
+        sources.push({ id: "crm", name: "CRM", ok: true });
       } catch (error) {
-        sources.push({ id: "sugar-crm", name: "Sugar CRM", ok: false, error: error.message });
+        sources.push({ id: "crm", name: "CRM", ok: false, error: error.message });
       }
     }
 
@@ -3681,6 +3919,8 @@ async function handlePulseFormsSubmit(req, res) {
     if (!config) { sendJson(res, 404, { error: `Campaign "${campaignId}" not found.` }); return; }
 
     const pf = config.pulseforms || {};
+    if (pf.enabled === false) { sendJson(res, 400, { error: "PulseForms is not enabled for this campaign." }); return; }
+    if (!(await requireCampaignFeatureAccess(req, res, config, pf))) return;
     const submitSources = (pf.dataSources || []).filter((s) => s.enabled !== false && s.mode === "submit" && s.url);
     const sugarConnection = buildPulseFormsSugarConnection(config);
     const sugarSubmitEnabled = sugarConnection.enabled && sugarConnection.submitEnabled;
@@ -3718,9 +3958,9 @@ async function handlePulseFormsSubmit(req, res) {
     if (sugarSubmitEnabled) {
       try {
         const sugarResult = await submitPulseFormsSugar(sugarConnection, values);
-        sources.push({ id: "sugar-crm", name: "Sugar CRM", ok: true, recordId: sugarResult.id || sugarResult._id || "" });
+        sources.push({ id: "crm", name: "CRM", ok: true, recordId: sugarResult.id || sugarResult._id || "" });
       } catch (error) {
-        sources.push({ id: "sugar-crm", name: "Sugar CRM", ok: false, error: error.message });
+        sources.push({ id: "crm", name: "CRM", ok: false, error: error.message });
       }
     }
 
@@ -3891,7 +4131,7 @@ async function handleWidgetDraft(req, res, url) {
 
     const record = await readWidgetDraftRecord(docId);
     if (!record) {
-      sendJson(res, 404, { ok: false, error: "Widget draft not found." });
+      sendJson(res, 200, { ok: true, found: false, campaign: campaignId, callId, values: {}, currentTab: 0 });
       return;
     }
     sendJson(res, 200, {
@@ -3955,20 +4195,30 @@ async function handleWidgetState(req, res, url) {
       return;
     }
 
+    const shouldConsume = url.searchParams.get("consume") === "1" || url.searchParams.get("consume") === "true";
     const record = await readWidgetStateRecord(docId);
     if (!record) {
-      sendJson(res, 404, { ok: false, error: "Widget state not found or already consumed." });
+      sendJson(res, 200, {
+        ok: true,
+        found: false,
+        consumed: false,
+        campaign: campaignId,
+        callId,
+        ids: sanitizeWidgetStateIds({}),
+        error: "Widget state not found. It may not have been saved yet, or it was already consumed."
+      });
       return;
     }
 
-    if (url.searchParams.get("consume") === "1" || url.searchParams.get("consume") === "true") {
+    if (shouldConsume) {
       await deleteWidgetStateRecord(docId);
       await deleteWidgetDraftRecord(docId);
     }
 
     sendJson(res, 200, {
       ok: true,
-      consumed: url.searchParams.get("consume") === "1" || url.searchParams.get("consume") === "true",
+      found: true,
+      consumed: shouldConsume,
       campaign: campaignId,
       callId,
       ids: sanitizeWidgetStateIds(record.ids || {}),
@@ -4110,7 +4360,7 @@ async function buildPulseFormsSugarSubmitPayload(connection, values = {}, option
     );
   }
 
-  if (!Object.keys(payload).length) throw new Error("No valid values available to send to Sugar CRM.");
+  if (!Object.keys(payload).length) throw new Error("No valid values available to send to CRM.");
   return payload;
 }
 
@@ -4587,7 +4837,7 @@ async function createPulseFormsSugarRecord(connection, module, payload) {
     finalPayload
   );
   const id = created.id || created._id || "";
-  if (!id) throw new Error(`Sugar did not return an id for ${module}.`);
+  if (!id) throw new Error(`CRM did not return an id for ${module}.`);
   return { record: created, id };
 }
 
@@ -4996,15 +5246,20 @@ function extractDeepValue(data, fieldPath) {
   return undefined;
 }
 
+function getPulseFormsCrmConfig(config) {
+  return config?.pulseforms?.crm || config?.pulseforms?.sugar || {};
+}
+
 function buildPulseFormsSugarConnection(config) {
-  const sugar = config?.pulseforms?.sugar || {};
+  const sugar = getPulseFormsCrmConfig(config);
   return {
+    provider: String(sugar.provider || "rest-crm").trim() || "rest-crm",
     enabled: sugar.enabled === true,
     baseUrl: String(sugar.baseUrl || "").trim().replace(/\/+$/g, ""),
     username: String(sugar.username || "").trim(),
-    password: String(config.pulseformsSugarPassword || "").trim(),
+    password: String(config.pulseformsCrmPassword || config.pulseformsSugarPassword || "").trim(),
     clientId: String(sugar.clientId || "sugar").trim() || "sugar",
-    clientSecret: String(config.pulseformsSugarClientSecret || "").trim(),
+    clientSecret: String(config.pulseformsCrmClientSecret || config.pulseformsSugarClientSecret || "").trim(),
     platform: String(sugar.platform || "base").trim() || "base",
     apiVersion: String(sugar.apiVersion || "v11_1").trim() || "v11_1",
     maxFieldsPerRequest: Math.max(1, Math.min(100, parseInt(sugar.maxFieldsPerRequest || 100, 10) || 100)),
@@ -5029,14 +5284,14 @@ function buildPulseFormsSugarConnection(config) {
 }
 
 function assertPulseFormsSugarConnection(connection) {
-  if (!connection.baseUrl) throw new Error("Sugar CRM base URL is missing.");
-  if (!connection.username) throw new Error("Sugar CRM username is missing.");
-  if (!connection.password) throw new Error("Sugar CRM password is missing.");
+  if (!connection.baseUrl) throwConfig("CRM base URL is missing.");
+  if (!connection.username) throwConfig("CRM username is missing.");
+  if (!connection.password) throwConfig("CRM password is missing.");
 }
 
 async function getPulseFormsSugarToken(connection) {
   assertPulseFormsSugarConnection(connection);
-  const safeBaseUrl = await assertSafeOutboundUrl(connection.baseUrl, "Sugar CRM base URL");
+  const safeBaseUrl = await assertSafeOutboundUrl(connection.baseUrl, "CRM base URL");
   const apiVersion = encodeURIComponent(connection.apiVersion || "v11_1");
   const response = await fetch(new URL(`/rest/${apiVersion}/oauth2/token`, safeBaseUrl).toString(), {
     method: "POST",
@@ -5052,7 +5307,9 @@ async function getPulseFormsSugarToken(connection) {
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok || !payload.access_token) {
-    throw new Error(`Sugar OAuth failed (${response.status}): ${payload.error_message || payload.error_description || payload.error || "No access token"}`);
+    const error = new Error(`CRM OAuth failed (${response.status}): ${payload.error_message || payload.error_description || payload.error || "No access token"}`);
+    error.status = response.status >= 400 && response.status < 500 ? 400 : 502;
+    throw error;
   }
   return payload.access_token;
 }
@@ -5061,16 +5318,16 @@ async function fetchPulseFormsSugar(connection, method, path, body = null) {
   const result = await fetchPulseFormsSugarRaw(connection, method, path, body);
   if (!result.ok) {
     const payload = result.payload || {};
-    throw new Error(`Sugar API failed (${result.status}): ${payload.error_message || payload.error_description || payload.error || "Request failed"}`);
+    throw new Error(`CRM API failed (${result.status}): ${payload.error_message || payload.error_description || payload.error || "Request failed"}`);
   }
   return result.payload;
 }
 
 async function fetchPulseFormsSugarRaw(connection, method, path, body = null) {
   const token = await getPulseFormsSugarToken(connection);
-  const safeBaseUrl = await assertSafeOutboundUrl(connection.baseUrl, "Sugar CRM base URL");
+  const safeBaseUrl = await assertSafeOutboundUrl(connection.baseUrl, "CRM base URL");
   const safeUrl = new URL(path, safeBaseUrl);
-  if (safeUrl.origin !== safeBaseUrl.origin) throwConfig("Sugar CRM request path is invalid.");
+  if (safeUrl.origin !== safeBaseUrl.origin) throwConfig("CRM request path is invalid.");
   const response = await fetch(safeUrl.toString(), {
     method,
     headers: {
@@ -5085,7 +5342,7 @@ async function fetchPulseFormsSugarRaw(connection, method, path, body = null) {
 
 async function queryPulseFormsSugar(connection, identifiers = {}) {
   const queryValue = identifiers[connection.queryParam] || identifiers.phone || identifiers.customer_id || "";
-  if (!queryValue) throw new Error(`Missing Sugar lookup value. Expected URL parameter "${connection.queryParam}".`);
+  if (!queryValue) throw new Error(`Missing CRM lookup value. Expected URL parameter "${connection.queryParam}".`);
   const filter = new URLSearchParams();
   filter.set(`filter[0][${connection.queryField}][$equals]`, queryValue);
   filter.set("max_num", "1");
@@ -5118,7 +5375,7 @@ function publicPulseFormsConfig(pf) {
     enabled: pf.enabled !== false,
     mode: pf.mode || "query",
     formFields: pf.formFields || [],
-    sourceCount: (pf.dataSources || []).filter((s) => s.enabled !== false).length + (pf.sugar?.enabled === true ? 1 : 0),
+    sourceCount: (pf.dataSources || []).filter((s) => s.enabled !== false).length + (getPulseFormsCrmConfig({ pulseforms: pf })?.enabled === true ? 1 : 0),
     activeLayout: pf.activeLayout || null
   };
 }
@@ -6080,8 +6337,9 @@ async function fetchPredictionUpstream(config, input) {
 
   const headers = {
     "Authorization": config.token,
+    "Accept": "application/json",
     "Content-Type": "application/json",
-    "Content-Length": Buffer.byteLength(payload)
+    "User-Agent": "NextIQ/1.0"
   };
 
   if (config.cookie) {
@@ -6267,7 +6525,7 @@ async function handleAdmin(req, res, url) {
     return;
   }
 
-  if (req.method === "POST" && url.pathname === "/api/admin/pulseforms/sugar-template") {
+  if (req.method === "POST" && (url.pathname === "/api/admin/pulseforms/crm-template" || url.pathname === "/api/admin/pulseforms/sugar-template")) {
     let body;
     try { body = await readJson(req); } catch {
       sendJson(res, 400, { error: "Invalid JSON." });
@@ -6279,11 +6537,13 @@ async function handleAdmin(req, res, url) {
       const saved = campaigns.find((item) => item.id === requested.id) || {};
       const campaign = {
         ...requested,
+        pulseformsCrmPassword: requested.pulseformsCrmPassword || saved.pulseformsCrmPassword || requested.pulseformsSugarPassword || saved.pulseformsSugarPassword || "",
+        pulseformsCrmClientSecret: requested.pulseformsCrmClientSecret || saved.pulseformsCrmClientSecret || requested.pulseformsSugarClientSecret || saved.pulseformsSugarClientSecret || "",
         pulseformsSugarPassword: requested.pulseformsSugarPassword || saved.pulseformsSugarPassword || "",
         pulseformsSugarClientSecret: requested.pulseformsSugarClientSecret || saved.pulseformsSugarClientSecret || ""
       };
       const connection = buildPulseFormsSugarConnection(campaign);
-      if (!connection.enabled) throw new Error("PulseForms Sugar CRM is not enabled.");
+      if (!connection.enabled) throw new Error("PulseForms CRM is not enabled.");
       assertPulseFormsSugarConnection(connection);
       const module = connection.submitModule || "Opportunities";
       const templatePath = `/rest/${encodeURIComponent(connection.apiVersion)}/${encodeURIComponent(module)}/template`;
@@ -6307,7 +6567,7 @@ async function handleAdmin(req, res, url) {
         source = "metadata";
       } else {
         const payload = templateResult.payload || {};
-        throw new Error(`Sugar API failed (${templateResult.status}): ${payload.error_message || payload.error_description || payload.error || "Request failed"}`);
+        throw new Error(`CRM API failed (${templateResult.status}): ${payload.error_message || payload.error_description || payload.error || "Request failed"}`);
       }
       sendJson(res, 200, {
         ok: true,
@@ -6361,8 +6621,8 @@ async function handleAdmin(req, res, url) {
       sendJson(res, 409, { error: `User "${username}" already exists.` });
       return;
     }
-    const { hash, salt } = hashPassword(password);
-    const newUser = { id: username, username, passwordHash: hash, passwordSalt: salt, role, permissions, createdAt: new Date().toISOString() };
+    const { hash, salt, iterations } = hashPassword(password);
+    const newUser = { id: username, username, passwordHash: hash, passwordSalt: salt, passwordIterations: iterations, role, permissions, createdAt: new Date().toISOString() };
     await writeUsers([...users, newUser]);
     sendJson(res, 200, { ok: true, user: publicUser(newUser) });
     return;
@@ -6422,8 +6682,8 @@ async function handleAdmin(req, res, url) {
         return;
       }
     }
-    const { hash, salt } = hashPassword(newPassword);
-    users[idx] = { ...users[idx], passwordHash: hash, passwordSalt: salt };
+    const { hash, salt, iterations } = hashPassword(newPassword);
+    users[idx] = { ...users[idx], passwordHash: hash, passwordSalt: salt, passwordIterations: iterations };
     await writeUsers(users);
     sendJson(res, 200, { ok: true });
     return;
@@ -6457,6 +6717,10 @@ async function handleAdmin(req, res, url) {
       const index = campaigns.findIndex((item) => item.id === campaign.id);
       const savedCampaign = index >= 0 ? campaigns[index] : {};
       const campaignToSave = preserveExistingCampaignSecrets(campaign, savedCampaign);
+      if (body.clearPulseformsCrmClientSecret || body.clearPulseformsSugarClientSecret) {
+        campaignToSave.pulseformsCrmClientSecret = "";
+        campaignToSave.pulseformsSugarClientSecret = "";
+      }
       const permission = index >= 0 ? "editCampaign" : "createCampaign";
       if (!hasAdminPermission(session, permission)) {
         sendJson(res, 403, {
@@ -6465,6 +6729,10 @@ async function handleAdmin(req, res, url) {
             : "You do not have permission to create campaigns."
         });
         return;
+      }
+      const crmConnection = buildPulseFormsSugarConnection(campaignToSave);
+      if (crmConnection.enabled) {
+        assertPulseFormsSugarConnection(crmConnection);
       }
 
       if (index >= 0) {
@@ -6687,17 +6955,33 @@ function readSelection(searchParams) {
   };
 }
 
-// Extrae un token override del header x-thrio-token.
-// Si está presente, se usa en lugar del token de la campaña para llamadas a Thrio.
 function getThrioTokenOverride(req) {
+  if (!getSessionFromRequest(req)) return "";
   const fromHeader = String(req.headers["x-thrio-token"] || "").trim();
   if (fromHeader) return fromHeader;
   return "";
 }
 
-// Aplica el token override al config si viene en el request
-function applyTokenOverride(config, req) {
-  if (!getSessionFromRequest(req)) return config;
+async function applyTokenOverride(config, req) {
+  const agentSession = await getAgentSessionFromRequest(req);
+  if (agentSession) {
+    const requestedCampaign = String(config.id || "").trim();
+    const sessionCampaign = String(agentSession.campaignId || "").trim();
+    if (requestedCampaign && sessionCampaign && requestedCampaign !== sessionCampaign) {
+      throwConfig("Agent session is not authorized for this campaign.");
+    }
+    const domain = sanitizeDomain(agentSession.domain || config.domain);
+    return {
+      ...config,
+      domain,
+      token: agentSession.token,
+      agentUserId: agentSession.agentUserId || config.agentUserId,
+      workitemApiUrl: buildWorkitemApiUrl(domain),
+      apiUrl: buildPredictionApiUrl(domain),
+      agentChatApiUrl: buildAgentChatApiUrl(domain)
+    };
+  }
+
   const override = getThrioTokenOverride(req);
   if (!override) return config;
   const domain = sanitizeDomain(config.domain);
@@ -6805,7 +7089,14 @@ function normalizeCampaign(input) {
     throw new Error("Campaign id is required.");
   }
 
-  const apiUrl = String(input.apiUrl || input.api_url || DEFAULT_API_URL).trim();
+  const inputApiUrl = String(input.apiUrl || input.api_url || DEFAULT_API_URL).trim();
+  const domain = sanitizeDomain(input.domain || getDomainFromUrl(inputApiUrl));
+  const apiUrl = normalizeDomainScopedUrl(
+    inputApiUrl,
+    domain,
+    "/data/api/ai/prediction",
+    buildPredictionApiUrl
+  );
   if (!apiUrl) {
     throw new Error("API URL is required.");
   }
@@ -6813,18 +7104,24 @@ function normalizeCampaign(input) {
   return {
     id,
     name: String(input.name || id).trim() || id,
-    domain: sanitizeDomain(input.domain || getDomainFromUrl(apiUrl)),
+    domain,
     apiUrl,
-    workitemApiUrl: String(
+    workitemApiUrl: normalizeDomainScopedUrl(
       input.workitemApiUrl
       || input.workitem_api_url
-      || buildWorkitemApiUrl(input.domain || getDomainFromUrl(apiUrl))
-    ).trim(),
-    agentChatApiUrl: String(
+      || buildWorkitemApiUrl(domain || getDomainFromUrl(apiUrl)),
+      domain,
+      "/users/api/workitems",
+      buildWorkitemApiUrl
+    ),
+    agentChatApiUrl: normalizeDomainScopedUrl(
       input.agentChatApiUrl
       || input.agent_chat_api_url
-      || buildAgentChatApiUrl(input.domain || getDomainFromUrl(apiUrl))
-    ).trim(),
+      || buildAgentChatApiUrl(domain || getDomainFromUrl(apiUrl)),
+      domain,
+      "/chats/api/agent/chats",
+      buildAgentChatApiUrl
+    ),
     token: String(input.token || "").trim(),
     cookie: String(input.cookie || "").trim(),
     history: normalizeHistoryConfig(input.history || {}),
@@ -6893,8 +7190,10 @@ function normalizeCampaign(input) {
     summaryagenticWarmToken: String(input.summaryagenticWarmToken || "").trim(),
     summaryagentic: normalizeSummaryAgenticConfig(input.summaryagentic || {}),
     pulseformsAiApiKey: String(input.pulseformsAiApiKey || "").trim(),
-    pulseformsSugarPassword: String(input.pulseformsSugarPassword || "").trim(),
-    pulseformsSugarClientSecret: String(input.pulseformsSugarClientSecret || "").trim(),
+    pulseformsCrmPassword: String(input.pulseformsCrmPassword || input.pulseformsSugarPassword || "").trim(),
+    pulseformsCrmClientSecret: String(input.pulseformsCrmClientSecret || input.pulseformsSugarClientSecret || "").trim(),
+    pulseformsSugarPassword: String(input.pulseformsSugarPassword || input.pulseformsCrmPassword || "").trim(),
+    pulseformsSugarClientSecret: String(input.pulseformsSugarClientSecret || input.pulseformsCrmClientSecret || "").trim(),
     pulseformsWidgetStateReadToken: String(input.pulseformsWidgetStateReadToken || "").trim(),
     pulseforms: normalizePulseFormsConfig(input.pulseforms || {}),
     apiAccessToken: String(input.apiAccessToken || "").trim(),
@@ -7267,6 +7566,15 @@ function getDomainFromUrl(value) {
   }
 }
 
+function buildPredictionApiUrl(domain) {
+  const normalizedDomain = sanitizeDomain(domain);
+  if (!normalizedDomain) {
+    return "";
+  }
+
+  return `https://${normalizedDomain}/data/api/ai/prediction`;
+}
+
 function buildWorkitemApiUrl(domain) {
   const normalizedDomain = sanitizeDomain(domain);
   if (!normalizedDomain) {
@@ -7283,6 +7591,26 @@ function buildAgentChatApiUrl(domain) {
   }
 
   return `https://${normalizedDomain}/chats/api/agent/chats`;
+}
+
+function normalizeDomainScopedUrl(value, domain, expectedPath, builder) {
+  const trimmed = String(value || "").trim();
+  const normalizedDomain = sanitizeDomain(domain);
+  if (!trimmed) {
+    return builder(normalizedDomain);
+  }
+  if (!normalizedDomain || normalizedDomain === LEGACY_DEFAULT_THRIO_DOMAIN) {
+    return trimmed;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    const isLegacyDefault = parsed.hostname === LEGACY_DEFAULT_THRIO_DOMAIN
+      && parsed.pathname.replace(/\/+$/, "") === expectedPath;
+    return isLegacyDefault ? builder(normalizedDomain) : trimmed;
+  } catch {
+    return trimmed;
+  }
 }
 
 function slugify(value) {
@@ -7443,7 +7771,8 @@ function normalizePulseFormsConfig(input) {
     aiProvider: VALID_PROVIDERS.includes(src.aiProvider) ? src.aiProvider : "claude",
     aiModel: String(src.aiModel || "").trim(),
     aiPrompt: String(src.aiPrompt || "").trim(),
-    sugar: normalizePulseFormsSugarConfig(src.sugar || {}),
+    crm: normalizePulseFormsSugarConfig(src.crm || src.sugar || {}),
+    sugar: normalizePulseFormsSugarConfig(src.sugar || src.crm || {}),
     formFields: normalizePulseFormsFields(src.formFields || []),
     dataSources: normalizePulseFormsDataSources(src.dataSources || []),
     activeLayout: Array.isArray(src.activeLayout?.sections) && src.activeLayout.sections.length
@@ -7575,25 +7904,7 @@ function sanitizeFirestorePrefix(value) {
 }
 
 function isAuthorizedAdmin(req) {
-  // Primary: session cookie
-  if (getSessionFromRequest(req)) return true;
-
-  // Legacy fallback is disabled by default because it bypasses session and CSRF.
-  if (!ALLOW_LEGACY_ADMIN_AUTH || !ADMIN_PASSWORD) return false;
-  const headerPassword = String(req.headers["x-admin-password"] || "").trim();
-  if (headerPassword && constantTimeEqualString(headerPassword, ADMIN_PASSWORD)) return true;
-
-  // Legacy fallback: HTTP Basic auth
-  const authHeader = req.headers.authorization || "";
-  if (!authHeader.startsWith("Basic ")) return false;
-  try {
-    const decoded = Buffer.from(authHeader.slice(6), "base64").toString("utf8");
-    const separator = decoded.indexOf(":");
-    const password = separator >= 0 ? decoded.slice(separator + 1) : "";
-    return constantTimeEqualString(password, ADMIN_PASSWORD);
-  } catch {
-    return false;
-  }
+  return Boolean(getSessionFromRequest(req));
 }
 
 function requireAdminSession(req, res) {
@@ -7620,6 +7931,25 @@ async function isAuthorizedCampaignApi(req, url) {
   const auth = req.headers["authorization"] || "";
   const provided = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
   return Boolean(provided && constantTimeEqualString(provided, requiredToken));
+}
+
+async function isAuthorizedForCampaign(req, config, options = {}) {
+  if (getSessionFromRequest(req)) return true;
+  const agentSession = await getAgentSessionFromRequest(req);
+  if (agentSession && String(agentSession.campaignId || "") === String(config.id || "")) return true;
+  const requiredToken = config?.apiAccessToken ? String(config.apiAccessToken).trim() : "";
+  if (!requiredToken && options.allowPublicCampaign === true) return true;
+  if (!requiredToken) return false;
+  const auth = req.headers["authorization"] || "";
+  const provided = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+  return Boolean(provided && constantTimeEqualString(provided, requiredToken));
+}
+
+async function requireCampaignFeatureAccess(req, res, config, featureConfig = {}) {
+  if (featureConfig.publicAccess === true) return true;
+  if (await isAuthorizedForCampaign(req, config)) return true;
+  sendJson(res, 401, { error: "Unauthorized." });
+  return false;
 }
 
 function sendJson(res, status, data) {
@@ -7723,6 +8053,7 @@ function loadEnv(filePath) {
 function throwConfig(message) {
   const error = new Error(message);
   error.code = "CONFIG";
+  error.status = 400;
   throw error;
 }
 
@@ -7738,12 +8069,16 @@ async function fetchWorkitem(config, workitemId) {
   if (!config.workitemApiUrl) {
     throwConfig(`Campaign "${config.id}" is missing a workitem API URL.`);
   }
+  console.log(`[fetchWorkitem] url=${config.workitemApiUrl} tokenLen=${String(config.token||"").length}`);
   const safeWorkitemUrl = await assertSafeOutboundUrl(config.workitemApiUrl, "Workitem API URL");
 
-  const upstream = await fetch(safeWorkitemUrl, {
-    method: "GET",
-    headers
-  });
+  let upstream;
+  try {
+    upstream = await fetch(safeWorkitemUrl, { method: "GET", headers });
+  } catch (fetchErr) {
+    console.error(`[fetchWorkitem] network error: ${fetchErr.message}`);
+    throw fetchErr;
+  }
 
   if (!upstream.ok) {
     const detail = await upstream.text().catch(() => "");
@@ -7875,7 +8210,7 @@ async function handleWorkitemHistory(req, res, url) {
     }
 
     const selection = readSelection(url.searchParams);
-    const config = applyTokenOverride(await resolveCampaignConfigAsync(selection), req);
+    const config = await applyTokenOverride(await resolveCampaignConfigAsync(selection), req);
     const domain = sanitizeDomain(config.domain);
     if (!domain) throwConfig(`Campaign "${config.id}" is missing a Thrio domain.`);
 
@@ -7918,7 +8253,7 @@ async function handleWorkitemDispositions(req, res, url) {
     }
 
     const selection = readSelection(url.searchParams);
-    const config = applyTokenOverride(await resolveCampaignConfigAsync(selection), req);
+    const config = await applyTokenOverride(await resolveCampaignConfigAsync(selection), req);
     const domain = sanitizeDomain(config.domain);
     if (!domain) throwConfig(`Campaign "${config.id}" is missing a Thrio domain.`);
 
@@ -10286,7 +10621,7 @@ async function handleWieland(req, res, url) {
 
     console.log("[wieland/leads] sending leads:", { count: leads.length });
     const result = await nccFetch(nccConfig, `/outboundlist/${encodeURIComponent(listId)}/leads`, "POST", leads);
-    console.log("[wieland/leads] NCC response:", result.status, JSON.stringify(result.data)?.slice(0, 300));
+    console.log("[wieland/leads] NCC response:", result.status, result.ok ? "ok" : "error");
     let visibleAfterInsert = null;
     if (result.ok) {
       const verifyResult = await nccFetch(nccConfig, `/lead?rows=200&start=0&q=&outboundListId=${encodeURIComponent(listId)}`);
@@ -13037,6 +13372,142 @@ function createFirestoreClient() {
   }
 
   return null;
+}
+
+async function handleTenantExplorer(req, res, url) {
+  if (req.method !== "POST" || url.pathname !== "/api/tenant-explorer/extract") {
+    sendJson(res, 404, { error: "Not found." });
+    return;
+  }
+
+  let body;
+  try { body = await readJson(req); } catch { sendJson(res, 400, { error: "Invalid JSON." }); return; }
+
+  const username = String(body.username || "").trim();
+  const password = String(body.password || "");
+  const pageSize = Math.min(Math.max(Number(body.pageSize) || 500, 1), 5000);
+  const ALL_KEYS = ["users","userProfiles","campaigns","contacts","outboundLists","leads","dispositions","templates","fieldMappings","surveys","workflows","queues","widgets","reports","session"];
+  const requestedEntities = Array.isArray(body.entities) && body.entities.length
+    ? body.entities.filter(k => ALL_KEYS.includes(k))
+    : ALL_KEYS;
+
+  // Parse domain — strip protocol, trailing slash and any subpath (Thrio APIs live at the root)
+  // Accept domain hint — strip protocol and subpath (Thrio APIs live at root)
+  const rawDomain = String(body.domain || "").trim().replace(/^https?:\/\//, "").replace(/\/$/, "");
+  const domainHint = sanitizeDomain(rawDomain.split("/")[0]);
+
+  if (!username || !password) {
+    sendJson(res, 400, { error: "Username and password are required." });
+    return;
+  }
+  if (!domainHint) {
+    sendJson(res, 400, { error: "Domain is required (e.g. liverpool.thrio.io)." });
+    return;
+  }
+  if (!requestedEntities.length) {
+    sendJson(res, 400, { error: "No valid entities selected." });
+    return;
+  }
+
+  try {
+    const basic = Buffer.from(`${username}:${password}`, "utf8").toString("base64");
+
+    // Step 1 — provider token from the tenant's own auth endpoint
+    const providerTokenUrl = `https://${domainHint}/provider/token-with-authorities`;
+    const tokenResponse = await fetch(providerTokenUrl, {
+      method: "GET",
+      headers: { "Content-Type": "application/json", Authorization: `Basic ${basic}` }
+    });
+    const tokenText = await tokenResponse.text();
+    let tokenData;
+    try { tokenData = tokenText ? JSON.parse(tokenText) : {}; } catch { tokenData = tokenText; }
+    if (!tokenResponse.ok) {
+      sendJson(res, tokenResponse.status, { error: "Login failed.", details: tokenData });
+      return;
+    }
+    const providerToken = extractNccToken(tokenData);
+    if (!providerToken) {
+      sendJson(res, 502, { error: "Provider token endpoint did not return a token." });
+      return;
+    }
+
+    // Step 2 — session login (same as ncc-builder)
+    const detectedDomain = extractNccDomain(tokenData, providerToken) || domainHint;
+    const config = {
+      token: providerToken,
+      domain: detectedDomain,
+      baseUrl: buildNccBuilderBaseUrl(detectedDomain),
+      headers: { "Content-Type": "application/json" }
+    };
+
+    const loginResponse = await nccBuilderFetch(config, "/login", "POST", { deviceInfo: "web" }, "/users/api");
+    if (loginResponse.ok) {
+      const sessionToken = extractNccToken(loginResponse.data) || providerToken;
+      const resolvedDomain = extractNccDomain(loginResponse.data, sessionToken) || detectedDomain;
+      config.token = sessionToken;
+      config.domain = resolvedDomain;
+      config.baseUrl = buildNccBuilderBaseUrl(resolvedDomain);
+    }
+
+    const ALL_ENTITIES = [
+      { key: "users",        path: "/user",                        root: "/data/api/types" },
+      { key: "userProfiles", path: "/userprofile",                 root: "/data/api/types" },
+      { key: "campaigns",    path: "/campaign",                    root: "/data/api/types" },
+      { key: "contacts",     path: `/contact?pageSize=${pageSize}`,root: "/data/api/types" },
+      { key: "outboundLists",path: "/outboundlist",                root: "/data/api/types" },
+      { key: "leads",        path: `/lead?pageSize=${pageSize}`,   root: "/data/api/types" },
+      { key: "dispositions", path: "/disposition",                 root: "/data/api/types" },
+      { key: "templates",    path: "/template",                    root: "/data/api/types" },
+      { key: "fieldMappings",path: "/fieldmappings",              root: "/data/api/types" },
+      { key: "surveys",      path: "/survey",                      root: "/data/api/types" },
+      { key: "workflows",    path: "/workflow",                    root: "/data/api/types" },
+      { key: "queues",       path: "/queue",   root: "/data/api/types", fetchDetails: true },
+      { key: "widgets",      path: "/widget",  root: "/data/api/types", fetchDetails: true },
+      { key: "reports",      path: "/report",  root: "/data/api/types", fetchDetails: true },
+      { key: "session",      path: "/session",                     root: "/users/api"      }
+    ];
+    const ENTITIES = ALL_ENTITIES.filter(e => requestedEntities.includes(e.key));
+
+    const results = await Promise.all(
+      ENTITIES.map(async ({ key, path, root, fetchDetails }) => {
+        try {
+          const r = await nccBuilderFetch(config, path, "GET", null, root);
+          if (!r.ok) return { key, ok: false, status: r.status, data: null };
+          if (!fetchDetails) return { key, ok: true, status: r.status, data: r.data };
+
+          const items = nccObjectList(r.data);
+          const detailed = await Promise.all(
+            items.map(async (item) => {
+              const id = nccBuilderObjectId(item);
+              if (!id) return item;
+              try {
+                const d = await nccBuilderFetch(config, `${path}/${id}`, "GET", null, root);
+                return d.ok ? d.data : item;
+              } catch { return item; }
+            })
+          );
+          return { key, ok: true, status: r.status, data: detailed };
+        } catch (err) {
+          return { key, ok: false, status: 0, data: null, error: err.message };
+        }
+      })
+    );
+
+    const snapshot = { domain: config.domain, extractedAt: new Date().toISOString() };
+    const errors = {};
+    for (const { key, ok, data, error } of results) {
+      if (!ok) {
+        errors[key] = error || `HTTP error`;
+        snapshot[key] = null;
+      } else {
+        snapshot[key] = key === "session" ? data : nccObjectList(data);
+      }
+    }
+
+    sendJson(res, 200, { ok: true, snapshot, errors: Object.keys(errors).length ? errors : undefined });
+  } catch (error) {
+    sendJson(res, error.status || 500, { error: error.message, details: error.details });
+  }
 }
 
 if (require.main === module) {
