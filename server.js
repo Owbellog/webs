@@ -13386,7 +13386,7 @@ async function handleTenantExplorer(req, res, url) {
   const username = String(body.username || "").trim();
   const password = String(body.password || "");
   const pageSize = Math.min(Math.max(Number(body.pageSize) || 500, 1), 5000);
-  const ALL_KEYS = ["users","userProfiles","campaigns","contacts","outboundLists","leads","dispositions","templates","fieldMappings","surveys","workflows","queues","widgets","reports","session"];
+  const ALL_KEYS = ["users","userProfiles","campaigns","contacts","outboundLists","leads","dispositions","templates","fieldMappings","surveys","workflows","queues","widgets","reports","functions","scripts","userClientSettings","whatsappTemplates","restCalls","session"];
   const requestedEntities = Array.isArray(body.entities) && body.entities.length
     ? body.entities.filter(k => ALL_KEYS.includes(k))
     : ALL_KEYS;
@@ -13461,10 +13461,15 @@ async function handleTenantExplorer(req, res, url) {
       { key: "fieldMappings",path: "/fieldmappings",              root: "/data/api/types" },
       { key: "surveys",      path: "/survey",                      root: "/data/api/types" },
       { key: "workflows",    path: "/workflow",                    root: "/data/api/types" },
-      { key: "queues",       path: "/queue",   root: "/data/api/types", fetchDetails: true },
-      { key: "widgets",      path: "/widget",  root: "/data/api/types", fetchDetails: true },
-      { key: "reports",      path: "/report",  root: "/data/api/types", fetchDetails: true },
-      { key: "session",      path: "/session",                     root: "/users/api"      }
+      { key: "queues",             path: "/queue",              root: "/data/api/types", fetchDetails: true },
+      { key: "widgets",            path: "/widget",             root: "/data/api/types", fetchDetails: true },
+      { key: "reports",            path: "/report",             root: "/data/api/types", fetchDetails: true },
+      { key: "functions",          path: "/function",           root: "/data/api/types" },
+      { key: "scripts",            path: "/script",             root: "/data/api/types", fetchDetails: true },
+      { key: "userClientSettings", path: "/userclientsettings", root: "/data/api/types", fetchDetails: true },
+      { key: "whatsappTemplates",  path: "/whatsapptemplate",   root: "/data/api/types", fetchDetails: true },
+      { key: "restCalls",          path: "/restcall",           root: "/data/api/types", fetchDetails: true },
+      { key: "session",            path: "/session",            root: "/users/api"      }
     ];
     const ENTITIES = ALL_ENTITIES.filter(e => requestedEntities.includes(e.key));
 
