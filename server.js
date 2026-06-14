@@ -13590,6 +13590,7 @@ async function handleRecordingDownloader(req, res, url) {
       };
 
       const allRecordings = [];
+      const seenIds = new Set();
       let offset = 0;
       let keepGoing = true;
       while (keepGoing && allRecordings.length < maxRows) {
@@ -13597,8 +13598,16 @@ async function handleRecordingDownloader(req, res, url) {
         if (!r.ok) { sendJson(res, r.status || 502, { error: `Error ${r.status} al buscar grabaciones.`, details: r.data }); return; }
         const page = r.data?.objects || r.data?.rows || r.data?.recordings || r.data?.items || r.data?.results || (Array.isArray(r.data) ? r.data : []);
         if (!page.length) break;
-        allRecordings.push(...page);
-        if (page.length < PAGE) keepGoing = false;
+        let newCount = 0;
+        for (const item of page) {
+          const id = item._id || item.id || item.recordingId || item.callId;
+          if (id && seenIds.has(id)) continue;
+          if (id) seenIds.add(id);
+          allRecordings.push(item);
+          newCount++;
+        }
+        // Stop if no new unique records arrived (API repeating itself) or partial page
+        if (newCount === 0 || page.length < PAGE) keepGoing = false;
         else offset += page.length;
       }
 
