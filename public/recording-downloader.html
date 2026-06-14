@@ -336,6 +336,9 @@
 
       currentRecordings = data.recordings || [];
       logEntry(`${currentRecordings.length} grabaciones recibidas (total API: ${data.total})`, "ok");
+      if (data._url) logEntry(`URL analytics: ${data._url}`, "info");
+      if (data._rawKeys?.length) logEntry(`Claves respuesta API: [${data._rawKeys.join(", ")}]`, "info");
+      if (data._rawSample) logEntry(`Raw sample: ${data._rawSample}`, "info");
 
       renderTable(currentRecordings);
       el("resultCount").textContent =

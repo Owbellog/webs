@@ -13585,12 +13585,15 @@ async function handleRecordingDownloader(req, res, url) {
       if (body.rangeTo) path += `&rangeTo=${Number(body.rangeTo)}`;
       if (body.campaignId) path += `&campaignId=${encodeURIComponent(body.campaignId)}`;
 
+      const fullUrl = `${config.baseUrl}/analytics/api/v1/types${path}`;
       const r = await nccBuilderFetch(config, path, "GET", null, "/analytics/api/v1/types");
-      if (!r.ok) { sendJson(res, r.status || 502, { error: `Error ${r.status} al buscar grabaciones.`, details: r.data }); return; }
+      if (!r.ok) { sendJson(res, r.status || 502, { error: `Error ${r.status} al buscar grabaciones.`, details: r.data, _url: fullUrl }); return; }
 
-      const recordings = r.data?.rows || r.data?.recordings || nccObjectList(r.data);
-      const total = r.data?.total ?? r.data?.count ?? recordings.length;
-      sendJson(res, 200, { ok: true, total, recordings });
+      const rawData = r.data;
+      const recordings = rawData?.rows || rawData?.recordings || rawData?.items || rawData?.objects || rawData?.results || rawData?.data || [];
+      const total = rawData?.total ?? rawData?.totalCount ?? rawData?.count ?? recordings.length;
+      const _rawKeys = rawData && typeof rawData === "object" ? Object.keys(rawData) : [];
+      sendJson(res, 200, { ok: true, total, recordings, _url: fullUrl, _rawKeys, _rawSample: JSON.stringify(rawData)?.slice(0, 400) });
 
     } else if (subpath === "/download-urls") {
       const ids = Array.isArray(body.ids) ? body.ids.slice(0, 200) : [];
