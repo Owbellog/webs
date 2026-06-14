@@ -236,7 +236,7 @@
     if (type === "custom") {
       const from = el("inputFrom").value ? new Date(el("inputFrom").value).getTime() : undefined;
       const to = el("inputTo").value ? endOfDay(new Date(el("inputTo").value).getTime()) : undefined;
-      return { rangeFrom: from, rangeTo: to };
+      return { rangeType: "daterange", rangeFrom: from, rangeTo: to };
     }
 
     const map = {
