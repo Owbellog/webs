@@ -13593,7 +13593,8 @@ async function handleRecordingDownloader(req, res, url) {
       const recordings = rawData?.rows || rawData?.recordings || rawData?.items || rawData?.objects || rawData?.results || rawData?.data || [];
       const total = rawData?.total ?? rawData?.totalCount ?? rawData?.count ?? recordings.length;
       const _rawKeys = rawData && typeof rawData === "object" ? Object.keys(rawData) : [];
-      sendJson(res, 200, { ok: true, total, recordings, _url: fullUrl, _rawKeys, _rawSample: JSON.stringify(rawData)?.slice(0, 400) });
+      const _firstRecord = recordings[0] ? JSON.stringify(recordings[0]).slice(0, 800) : null;
+      sendJson(res, 200, { ok: true, total, recordings, _url: fullUrl, _rawKeys, _rawSample: JSON.stringify(rawData)?.slice(0, 200), _firstRecord });
 
     } else if (subpath === "/download-urls") {
       const ids = Array.isArray(body.ids) ? body.ids.slice(0, 200) : [];
@@ -13604,7 +13605,9 @@ async function handleRecordingDownloader(req, res, url) {
           const r = await nccBuilderFetch(config, `/recording/${id}`, "GET", null, "/analytics/api/types");
           if (!r.ok) return { id, ok: false, error: `HTTP ${r.status}` };
           const downloadUrl = findGcsUrl(r.data);
-          return { id, ok: true, downloadUrl, data: r.data };
+          const _detailKeys = r.data && typeof r.data === "object" ? Object.keys(r.data) : [];
+          const _detailSample = JSON.stringify(r.data)?.slice(0, 600);
+          return { id, ok: true, downloadUrl, data: r.data, _detailKeys, _detailSample };
         } catch (e) {
           return { id, ok: false, error: e.message };
         }

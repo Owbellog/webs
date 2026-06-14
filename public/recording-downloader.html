@@ -339,6 +339,7 @@
       if (data._url) logEntry(`URL analytics: ${data._url}`, "info");
       if (data._rawKeys?.length) logEntry(`Claves respuesta API: [${data._rawKeys.join(", ")}]`, "info");
       if (data._rawSample) logEntry(`Raw sample: ${data._rawSample}`, "info");
+      if (data._firstRecord) logEntry(`Primer registro: ${data._firstRecord}`, "info");
 
       renderTable(currentRecordings);
       el("resultCount").textContent =
@@ -433,6 +434,10 @@
       const withUrl = details.filter(d => d.ok && d.downloadUrl).length;
       const noUrl   = details.length - withUrl;
       logEntry(`URLs obtenidas: ${withUrl} con URL${noUrl ? ", " + noUrl + " sin URL" : ""}`, "ok");
+      if (details[0]) {
+        logEntry(`Detalle claves: [${(details[0]._detailKeys || []).join(", ")}]`, "info");
+        logEntry(`Detalle sample: ${details[0]._detailSample || "—"}`, "info");
+      }
     } catch (err) {
       logEntry(`Error obteniendo URLs: ${err.message}`, "err");
       showAlert("downloadAlert", "Error al obtener URLs de descarga: " + err.message, "err");
