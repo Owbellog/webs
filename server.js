@@ -13576,25 +13576,33 @@ async function handleRecordingDownloader(req, res, url) {
     const subpath = url.pathname.replace(/^\/api\/recording-downloader/, "");
 
     if (subpath === "/search") {
-      const rows = Math.min(Math.max(Number(body.rows) || 100, 1), 1000);
-      const start = Math.max(Number(body.start) || 0, 0);
+      const maxRows = Math.min(Math.max(Number(body.rows) || 100, 1), 2000);
       const q = String(body.q || "");
-      let path = `/recording?rows=${rows}&start=${start}&q=${encodeURIComponent(q)}`;
-      if (body.rangeType) path += `&rangeType=${encodeURIComponent(body.rangeType)}`;
-      if (body.rangeFrom) path += `&rangeFrom=${Number(body.rangeFrom)}`;
-      if (body.rangeTo) path += `&rangeTo=${Number(body.rangeTo)}`;
-      if (body.campaignId) path += `&campaignId=${encodeURIComponent(body.campaignId)}`;
+      const PAGE = 100;
 
-      const fullUrl = `${config.baseUrl}/analytics/api/v1/types${path}`;
-      const r = await nccBuilderFetch(config, path, "GET", null, "/analytics/api/v1/types");
-      if (!r.ok) { sendJson(res, r.status || 502, { error: `Error ${r.status} al buscar grabaciones.`, details: r.data, _url: fullUrl }); return; }
+      const buildPath = (start) => {
+        let p = `/recording?rows=${PAGE}&start=${start}&q=${encodeURIComponent(q)}`;
+        if (body.rangeType) p += `&rangeType=${encodeURIComponent(body.rangeType)}`;
+        if (body.rangeFrom) p += `&rangeFrom=${Number(body.rangeFrom)}`;
+        if (body.rangeTo)   p += `&rangeTo=${Number(body.rangeTo)}`;
+        if (body.campaignId) p += `&campaignId=${encodeURIComponent(body.campaignId)}`;
+        return p;
+      };
 
-      const rawData = r.data;
-      const recordings = rawData?.rows || rawData?.recordings || rawData?.items || rawData?.objects || rawData?.results || rawData?.data || [];
-      const total = rawData?.total ?? rawData?.totalCount ?? rawData?.count ?? recordings.length;
-      const _rawKeys = rawData && typeof rawData === "object" ? Object.keys(rawData) : [];
-      const _firstRecord = recordings[0] ? JSON.stringify(recordings[0]).slice(0, 800) : null;
-      sendJson(res, 200, { ok: true, total, recordings, _url: fullUrl, _rawKeys, _rawSample: JSON.stringify(rawData)?.slice(0, 200), _firstRecord });
+      const allRecordings = [];
+      let offset = 0;
+      let keepGoing = true;
+      while (keepGoing && allRecordings.length < maxRows) {
+        const r = await nccBuilderFetch(config, buildPath(offset), "GET", null, "/analytics/api/v1/types");
+        if (!r.ok) { sendJson(res, r.status || 502, { error: `Error ${r.status} al buscar grabaciones.`, details: r.data }); return; }
+        const page = r.data?.objects || r.data?.rows || r.data?.recordings || r.data?.items || r.data?.results || (Array.isArray(r.data) ? r.data : []);
+        if (!page.length) break;
+        allRecordings.push(...page);
+        if (page.length < PAGE) keepGoing = false;
+        else offset += page.length;
+      }
+
+      sendJson(res, 200, { ok: true, total: allRecordings.length, recordings: allRecordings.slice(0, maxRows) });
 
     } else if (subpath === "/download-urls") {
       const ids = Array.isArray(body.ids) ? body.ids.slice(0, 200) : [];

@@ -155,10 +155,10 @@
           <tr>
             <th class="cb-col"><input type="checkbox" id="cbAll" checked title="Sel/Desel todas" onchange="selectAll(this.checked)" /></th>
             <th>Fecha / Hora</th>
-            <th>Agente</th>
-            <th>Campaña</th>
+            <th>Destino</th>
+            <th>Origen</th>
             <th>Duración</th>
-            <th>Teléfono (ANI)</th>
+            <th>Archivo</th>
             <th class="st-col">Estado</th>
           </tr>
         </thead>
@@ -264,21 +264,20 @@
     } catch { return String(ts); }
   }
 
-  function fmtDuration(ms) {
-    if (ms == null) return "—";
-    const secs = Math.round(Number(ms) / 1000);
-    if (isNaN(secs)) return "—";
-    return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+  function fmtSecs(s) {
+    if (s == null || isNaN(Number(s))) return "—";
+    const n = Math.round(Number(s));
+    return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, "0")}`;
   }
 
-  // ── Record field extractors (handle multiple possible field names) ───────────
-  function recId(r)       { return r._id || r.id || r.recordingId || String(r.startTime || ""); }
-  function recAgent(r)    { return r.agentName || r.agent?.name || r.agentFullName || r.userName || "—"; }
-  function recCampaign(r) { return r.campaignName || r.campaign?.name || "—"; }
-  function recAni(r)      { return r.ani || r.callerNumber || r.callerAni || r.phone || "—"; }
-  function recDuration(r) { return fmtDuration(r.duration ?? r.durationMs ?? r.callDuration ?? null); }
-  function recDate(r)     { return fmtDate(r.startTime ?? r.timestamp ?? r.createdAt ?? null); }
-  function recRawMs(r)    { return r.startTime ?? r.timestamp ?? r.createdAt ?? null; }
+  // ── Record field extractors ──────────────────────────────────────────────────
+  function recId(r)       { return r._id || r.id || r.recordingId || String(r.createdAt || ""); }
+  function recDate(r)     { return fmtDate(r.createdAt ?? r.startTime ?? r.timestamp ?? null); }
+  function recDuration(r) { return fmtSecs(r.duration ?? r.callDuration ?? null); }  // API returns seconds
+  function recTo(r)       { return r.toAddress || r.to || r.ani || "—"; }
+  function recFrom(r)     { return r.fromAddress || r.from || "—"; }
+  function recFile(r)     { return r.filename || r.callId + ".wav" || "—"; }
+  function recRawMs(r)    { return r.createdAt ?? r.startTime ?? r.timestamp ?? null; }
 
   // ── Init ────────────────────────────────────────────────────────────────────
   window.addEventListener("DOMContentLoaded", () => {
@@ -336,10 +335,6 @@
 
       currentRecordings = data.recordings || [];
       logEntry(`${currentRecordings.length} grabaciones recibidas (total API: ${data.total})`, "ok");
-      if (data._url) logEntry(`URL analytics: ${data._url}`, "info");
-      if (data._rawKeys?.length) logEntry(`Claves respuesta API: [${data._rawKeys.join(", ")}]`, "info");
-      if (data._rawSample) logEntry(`Raw sample: ${data._rawSample}`, "info");
-      if (data._firstRecord) logEntry(`Primer registro: ${data._firstRecord}`, "info");
 
       renderTable(currentRecordings);
       el("resultCount").textContent =
@@ -371,10 +366,10 @@
       tr.innerHTML = `
         <td class="cb-col"><input type="checkbox" class="rec-cb" data-id="${id}" checked /></td>
         <td>${recDate(rec)}</td>
-        <td>${escHtml(recAgent(rec))}</td>
-        <td>${escHtml(recCampaign(rec))}</td>
+        <td>${escHtml(recTo(rec))}</td>
+        <td>${escHtml(recFrom(rec))}</td>
         <td>${recDuration(rec)}</td>
-        <td>${escHtml(recAni(rec))}</td>
+        <td style="font-size:.72rem;font-family:ui-monospace,monospace;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(recFile(rec))}">${escHtml(recFile(rec))}</td>
         <td class="st-col" id="st-${id}">—</td>`;
       tr.querySelector(".rec-cb").addEventListener("change", e => {
         tr.classList.toggle("is-selected", e.target.checked);
@@ -434,10 +429,6 @@
       const withUrl = details.filter(d => d.ok && d.downloadUrl).length;
       const noUrl   = details.length - withUrl;
       logEntry(`URLs obtenidas: ${withUrl} con URL${noUrl ? ", " + noUrl + " sin URL" : ""}`, "ok");
-      if (details[0]) {
-        logEntry(`Detalle claves: [${(details[0]._detailKeys || []).join(", ")}]`, "info");
-        logEntry(`Detalle sample: ${details[0]._detailSample || "—"}`, "info");
-      }
     } catch (err) {
       logEntry(`Error obteniendo URLs: ${err.message}`, "err");
       showAlert("downloadAlert", "Error al obtener URLs de descarga: " + err.message, "err");
@@ -494,14 +485,19 @@
   }
 
   function buildFilename(rec, id, downloadUrl) {
-    const ms = recRawMs(rec) || Number(id);
-    const d = new Date(Number(ms));
-    const datePart = isNaN(d.getTime()) ? String(id).slice(-8) :
-      `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}${String(d.getDate()).padStart(2,"0")}` +
-      `_${String(d.getHours()).padStart(2,"0")}${String(d.getMinutes()).padStart(2,"0")}`;
-    const agent = recAgent(rec) !== "—" ? recAgent(rec).replace(/[^a-z0-9]/gi, "_").replace(/_+/g,"_").slice(0, 20) : "";
+    // Use the filename from the API if available (e.g. "cc0373cf-....wav")
+    if (rec.filename) {
+      const ms = recRawMs(rec);
+      if (ms) {
+        const d = new Date(Number(ms));
+        const datePart = isNaN(d.getTime()) ? "" :
+          `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}${String(d.getDate()).padStart(2,"0")}`;
+        return `${datePart}_${rec.filename}`;
+      }
+      return rec.filename;
+    }
     const ext = downloadUrl?.match(/\.(wav|mp3|ogg|m4a|flac)(\?|$)/i)?.[1] || "wav";
-    return [datePart, agent, id].filter(Boolean).join("_").replace(/_+/g,"_") + "." + ext;
+    return `${id}.${ext}`;
   }
 
   async function downloadFile(url, filename) {
