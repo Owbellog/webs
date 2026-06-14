@@ -1,0 +1,519 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Recording Downloader — Nextiva</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      --bg: #f3f5f8; --panel: #ffffff; --ink: #162033; --muted: #5b6474;
+      --line: #d6dde7; --brand: #20406c; --accent: #087f67;
+      --ok-bg: #e8f7ef; --ok: #14532d; --warn-bg: #fff8e1; --warn: #78350f;
+      --err-bg: #fef2f2; --err: #991b1b; --radius: 12px; --radius-sm: 8px;
+    }
+    body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--ink); font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 14px; }
+    .shell { max-width: 1100px; margin: 0 auto; padding: 32px 20px 60px; }
+    header { margin-bottom: 28px; }
+    header h1 { margin: 0 0 4px; font-size: 1.5rem; font-weight: 800; }
+    header p { margin: 0; color: var(--muted); font-size: .9rem; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px 24px; margin-bottom: 16px; }
+    .card-title { font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 14px; }
+    .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+    .field { display: flex; flex-direction: column; gap: 5px; }
+    .field label { font-size: .75rem; font-weight: 700; color: var(--muted); }
+    .field input, .field select { border: 1px solid var(--line); border-radius: var(--radius-sm); background: #fff; color: var(--ink); font: inherit; font-size: .9rem; padding: 9px 11px; outline: none; transition: border-color .15s; }
+    .field input:focus, .field select:focus { border-color: var(--brand); }
+    .field-hint { font-size: .72rem; color: var(--muted); margin-top: 2px; }
+    .actions { display: flex; align-items: center; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+    .btn { display: inline-flex; align-items: center; gap: 6px; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--panel); color: var(--ink); font: inherit; font-weight: 700; font-size: .88rem; padding: 9px 18px; cursor: pointer; transition: background .15s, border-color .15s; }
+    .btn:hover:not(:disabled) { background: var(--bg); }
+    .btn-primary { background: var(--brand); color: #fff; border-color: var(--brand); }
+    .btn-primary:hover:not(:disabled) { background: #16325a; border-color: #16325a; }
+    .btn-success { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .btn-success:hover:not(:disabled) { background: #065e4d; }
+    .btn-sm { font-size: .78rem; padding: 6px 12px; }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .alert { border-radius: var(--radius-sm); padding: 10px 14px; font-size: .88rem; font-weight: 600; margin-top: 12px; white-space: pre-wrap; }
+    .alert-err { background: var(--err-bg); color: var(--err); border: 1px solid #fecaca; }
+    .alert-ok { background: var(--ok-bg); color: var(--ok); border: 1px solid #bbf7d0; }
+    .alert-warn { background: var(--warn-bg); color: var(--warn); border: 1px solid #fde68a; }
+    [hidden] { display: none !important; }
+    .badge { font-size: .72rem; font-weight: 700; background: var(--brand); color: #fff; border-radius: 999px; padding: 2px 9px; }
+    /* Table */
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+    table.rec-table { width: 100%; border-collapse: collapse; font-size: .84rem; }
+    .rec-table th { background: var(--bg); font-weight: 700; font-size: .71rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); padding: 9px 12px; text-align: left; border-bottom: 2px solid var(--line); white-space: nowrap; }
+    .rec-table td { padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+    .rec-table tr:last-child td { border-bottom: none; }
+    .rec-table tbody tr:hover td { background: var(--bg); }
+    .rec-table tbody tr.is-selected td { background: #eef3fa; }
+    .rec-table tbody tr.downloading td { background: var(--warn-bg); }
+    .rec-table tbody tr.dl-done td { background: var(--ok-bg); }
+    .rec-table tbody tr.dl-error td { background: var(--err-bg); }
+    .cb-col { width: 40px; text-align: center; }
+    .st-col { width: 100px; text-align: center; font-size: .78rem; }
+    /* Progress bar */
+    .progress-wrap { flex: 1; min-width: 200px; }
+    .progress-label { font-size: .78rem; color: var(--muted); margin-bottom: 5px; }
+    .progress-bar-bg { background: var(--bg); border-radius: 999px; height: 8px; border: 1px solid var(--line); }
+    .progress-bar { background: var(--accent); height: 100%; border-radius: 999px; transition: width .3s; }
+    /* Exec panel */
+    .exec-log { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto; }
+    .exec-entry { display: grid; grid-template-columns: 80px 1fr; gap: 8px; font-size: .82rem; border-bottom: 1px solid var(--line); padding: 6px 0; }
+    .exec-entry:last-child { border-bottom: none; }
+    .exec-time { color: var(--muted); font-family: ui-monospace, monospace; font-size: .75rem; padding-top: 1px; }
+    .exec-msg { word-break: break-all; }
+    .exec-msg.ok { color: var(--ok); }
+    .exec-msg.err { color: var(--err); }
+    .exec-msg.info { color: var(--brand); }
+    .exec-msg.warn { color: var(--warn); }
+    .exec-toggle { font-size: .78rem; font-weight: 700; color: var(--muted); cursor: pointer; text-decoration: underline; background: none; border: none; padding: 0; font: inherit; }
+    .spinner { display: inline-block; width: 13px; height: 13px; border: 2px solid var(--line); border-top-color: var(--brand); border-radius: 50%; animation: spin .6s linear infinite; vertical-align: middle; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+<main class="shell">
+  <header>
+    <h1>Recording Downloader</h1>
+    <p>Busca y descarga grabaciones de un tenant Nextiva / Thrio de forma masiva.</p>
+  </header>
+
+  <!-- Auth + Filtros -->
+  <div class="card">
+    <p class="card-title">Conexión y filtros</p>
+    <div class="form-grid">
+      <div class="field">
+        <label for="inputDomain">Dominio *</label>
+        <input id="inputDomain" type="text" placeholder="mancity.thrio.io" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label for="inputUsername">Usuario *</label>
+        <input id="inputUsername" type="text" placeholder="admin@empresa.com" autocomplete="username" />
+      </div>
+      <div class="field">
+        <label for="inputPassword">Contraseña *</label>
+        <input id="inputPassword" type="password" autocomplete="current-password" />
+      </div>
+    </div>
+    <div class="form-grid" style="margin-top:12px;">
+      <div class="field">
+        <label for="selRange">Rango de fecha</label>
+        <select id="selRange" onchange="toggleCustomRange()">
+          <option value="today">Hoy</option>
+          <option value="yesterday">Ayer</option>
+          <option value="last7days">Últimos 7 días</option>
+          <option value="lastweek" selected>Última semana</option>
+          <option value="last30days">Últimos 30 días</option>
+          <option value="lastmonth">Mes pasado</option>
+          <option value="custom">Personalizado</option>
+        </select>
+      </div>
+      <div class="field" id="fieldFrom" hidden>
+        <label for="inputFrom">Desde</label>
+        <input id="inputFrom" type="date" />
+      </div>
+      <div class="field" id="fieldTo" hidden>
+        <label for="inputTo">Hasta</label>
+        <input id="inputTo" type="date" />
+      </div>
+      <div class="field">
+        <label for="inputCampaign">ID de campaña</label>
+        <input id="inputCampaign" type="text" placeholder="Opcional" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label for="inputQ">Búsqueda libre</label>
+        <input id="inputQ" type="text" placeholder="Nombre, teléfono…" />
+      </div>
+      <div class="field">
+        <label for="inputRows">Máx. resultados</label>
+        <input id="inputRows" type="number" value="100" min="1" max="1000" />
+        <span class="field-hint">Límite: 1000.</span>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn btn-primary" id="btnSearch" onclick="doSearch()">
+        <span id="btnSearchLabel">🔍 Buscar grabaciones</span>
+      </button>
+    </div>
+    <div id="searchAlert" hidden></div>
+  </div>
+
+  <!-- Resultados -->
+  <div class="card" id="resultsCard" hidden>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+      <p class="card-title" style="margin:0;">Resultados <span id="resultCount" class="badge">0</span></p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-sm" onclick="selectAll(true)">Seleccionar todas</button>
+        <button class="btn btn-sm" onclick="selectAll(false)">Deseleccionar</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="rec-table">
+        <thead>
+          <tr>
+            <th class="cb-col"><input type="checkbox" id="cbAll" checked title="Sel/Desel todas" onchange="selectAll(this.checked)" /></th>
+            <th>Fecha / Hora</th>
+            <th>Agente</th>
+            <th>Campaña</th>
+            <th>Duración</th>
+            <th>Teléfono (ANI)</th>
+            <th class="st-col">Estado</th>
+          </tr>
+        </thead>
+        <tbody id="recTableBody"></tbody>
+      </table>
+    </div>
+    <div class="actions" style="margin-top:14px;align-items:center;">
+      <button class="btn btn-success" id="btnDownload" onclick="startDownload()" disabled>
+        ↓ <span id="btnDownloadLabel">Descargar seleccionadas (0)</span>
+      </button>
+      <div class="progress-wrap" id="progressWrap" hidden>
+        <div class="progress-label" id="progressText"></div>
+        <div class="progress-bar-bg"><div class="progress-bar" id="progressBar" style="width:0%"></div></div>
+      </div>
+    </div>
+    <div id="downloadAlert" hidden></div>
+  </div>
+
+  <!-- Panel de ejecución -->
+  <div class="card" id="execCard">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+      <p class="card-title" style="margin:0;">Panel de ejecución</p>
+      <button class="exec-toggle" onclick="clearLog()">Limpiar</button>
+    </div>
+    <div style="font-size:.75rem;color:var(--muted);margin-bottom:10px;font-family:ui-monospace,monospace;" id="execUrlInfo"></div>
+    <div class="exec-log" id="execLog">
+      <div class="exec-entry"><span class="exec-time">—</span><span class="exec-msg info">Esperando acción…</span></div>
+    </div>
+  </div>
+</main>
+
+<script>
+  let currentRecordings = [];
+
+  function el(id) { return document.getElementById(id); }
+
+  function ts() {
+    const now = new Date();
+    return now.toTimeString().slice(0, 8) + "." + String(now.getMilliseconds()).padStart(3, "0");
+  }
+
+  function logEntry(msg, type = "info") {
+    const log = el("execLog");
+    if (log.querySelector(".exec-msg")?.textContent === "Esperando acción…") log.innerHTML = "";
+    const row = document.createElement("div");
+    row.className = "exec-entry";
+    row.innerHTML = `<span class="exec-time">${ts()}</span><span class="exec-msg ${type}">${msg}</span>`;
+    log.appendChild(row);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function clearLog() {
+    el("execLog").innerHTML = `<div class="exec-entry"><span class="exec-time">—</span><span class="exec-msg info">Esperando acción…</span></div>`;
+  }
+
+  function showAlert(id, msg, type = "err") {
+    const e = el(id); e.className = `alert alert-${type}`; e.textContent = msg; e.hidden = false;
+  }
+  function hideAlert(id) { el(id).hidden = true; }
+
+  // ── Date range ──────────────────────────────────────────────────────────────
+  function toggleCustomRange() {
+    const isCustom = el("selRange").value === "custom";
+    el("fieldFrom").hidden = !isCustom;
+    el("fieldTo").hidden = !isCustom;
+  }
+
+  function getDateRange() {
+    const type = el("selRange").value;
+    const DAY = 86400000;
+    const d = new Date();
+    const today = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const endOfDay = t => t + DAY - 1;
+
+    if (type === "custom") {
+      const from = el("inputFrom").value ? new Date(el("inputFrom").value).getTime() : undefined;
+      const to = el("inputTo").value ? endOfDay(new Date(el("inputTo").value).getTime()) : undefined;
+      return { rangeFrom: from, rangeTo: to };
+    }
+
+    const map = {
+      today:     { rangeFrom: today,          rangeTo: endOfDay(today) },
+      yesterday: { rangeFrom: today - DAY,    rangeTo: endOfDay(today - DAY) },
+      last7days: { rangeFrom: today - 6*DAY,  rangeTo: endOfDay(today) },
+      lastweek:  { rangeFrom: today - 13*DAY, rangeTo: endOfDay(today - 7*DAY) },
+      last30days:{ rangeFrom: today - 29*DAY, rangeTo: endOfDay(today) },
+      lastmonth: (() => {
+        const first = new Date(d.getFullYear(), d.getMonth() - 1, 1).getTime();
+        const last  = new Date(d.getFullYear(), d.getMonth(), 0).getTime();
+        return { rangeFrom: first, rangeTo: endOfDay(last) };
+      })()
+    };
+    return { rangeType: type, ...(map[type] || map.last7days) };
+  }
+
+  // ── Formatting ──────────────────────────────────────────────────────────────
+  function fmtDate(ts) {
+    if (!ts) return "—";
+    try {
+      const d = new Date(Number(ts));
+      return d.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "2-digit" })
+           + " " + d.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
+    } catch { return String(ts); }
+  }
+
+  function fmtDuration(ms) {
+    if (ms == null) return "—";
+    const secs = Math.round(Number(ms) / 1000);
+    if (isNaN(secs)) return "—";
+    return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+  }
+
+  // ── Record field extractors (handle multiple possible field names) ───────────
+  function recId(r)       { return r._id || r.id || r.recordingId || String(r.startTime || ""); }
+  function recAgent(r)    { return r.agentName || r.agent?.name || r.agentFullName || r.userName || "—"; }
+  function recCampaign(r) { return r.campaignName || r.campaign?.name || "—"; }
+  function recAni(r)      { return r.ani || r.callerNumber || r.callerAni || r.phone || "—"; }
+  function recDuration(r) { return fmtDuration(r.duration ?? r.durationMs ?? r.callDuration ?? null); }
+  function recDate(r)     { return fmtDate(r.startTime ?? r.timestamp ?? r.createdAt ?? null); }
+  function recRawMs(r)    { return r.startTime ?? r.timestamp ?? r.createdAt ?? null; }
+
+  // ── Init ────────────────────────────────────────────────────────────────────
+  window.addEventListener("DOMContentLoaded", () => {
+    const apiBase = new URL("api/recording-downloader/", window.location.href).toString();
+    el("execUrlInfo").textContent = `Página: ${window.location.href}  |  API: ${apiBase}`;
+    // Set default dates for custom range
+    const now = new Date();
+    el("inputTo").value = now.toISOString().slice(0, 10);
+    const weekAgo = new Date(now.getTime() - 7 * 86400000);
+    el("inputFrom").value = weekAgo.toISOString().slice(0, 10);
+  });
+
+  // ── Search ──────────────────────────────────────────────────────────────────
+  async function doSearch() {
+    const domain   = el("inputDomain").value.trim().replace(/^https?:\/\//, "").split("/")[0];
+    const username = el("inputUsername").value.trim();
+    const password = el("inputPassword").value;
+    const rows     = Number(el("inputRows").value) || 100;
+    const campaignId = el("inputCampaign").value.trim();
+    const q          = el("inputQ").value.trim();
+
+    if (!domain || !username || !password) {
+      showAlert("searchAlert", "Dominio, usuario y contraseña son obligatorios.", "err");
+      return;
+    }
+    hideAlert("searchAlert");
+
+    const dateRange = getDateRange();
+    const apiUrl = new URL("api/recording-downloader/search", window.location.href).toString();
+    const bodyObj = { domain, username, password, rows, q, ...dateRange };
+    if (campaignId) bodyObj.campaignId = campaignId;
+
+    el("btnSearch").disabled = true;
+    el("btnSearchLabel").textContent = "Buscando…";
+    el("resultsCard").hidden = true;
+    currentRecordings = [];
+
+    logEntry(`POST ${apiUrl}`, "info");
+    logEntry(`rows=${rows} rangeType=${dateRange.rangeType || "custom"} rangeFrom=${dateRange.rangeFrom} rangeTo=${dateRange.rangeTo}${campaignId ? " campaignId=" + campaignId : ""}`, "info");
+
+    const t0 = Date.now();
+    try {
+      const resp = await fetch(apiUrl, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(bodyObj)
+      });
+      const elapsed = Date.now() - t0;
+      const text = await resp.text();
+      logEntry(`HTTP ${resp.status} en ${elapsed}ms (${text.length} chars)`, resp.ok ? "ok" : "err");
+      if (!resp.ok) logEntry(text.slice(0, 300), "err");
+
+      let data;
+      try { data = JSON.parse(text); } catch { data = {}; }
+      if (!resp.ok || !data.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+
+      currentRecordings = data.recordings || [];
+      logEntry(`${currentRecordings.length} grabaciones recibidas (total API: ${data.total})`, "ok");
+
+      renderTable(currentRecordings);
+      el("resultCount").textContent =
+        currentRecordings.length + (data.total > currentRecordings.length ? ` / ${data.total}` : "");
+      el("resultsCard").hidden = false;
+      el("cbAll").checked = true;
+      el("progressWrap").hidden = true;
+      hideAlert("downloadAlert");
+      updateDownloadBtn();
+
+    } catch (err) {
+      logEntry(`Error: ${err.message}`, "err");
+      showAlert("searchAlert", err.message || "Error desconocido.", "err");
+    } finally {
+      el("btnSearch").disabled = false;
+      el("btnSearchLabel").textContent = "🔍 Buscar grabaciones";
+    }
+  }
+
+  // ── Table ───────────────────────────────────────────────────────────────────
+  function renderTable(recordings) {
+    const tbody = el("recTableBody");
+    tbody.innerHTML = "";
+    recordings.forEach(rec => {
+      const id = recId(rec);
+      const tr = document.createElement("tr");
+      tr.className = "is-selected";
+      tr.dataset.id = id;
+      tr.innerHTML = `
+        <td class="cb-col"><input type="checkbox" class="rec-cb" data-id="${id}" checked /></td>
+        <td>${recDate(rec)}</td>
+        <td>${escHtml(recAgent(rec))}</td>
+        <td>${escHtml(recCampaign(rec))}</td>
+        <td>${recDuration(rec)}</td>
+        <td>${escHtml(recAni(rec))}</td>
+        <td class="st-col" id="st-${id}">—</td>`;
+      tr.querySelector(".rec-cb").addEventListener("change", e => {
+        tr.classList.toggle("is-selected", e.target.checked);
+        updateDownloadBtn();
+      });
+      tbody.appendChild(tr);
+    });
+  }
+
+  function escHtml(s) {
+    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+
+  function selectAll(checked) {
+    document.querySelectorAll(".rec-cb").forEach(cb => {
+      cb.checked = checked;
+      cb.closest("tr").classList.toggle("is-selected", checked);
+    });
+    el("cbAll").checked = checked;
+    updateDownloadBtn();
+  }
+
+  function updateDownloadBtn() {
+    const n = document.querySelectorAll(".rec-cb:checked").length;
+    el("btnDownloadLabel").textContent = `Descargar seleccionadas (${n})`;
+    el("btnDownload").disabled = n === 0;
+  }
+
+  // ── Download ─────────────────────────────────────────────────────────────────
+  async function startDownload() {
+    const cbs = [...document.querySelectorAll(".rec-cb:checked")];
+    if (!cbs.length) return;
+
+    const ids = cbs.map(cb => cb.dataset.id);
+    const domain   = el("inputDomain").value.trim().replace(/^https?:\/\//, "").split("/")[0];
+    const username = el("inputUsername").value.trim();
+    const password = el("inputPassword").value;
+
+    el("btnDownload").disabled = true;
+    hideAlert("downloadAlert");
+    el("progressWrap").hidden = false;
+    updateProgress(0, ids.length);
+
+    // Step 1 — get signed download URLs
+    const urlsEndpoint = new URL("api/recording-downloader/download-urls", window.location.href).toString();
+    logEntry(`Obteniendo URLs de descarga para ${ids.length} grabaciones…`, "info");
+
+    let details;
+    try {
+      const resp = await fetch(urlsEndpoint, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domain, username, password, ids })
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+      details = data.details;
+      const withUrl = details.filter(d => d.ok && d.downloadUrl).length;
+      const noUrl   = details.length - withUrl;
+      logEntry(`URLs obtenidas: ${withUrl} con URL${noUrl ? ", " + noUrl + " sin URL" : ""}`, "ok");
+    } catch (err) {
+      logEntry(`Error obteniendo URLs: ${err.message}`, "err");
+      showAlert("downloadAlert", "Error al obtener URLs de descarga: " + err.message, "err");
+      el("btnDownload").disabled = false;
+      return;
+    }
+
+    // Step 2 — download each file
+    let done = 0;
+    for (const { id, ok, downloadUrl, error } of details) {
+      const stEl = el("st-" + id);
+      const trEl = stEl?.closest("tr");
+
+      if (!ok || !downloadUrl) {
+        if (stEl) stEl.innerHTML = `<span style="color:var(--err)">✗ Sin URL</span>`;
+        if (trEl) trEl.className = "dl-error";
+        logEntry(`${id}: sin URL — ${error || "campo no encontrado en el detalle"}`, "warn");
+        done++;
+        updateProgress(done, details.length);
+        continue;
+      }
+
+      if (stEl) stEl.innerHTML = `<span class="spinner"></span>`;
+      if (trEl) trEl.className = "downloading";
+
+      const rec = currentRecordings.find(r => recId(r) === id) || {};
+      const filename = buildFilename(rec, id, downloadUrl);
+      logEntry(`↓ ${filename}`, "info");
+
+      try {
+        await downloadFile(downloadUrl, filename);
+        if (stEl) stEl.innerHTML = `<span style="color:var(--ok)">✓</span>`;
+        if (trEl) trEl.className = "dl-done";
+        logEntry(`✓ ${filename}`, "ok");
+      } catch (e) {
+        if (stEl) stEl.innerHTML = `<span style="color:var(--err)">✗</span>`;
+        if (trEl) trEl.className = "dl-error";
+        logEntry(`✗ ${filename}: ${e.message}`, "err");
+      }
+
+      done++;
+      updateProgress(done, details.length);
+      await new Promise(r => setTimeout(r, 300));
+    }
+
+    const ok = details.filter(d => d.ok && d.downloadUrl).length;
+    logEntry(`Completado: ${ok} descargadas, ${details.length - ok} sin URL.`, "ok");
+    el("btnDownload").disabled = false;
+  }
+
+  function updateProgress(done, total) {
+    el("progressText").textContent = `${done} / ${total} procesadas`;
+    el("progressBar").style.width = `${total ? Math.round(done / total * 100) : 0}%`;
+  }
+
+  function buildFilename(rec, id, downloadUrl) {
+    const ms = recRawMs(rec) || Number(id);
+    const d = new Date(Number(ms));
+    const datePart = isNaN(d.getTime()) ? String(id).slice(-8) :
+      `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}${String(d.getDate()).padStart(2,"0")}` +
+      `_${String(d.getHours()).padStart(2,"0")}${String(d.getMinutes()).padStart(2,"0")}`;
+    const agent = recAgent(rec) !== "—" ? recAgent(rec).replace(/[^a-z0-9]/gi, "_").replace(/_+/g,"_").slice(0, 20) : "";
+    const ext = downloadUrl?.match(/\.(wav|mp3|ogg|m4a|flac)(\?|$)/i)?.[1] || "wav";
+    return [datePart, agent, id].filter(Boolean).join("_").replace(/_+/g,"_") + "." + ext;
+  }
+
+  async function downloadFile(url, filename) {
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const blob = await resp.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl; a.download = filename;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+    } catch {
+      // CORS fallback: abrir en nueva pestaña
+      logEntry(`CORS: abriendo ${filename} en nueva pestaña`, "warn");
+      window.open(url, "_blank");
+    }
+  }
+
+  el("inputPassword").addEventListener("keydown", e => { if (e.key === "Enter") doSearch(); });
+</script>
+</body>
+</html>

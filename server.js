@@ -1387,6 +1387,11 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (url.pathname.startsWith("/api/recording-downloader/")) {
+    await handleRecordingDownloader(req, res, url);
+    return;
+  }
+
   if (req.method !== "GET" && req.method !== "HEAD") {
     sendJson(res, 405, { error: "Method not allowed" });
     return;
@@ -13510,6 +13515,104 @@ async function handleTenantExplorer(req, res, url) {
     }
 
     sendJson(res, 200, { ok: true, snapshot, errors: Object.keys(errors).length ? errors : undefined });
+  } catch (error) {
+    sendJson(res, error.status || 500, { error: error.message, details: error.details });
+  }
+}
+
+function findGcsUrl(obj, depth) {
+  if (depth === undefined) depth = 0;
+  if (depth > 5) return null;
+  if (typeof obj === "string") return obj.startsWith("https://storage.googleapis.com/") ? obj : null;
+  if (Array.isArray(obj)) {
+    for (const item of obj) { const f = findGcsUrl(item, depth + 1); if (f) return f; }
+  } else if (obj !== null && typeof obj === "object") {
+    for (const val of Object.values(obj)) { const f = findGcsUrl(val, depth + 1); if (f) return f; }
+  }
+  return null;
+}
+
+async function handleRecordingDownloader(req, res, url) {
+  if (req.method !== "POST") { sendJson(res, 405, { error: "Method not allowed." }); return; }
+
+  let body;
+  try { body = await readJson(req); } catch { sendJson(res, 400, { error: "Invalid JSON." }); return; }
+
+  const usernameStr = String(body.username || "").trim();
+  const passwordStr = String(body.password || "");
+  const rawDomain = String(body.domain || "").trim().replace(/^https?:\/\//, "").replace(/\/$/, "");
+  const domainHint = sanitizeDomain(rawDomain.split("/")[0]);
+
+  if (!usernameStr || !passwordStr) { sendJson(res, 400, { error: "Usuario y contraseña son obligatorios." }); return; }
+  if (!domainHint) { sendJson(res, 400, { error: "Dominio obligatorio." }); return; }
+
+  try {
+    const basic = Buffer.from(`${usernameStr}:${passwordStr}`, "utf8").toString("base64");
+    const tokenResponse = await fetch(`https://${domainHint}/provider/token-with-authorities`, {
+      method: "GET", headers: { "Content-Type": "application/json", Authorization: `Basic ${basic}` }
+    });
+    const tokenText = await tokenResponse.text();
+    let tokenData;
+    try { tokenData = tokenText ? JSON.parse(tokenText) : {}; } catch { tokenData = tokenText; }
+    if (!tokenResponse.ok) { sendJson(res, tokenResponse.status, { error: "Login failed.", details: tokenData }); return; }
+
+    const providerToken = extractNccToken(tokenData);
+    if (!providerToken) { sendJson(res, 502, { error: "No se obtuvo token del proveedor." }); return; }
+
+    const detectedDomain = extractNccDomain(tokenData, providerToken) || domainHint;
+    const config = {
+      token: providerToken, domain: detectedDomain,
+      baseUrl: buildNccBuilderBaseUrl(detectedDomain),
+      headers: { "Content-Type": "application/json" }
+    };
+
+    const loginResponse = await nccBuilderFetch(config, "/login", "POST", { deviceInfo: "web" }, "/users/api");
+    if (loginResponse.ok) {
+      const sessionToken = extractNccToken(loginResponse.data) || providerToken;
+      const resolvedDomain = extractNccDomain(loginResponse.data, sessionToken) || detectedDomain;
+      config.token = sessionToken; config.domain = resolvedDomain; config.baseUrl = buildNccBuilderBaseUrl(resolvedDomain);
+    }
+
+    const subpath = url.pathname.replace(/^\/api\/recording-downloader/, "");
+
+    if (subpath === "/search") {
+      const rows = Math.min(Math.max(Number(body.rows) || 100, 1), 1000);
+      const start = Math.max(Number(body.start) || 0, 0);
+      const q = String(body.q || "");
+      let path = `/recording?rows=${rows}&start=${start}&q=${encodeURIComponent(q)}`;
+      if (body.rangeType) path += `&rangeType=${encodeURIComponent(body.rangeType)}`;
+      if (body.rangeFrom) path += `&rangeFrom=${Number(body.rangeFrom)}`;
+      if (body.rangeTo) path += `&rangeTo=${Number(body.rangeTo)}`;
+      if (body.campaignId) path += `&campaignId=${encodeURIComponent(body.campaignId)}`;
+
+      const r = await nccBuilderFetch(config, path, "GET", null, "/analytics/api/v1/types");
+      if (!r.ok) { sendJson(res, r.status || 502, { error: `Error ${r.status} al buscar grabaciones.`, details: r.data }); return; }
+
+      const recordings = r.data?.rows || r.data?.recordings || nccObjectList(r.data);
+      const total = r.data?.total ?? r.data?.count ?? recordings.length;
+      sendJson(res, 200, { ok: true, total, recordings });
+
+    } else if (subpath === "/download-urls") {
+      const ids = Array.isArray(body.ids) ? body.ids.slice(0, 200) : [];
+      if (!ids.length) { sendJson(res, 400, { error: "No se proporcionaron IDs." }); return; }
+
+      const details = await Promise.all(ids.map(async id => {
+        try {
+          const r = await nccBuilderFetch(config, `/recording/${id}`, "GET", null, "/analytics/api/types");
+          if (!r.ok) return { id, ok: false, error: `HTTP ${r.status}` };
+          const downloadUrl = findGcsUrl(r.data);
+          return { id, ok: true, downloadUrl, data: r.data };
+        } catch (e) {
+          return { id, ok: false, error: e.message };
+        }
+      }));
+
+      sendJson(res, 200, { ok: true, details });
+
+    } else {
+      sendJson(res, 404, { error: "Endpoint no encontrado." });
+    }
+
   } catch (error) {
     sendJson(res, error.status || 500, { error: error.message, details: error.details });
   }
