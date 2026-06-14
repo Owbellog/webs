@@ -142,6 +142,8 @@
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn btn-sm" onclick="selectAll(true)">Seleccionar todas</button>
         <button class="btn btn-sm" onclick="selectAll(false)">Deseleccionar</button>
+        <button class="btn btn-sm" id="btnOnlyNew" onclick="selectOnlyNew()">Solo nuevas</button>
+        <button class="btn btn-sm" style="color:var(--err)" onclick="clearHistory(currentDomain)">Limpiar historial</button>
       </div>
     </div>
     <div class="table-wrap">
@@ -187,8 +189,30 @@
 
 <script>
   let currentRecordings = [];
+  let currentDomain = "";
 
   function el(id) { return document.getElementById(id); }
+
+  // ── Download history (localStorage per domain) ───────────────────────────────
+  function dlKey(domain) { return `rdl_${domain.replace(/[^a-z0-9]/gi, "_")}`; }
+
+  function getDownloaded(domain) {
+    try { return new Set(JSON.parse(localStorage.getItem(dlKey(domain)) || "[]")); }
+    catch { return new Set(); }
+  }
+
+  function markDownloaded(domain, ids) {
+    const s = getDownloaded(domain);
+    ids.forEach(id => s.add(id));
+    localStorage.setItem(dlKey(domain), JSON.stringify([...s]));
+  }
+
+  function clearHistory(domain) {
+    localStorage.removeItem(dlKey(domain));
+    renderTable(currentRecordings);
+    updateDownloadBtn();
+    logEntry(`Historial de ${domain} borrado.`, "warn");
+  }
 
   function ts() {
     const now = new Date();
@@ -309,8 +333,9 @@
     el("resultsCard").hidden = true;
     currentRecordings = [];
 
+    currentDomain = domain;
     logEntry(`POST ${apiUrl}`, "info");
-    logEntry(`rows=${rows} rangeType=${dateRange.rangeType || "custom"} rangeFrom=${dateRange.rangeFrom} rangeTo=${dateRange.rangeTo}${campaignId ? " campaignId=" + campaignId : ""}`, "info");
+    logEntry(`rangeType=${dateRange.rangeType || "daterange"} rangeFrom=${dateRange.rangeFrom} rangeTo=${dateRange.rangeTo}${campaignId ? " campaignId=" + campaignId : ""}`, "info");
 
     const t0 = Date.now();
     try {
@@ -331,10 +356,10 @@
       logEntry(`${currentRecordings.length} grabaciones recibidas (total API: ${data.total})`, "ok");
 
       renderTable(currentRecordings);
-      el("resultCount").textContent =
-        currentRecordings.length + (data.total > currentRecordings.length ? ` / ${data.total}` : "");
+      const dl = getDownloaded(domain);
+      const newCount = currentRecordings.filter(r => !dl.has(recId(r))).length;
+      el("resultCount").textContent = `${currentRecordings.length} (${newCount} nuevas)`;
       el("resultsCard").hidden = false;
-      el("cbAll").checked = true;
       el("progressWrap").hidden = true;
       hideAlert("downloadAlert");
       updateDownloadBtn();
@@ -352,25 +377,28 @@
   function renderTable(recordings) {
     const tbody = el("recTableBody");
     tbody.innerHTML = "";
+    const dl = getDownloaded(currentDomain);
     recordings.forEach(rec => {
       const id = recId(rec);
+      const done = dl.has(id);
       const tr = document.createElement("tr");
-      tr.className = "is-selected";
+      tr.className = done ? "dl-done" : "is-selected";
       tr.dataset.id = id;
       tr.innerHTML = `
-        <td class="cb-col"><input type="checkbox" class="rec-cb" data-id="${id}" checked /></td>
+        <td class="cb-col"><input type="checkbox" class="rec-cb" data-id="${id}" ${done ? "" : "checked"} /></td>
         <td>${recDate(rec)}</td>
         <td>${escHtml(recTo(rec))}</td>
         <td>${escHtml(recFrom(rec))}</td>
         <td>${recDuration(rec)}</td>
         <td style="font-size:.72rem;font-family:ui-monospace,monospace;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(recFile(rec))}">${escHtml(recFile(rec))}</td>
-        <td class="st-col" id="st-${id}">—</td>`;
+        <td class="st-col" id="st-${id}">${done ? '<span style="color:var(--ok)">✓</span>' : "—"}</td>`;
       tr.querySelector(".rec-cb").addEventListener("change", e => {
         tr.classList.toggle("is-selected", e.target.checked);
         updateDownloadBtn();
       });
       tbody.appendChild(tr);
     });
+    el("cbAll").checked = recordings.some(r => !dl.has(recId(r)));
   }
 
   function escHtml(s) {
@@ -383,6 +411,17 @@
       cb.closest("tr").classList.toggle("is-selected", checked);
     });
     el("cbAll").checked = checked;
+    updateDownloadBtn();
+  }
+
+  function selectOnlyNew() {
+    const dl = getDownloaded(currentDomain);
+    document.querySelectorAll(".rec-cb").forEach(cb => {
+      const isNew = !dl.has(cb.dataset.id);
+      cb.checked = isNew;
+      cb.closest("tr").classList.toggle("is-selected", isNew);
+    });
+    el("cbAll").checked = false;
     updateDownloadBtn();
   }
 
@@ -454,6 +493,7 @@
 
       try {
         await downloadFile(downloadUrl, filename);
+        markDownloaded(currentDomain, [id]);
         if (stEl) stEl.innerHTML = `<span style="color:var(--ok)">✓</span>`;
         if (trEl) trEl.className = "dl-done";
         logEntry(`✓ ${filename}`, "ok");
