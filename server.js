@@ -13576,7 +13576,7 @@ async function handleRecordingDownloader(req, res, url) {
     const subpath = url.pathname.replace(/^\/api\/recording-downloader/, "");
 
     if (subpath === "/search") {
-      const maxRows = Math.max(Number(body.rows) || 100, 1);
+      const maxRows = Infinity;
       const q = String(body.q || "");
       const PAGE = 100;
 

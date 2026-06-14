@@ -126,11 +126,6 @@
         <label for="inputQ">Búsqueda libre</label>
         <input id="inputQ" type="text" placeholder="Nombre, teléfono…" />
       </div>
-      <div class="field">
-        <label for="inputRows">Máx. resultados</label>
-        <input id="inputRows" type="number" value="500" min="1" />
-        <span class="field-hint">Sin límite — pagina automáticamente.</span>
-      </div>
     </div>
     <div class="actions">
       <button class="btn btn-primary" id="btnSearch" onclick="doSearch()">
@@ -295,7 +290,6 @@
     const domain   = el("inputDomain").value.trim().replace(/^https?:\/\//, "").split("/")[0];
     const username = el("inputUsername").value.trim();
     const password = el("inputPassword").value;
-    const rows     = Number(el("inputRows").value) || 100;
     const campaignId = el("inputCampaign").value.trim();
     const q          = el("inputQ").value.trim();
 
@@ -307,7 +301,7 @@
 
     const dateRange = getDateRange();
     const apiUrl = new URL("api/recording-downloader/search", window.location.href).toString();
-    const bodyObj = { domain, username, password, rows, q, ...dateRange };
+    const bodyObj = { domain, username, password, q, ...dateRange };
     if (campaignId) bodyObj.campaignId = campaignId;
 
     el("btnSearch").disabled = true;
