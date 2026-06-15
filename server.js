@@ -13532,19 +13532,144 @@ function findGcsUrl(obj, depth) {
   return null;
 }
 
+function recordingListFromResponse(data) {
+  return data?.objects
+    || data?.rows
+    || data?.recordings
+    || data?.items
+    || data?.results
+    || data?.data
+    || (Array.isArray(data) ? data : []);
+}
+
+function recordingTotalFromResponse(data) {
+  const candidates = [
+    data?.total,
+    data?.totalCount,
+    data?.count,
+    data?.recordsTotal,
+    data?.pagination?.total,
+    data?.page?.totalElements
+  ];
+  for (const value of candidates) {
+    const n = Number(value);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return null;
+}
+
+let recordingDownloaderCryptoKeyPromise = null;
+let recordingDownloaderMemoryKeyPair = null;
+
+async function getRecordingDownloaderCryptoKeyPair() {
+  if (recordingDownloaderCryptoKeyPromise) return recordingDownloaderCryptoKeyPromise;
+  recordingDownloaderCryptoKeyPromise = (async () => {
+    if (firestore) {
+      const ref = firestore.collection(ADMIN_META_COLLECTION).doc("recording_downloader_crypto");
+      const doc = await ref.get();
+      if (doc.exists) {
+        const data = doc.data() || {};
+        if (data.publicKey && data.privateKey) {
+          return {
+            publicKey: String(data.publicKey),
+            privateKey: decryptSecret(String(data.privateKey))
+          };
+        }
+      }
+      const pair = crypto.generateKeyPairSync("rsa", {
+        modulusLength: 2048,
+        publicKeyEncoding: { type: "spki", format: "pem" },
+        privateKeyEncoding: { type: "pkcs8", format: "pem" }
+      });
+      await ref.set({
+        publicKey: pair.publicKey,
+        privateKey: encryptSecret(pair.privateKey),
+        createdAt: Date.now()
+      }, { merge: true });
+      return pair;
+    }
+
+    if (!recordingDownloaderMemoryKeyPair) {
+      recordingDownloaderMemoryKeyPair = crypto.generateKeyPairSync("rsa", {
+        modulusLength: 2048,
+        publicKeyEncoding: { type: "spki", format: "pem" },
+        privateKeyEncoding: { type: "pkcs8", format: "pem" }
+      });
+    }
+    return recordingDownloaderMemoryKeyPair;
+  })();
+  return recordingDownloaderCryptoKeyPromise;
+}
+
+async function decryptRecordingDownloaderPassword(body) {
+  const encryptedPassword = String(body.encryptedPassword || "").trim();
+  if (!encryptedPassword) return String(body.password || "");
+  const { privateKey } = await getRecordingDownloaderCryptoKeyPair();
+  const plaintext = crypto.privateDecrypt(
+    {
+      key: privateKey,
+      padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+      oaepHash: "sha256"
+    },
+    Buffer.from(encryptedPassword, "base64")
+  );
+  return plaintext.toString("utf8");
+}
+
+function isValidRecordingDownloaderDomain(domain) {
+  const text = String(domain || "").trim().toLowerCase();
+  return /^[a-z0-9.-]+$/.test(text)
+    && text.endsWith(".thrio.io")
+    && !text.includes("..")
+    && text.length <= 253;
+}
+
+async function mapWithConcurrency(items, limit, mapper) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      results[index] = await mapper(items[index], index);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 async function handleRecordingDownloader(req, res, url) {
+  const subpath = url.pathname.replace(/^\/api\/recording-downloader/, "");
+  if (req.method === "GET" && subpath === "/crypto-key") {
+    try {
+      const { publicKey } = await getRecordingDownloaderCryptoKeyPair();
+      sendJson(res, 200, { ok: true, publicKey, algorithm: "RSA-OAEP-256" });
+    } catch (error) {
+      sendJson(res, 500, { error: "Unable to prepare recording downloader encryption." });
+    }
+    return;
+  }
   if (req.method !== "POST") { sendJson(res, 405, { error: "Method not allowed." }); return; }
 
   let body;
   try { body = await readJson(req); } catch { sendJson(res, 400, { error: "Invalid JSON." }); return; }
 
   const usernameStr = String(body.username || "").trim();
-  const passwordStr = String(body.password || "");
+  let passwordStr = "";
+  try {
+    passwordStr = await decryptRecordingDownloaderPassword(body);
+  } catch {
+    sendJson(res, 400, { error: "No se pudo descifrar la contraseña." });
+    return;
+  }
   const rawDomain = String(body.domain || "").trim().replace(/^https?:\/\//, "").replace(/\/$/, "");
   const domainHint = sanitizeDomain(rawDomain.split("/")[0]);
 
   if (!usernameStr || !passwordStr) { sendJson(res, 400, { error: "Usuario y contraseña son obligatorios." }); return; }
   if (!domainHint) { sendJson(res, 400, { error: "Dominio obligatorio." }); return; }
+  if (!isValidRecordingDownloaderDomain(domainHint)) {
+    sendJson(res, 400, { error: "Dominio inválido. Usa un tenant *.thrio.io." });
+    return;
+  }
 
   try {
     const basic = Buffer.from(`${usernameStr}:${passwordStr}`, "utf8").toString("base64");
@@ -13573,64 +13698,178 @@ async function handleRecordingDownloader(req, res, url) {
       config.token = sessionToken; config.domain = resolvedDomain; config.baseUrl = buildNccBuilderBaseUrl(resolvedDomain);
     }
 
-    const subpath = url.pathname.replace(/^\/api\/recording-downloader/, "");
-
     if (subpath === "/search") {
-      const maxRows = Infinity;
+      const maxRows = Math.min(Math.max(Number(body.maxRows) || 50000, 1), 50000);
       const q = String(body.q || "");
       const PAGE = 100;
+      const rangeFromNum = Number(body.rangeFrom);
+      const rangeToNum = Number(body.rangeTo);
+      const hasDateWindow = Number.isFinite(rangeFromNum) && Number.isFinite(rangeToNum) && rangeToNum >= rangeFromNum;
+      const MIN_WINDOW_MS = 60 * 1000;
+      const MAX_WINDOW_QUERIES = 1200;
+      let queryCount = 0;
+      let saturatedWindows = 0;
+      let truncated = false;
 
-      const buildPath = (start) => {
-        let p = `/recording?rows=${PAGE}&start=${start}&q=${encodeURIComponent(q)}`;
-        if (body.rangeType) p += `&rangeType=${encodeURIComponent(body.rangeType)}`;
-        if (body.rangeFrom) p += `&rangeFrom=${Number(body.rangeFrom)}`;
-        if (body.rangeTo)   p += `&rangeTo=${Number(body.rangeTo)}`;
-        if (body.campaignId) p += `&campaignId=${encodeURIComponent(body.campaignId)}`;
-        return p;
+      const buildPath = (start, pageIndex, fromMs, toMs) => {
+        const params = new URLSearchParams();
+        params.set("q", q);
+        // Different NCC/Thrio endpoints use different pagination names; harmless
+        // unknown params are ignored by the upstream API.
+        params.set("rows", String(PAGE));
+        params.set("pageSize", String(PAGE));
+        params.set("limit", String(PAGE));
+        params.set("size", String(PAGE));
+        params.set("start", String(start));
+        params.set("offset", String(start));
+        params.set("skip", String(start));
+        params.set("page", String(pageIndex));
+        if (Number.isFinite(fromMs) && Number.isFinite(toMs)) {
+          params.set("rangeType", "daterange");
+          params.set("rangeFrom", String(fromMs));
+          params.set("rangeTo", String(toMs));
+        } else if (body.rangeType) {
+          params.set("rangeType", String(body.rangeType));
+        }
+        if (body.campaignId) params.set("campaignId", String(body.campaignId));
+        return `/recording?${params.toString()}`;
       };
 
       const allRecordings = [];
       const seenIds = new Set();
-      let offset = 0;
-      let pages = 0;
-      const MAX_PAGES = 500; // 500 × 100 = 50 000 grabaciones máx
-      while (pages < MAX_PAGES) {
-        pages++;
-        const r = await nccBuilderFetch(config, buildPath(offset), "GET", null, "/analytics/api/v1/types");
-        if (!r.ok) { sendJson(res, r.status || 502, { error: `Error ${r.status} al buscar grabaciones.`, details: r.data }); return; }
-        const page = r.data?.objects || r.data?.rows || r.data?.recordings || r.data?.items || r.data?.results || (Array.isArray(r.data) ? r.data : []);
-        if (!page.length) break;
-        let newCount = 0;
-        for (const item of page) {
-          const id = item._id || item.id || item.recordingId || item.callId;
-          if (id && seenIds.has(id)) continue;
-          if (id) seenIds.add(id);
+      const recIdOf = (item) => item?._id || item?.id || item?.recordingId || item?.callId || "";
+      const recTimeOf = (item) => Number(item?.createdAt ?? item?.startTime ?? item?.timestamp ?? 0) || 0;
+
+      const addRecordings = (items) => {
+        for (const item of items) {
+          const id = recIdOf(item);
+          const key = id || `${recTimeOf(item)}:${JSON.stringify(item).slice(0, 80)}`;
+          if (seenIds.has(key)) continue;
+          seenIds.add(key);
           allRecordings.push(item);
-          newCount++;
+          if (allRecordings.length >= maxRows) {
+            truncated = true;
+            break;
+          }
         }
-        // Stop: no new unique records (API repeating) or partial page (reached end)
-        if (newCount === 0 || page.length < PAGE) break;
-        offset += page.length;
+      };
+
+      const fetchWindow = async (fromMs, toMs) => {
+        const items = [];
+        const localSeen = new Set();
+        let offset = 0;
+        let pages = 0;
+        let expectedTotal = null;
+        let repeatedPage = false;
+        let firstPageLength = 0;
+        const maxPages = Math.ceil(maxRows / PAGE);
+
+        while (pages < maxPages && !truncated) {
+          if (queryCount >= MAX_WINDOW_QUERIES) {
+            truncated = true;
+            break;
+          }
+          queryCount++;
+          const r = await nccBuilderFetch(config, buildPath(offset, pages, fromMs, toMs), "GET", null, "/analytics/api/v1/types");
+          if (!r.ok) {
+            const error = new Error(`Error ${r.status} al buscar grabaciones.`);
+            error.status = r.status || 502;
+            error.details = r.data;
+            throw error;
+          }
+          if (expectedTotal === null) expectedTotal = recordingTotalFromResponse(r.data);
+          const page = recordingListFromResponse(r.data);
+          if (pages === 0) firstPageLength = page.length;
+          if (!page.length) break;
+
+          let newCount = 0;
+          for (const item of page) {
+            const id = recIdOf(item);
+            const key = id || `${recTimeOf(item)}:${JSON.stringify(item).slice(0, 80)}`;
+            if (localSeen.has(key)) continue;
+            localSeen.add(key);
+            items.push(item);
+            newCount++;
+            if (items.length >= maxRows) break;
+          }
+
+          pages++;
+          if (newCount === 0) {
+            repeatedPage = true;
+            break;
+          }
+          if (expectedTotal !== null && items.length >= expectedTotal && !(expectedTotal <= PAGE && page.length >= PAGE)) break;
+          if (page.length < PAGE) break;
+          offset += page.length;
+        }
+
+        return {
+          items,
+          expectedTotal,
+          saturated: firstPageLength >= PAGE && (
+            repeatedPage ||
+            (expectedTotal !== null && expectedTotal <= PAGE) ||
+            (expectedTotal !== null && items.length < expectedTotal) ||
+            (expectedTotal === null && items.length <= PAGE)
+          )
+        };
+      };
+
+      const collectWindow = async (fromMs, toMs) => {
+        const result = await fetchWindow(fromMs, toMs);
+        const canSplit = Number.isFinite(fromMs)
+          && Number.isFinite(toMs)
+          && toMs > fromMs
+          && toMs - fromMs > MIN_WINDOW_MS
+          && allRecordings.length < maxRows
+          && !truncated;
+
+        if (result.saturated && canSplit) {
+          saturatedWindows++;
+          const mid = Math.floor((fromMs + toMs) / 2);
+          await collectWindow(fromMs, mid);
+          await collectWindow(mid + 1, toMs);
+          return;
+        }
+
+        addRecordings(result.items);
+      };
+
+      if (hasDateWindow) {
+        await collectWindow(rangeFromNum, rangeToNum);
+      } else {
+        const result = await fetchWindow(undefined, undefined);
+        addRecordings(result.items);
       }
 
-      sendJson(res, 200, { ok: true, total: allRecordings.length, recordings: allRecordings.slice(0, maxRows) });
+      allRecordings.sort((a, b) => recTimeOf(b) - recTimeOf(a));
+
+      sendJson(res, 200, {
+        ok: true,
+        total: allRecordings.length,
+        returned: allRecordings.length,
+        queryCount,
+        saturatedWindows,
+        truncated,
+        recordings: allRecordings
+      });
 
     } else if (subpath === "/download-urls") {
-      const ids = Array.isArray(body.ids) ? body.ids.slice(0, 200) : [];
+      const ids = Array.isArray(body.ids)
+        ? body.ids.map((id) => String(id || "").trim()).filter(Boolean).slice(0, 200)
+        : [];
       if (!ids.length) { sendJson(res, 400, { error: "No se proporcionaron IDs." }); return; }
 
-      const details = await Promise.all(ids.map(async id => {
+      const details = await mapWithConcurrency(ids, 8, async id => {
         try {
-          const r = await nccBuilderFetch(config, `/recording/${id}`, "GET", null, "/analytics/api/types");
+          const r = await nccBuilderFetch(config, `/recording/${encodeURIComponent(id)}`, "GET", null, "/analytics/api/types");
           if (!r.ok) return { id, ok: false, error: `HTTP ${r.status}` };
           const downloadUrl = findGcsUrl(r.data);
-          const _detailKeys = r.data && typeof r.data === "object" ? Object.keys(r.data) : [];
-          const _detailSample = JSON.stringify(r.data)?.slice(0, 600);
-          return { id, ok: true, downloadUrl, data: r.data, _detailKeys, _detailSample };
+          return { id, ok: true, downloadUrl };
         } catch (e) {
           return { id, ok: false, error: e.message };
         }
-      }));
+      });
 
       sendJson(res, 200, { ok: true, details });
 

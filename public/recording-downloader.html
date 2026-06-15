@@ -166,6 +166,7 @@
       <button class="btn btn-success" id="btnDownload" onclick="startDownload()" disabled>
         ↓ <span id="btnDownloadLabel">Descargar seleccionadas (0)</span>
       </button>
+      <span class="field-hint" id="historySummary"></span>
       <div class="progress-wrap" id="progressWrap" hidden>
         <div class="progress-label" id="progressText"></div>
         <div class="progress-bar-bg"><div class="progress-bar" id="progressBar" style="width:0%"></div></div>
@@ -190,27 +191,87 @@
 <script>
   let currentRecordings = [];
   let currentDomain = "";
+  let recordingCryptoKeyPromise = null;
 
   function el(id) { return document.getElementById(id); }
+
+  async function getRecordingCryptoKey() {
+    if (recordingCryptoKeyPromise) return recordingCryptoKeyPromise;
+    recordingCryptoKeyPromise = (async () => {
+      const keyUrl = new URL("api/recording-downloader/crypto-key", window.location.href).toString();
+      const resp = await fetch(keyUrl);
+      const data = await resp.json();
+      if (!resp.ok || !data.ok || !data.publicKey) throw new Error("No se pudo obtener la clave de cifrado.");
+      const pemBody = data.publicKey
+        .replace(/-----BEGIN PUBLIC KEY-----/g, "")
+        .replace(/-----END PUBLIC KEY-----/g, "")
+        .replace(/\s+/g, "");
+      const binary = atob(pemBody);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return crypto.subtle.importKey(
+        "spki",
+        bytes.buffer,
+        { name: "RSA-OAEP", hash: "SHA-256" },
+        false,
+        ["encrypt"]
+      );
+    })();
+    return recordingCryptoKeyPromise;
+  }
+
+  async function encryptPasswordForServer(password) {
+    const key = await getRecordingCryptoKey();
+    const encrypted = await crypto.subtle.encrypt(
+      { name: "RSA-OAEP" },
+      key,
+      new TextEncoder().encode(password)
+    );
+    const bytes = new Uint8Array(encrypted);
+    let binary = "";
+    bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+    return btoa(binary);
+  }
 
   // ── Download history (localStorage per domain) ───────────────────────────────
   function dlKey(domain) { return `rdl_${domain.replace(/[^a-z0-9]/gi, "_")}`; }
 
-  function getDownloaded(domain) {
-    try { return new Set(JSON.parse(localStorage.getItem(dlKey(domain)) || "[]")); }
-    catch { return new Set(); }
+  function getDownloadedMap(domain) {
+    try {
+      const raw = JSON.parse(localStorage.getItem(dlKey(domain)) || "{}");
+      if (Array.isArray(raw)) {
+        return new Map(raw.map(id => [String(id), { downloadedAt: null }]));
+      }
+      const items = raw && typeof raw === "object" && raw.items && typeof raw.items === "object" ? raw.items : {};
+      return new Map(Object.entries(items).map(([id, meta]) => [String(id), meta || {}]));
+    } catch {
+      return new Map();
+    }
   }
 
-  function markDownloaded(domain, ids) {
-    const s = getDownloaded(domain);
-    ids.forEach(id => s.add(id));
-    localStorage.setItem(dlKey(domain), JSON.stringify([...s]));
+  function getDownloaded(domain) {
+    return new Set(getDownloadedMap(domain).keys());
+  }
+
+  function markDownloaded(domain, entries) {
+    const items = Object.fromEntries(getDownloadedMap(domain));
+    entries.forEach(entry => {
+      const id = String(entry.id || entry);
+      if (!id) return;
+      items[id] = {
+        downloadedAt: new Date().toISOString(),
+        filename: entry.filename || items[id]?.filename || "",
+        recordingDate: entry.recordingDate || items[id]?.recordingDate || ""
+      };
+    });
+    localStorage.setItem(dlKey(domain), JSON.stringify({ version: 2, items }));
   }
 
   function clearHistory(domain) {
     localStorage.removeItem(dlKey(domain));
     renderTable(currentRecordings);
     updateDownloadBtn();
+    updateHistorySummary();
     logEntry(`Historial de ${domain} borrado.`, "warn");
   }
 
@@ -224,7 +285,13 @@
     if (log.querySelector(".exec-msg")?.textContent === "Esperando acción…") log.innerHTML = "";
     const row = document.createElement("div");
     row.className = "exec-entry";
-    row.innerHTML = `<span class="exec-time">${ts()}</span><span class="exec-msg ${type}">${msg}</span>`;
+    const time = document.createElement("span");
+    time.className = "exec-time";
+    time.textContent = ts();
+    const message = document.createElement("span");
+    message.className = `exec-msg ${type}`;
+    message.textContent = msg;
+    row.append(time, message);
     log.appendChild(row);
     log.scrollTop = log.scrollHeight;
   }
@@ -295,8 +362,22 @@
   function recDuration(r) { return fmtSecs(r.duration ?? r.callDuration ?? null); }  // API returns seconds
   function recTo(r)       { return r.toAddress || r.to || r.ani || "—"; }
   function recFrom(r)     { return r.fromAddress || r.from || "—"; }
-  function recFile(r)     { return r.filename || r.callId + ".wav" || "—"; }
+  function recFile(r)     { return r.filename || (r.callId ? r.callId + ".wav" : "—"); }
   function recRawMs(r)    { return r.createdAt ?? r.startTime ?? r.timestamp ?? null; }
+
+  function statusId(id) {
+    let hash = 0;
+    const text = String(id || "");
+    for (let i = 0; i < text.length; i++) hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+    return `st_${Math.abs(hash)}_${text.replace(/[^a-z0-9_-]/gi, "_").slice(0, 48)}`;
+  }
+
+  function setStatus(id, text, type) {
+    const stEl = el(statusId(id));
+    if (!stEl) return;
+    stEl.textContent = text;
+    stEl.style.color = type === "ok" ? "var(--ok)" : type === "err" ? "var(--err)" : "";
+  }
 
   // ── Init ────────────────────────────────────────────────────────────────────
   window.addEventListener("DOMContentLoaded", () => {
@@ -325,8 +406,6 @@
 
     const dateRange = getDateRange();
     const apiUrl = new URL("api/recording-downloader/search", window.location.href).toString();
-    const bodyObj = { domain, username, password, q, ...dateRange };
-    if (campaignId) bodyObj.campaignId = campaignId;
 
     el("btnSearch").disabled = true;
     el("btnSearchLabel").textContent = "Buscando…";
@@ -339,6 +418,10 @@
 
     const t0 = Date.now();
     try {
+      const encryptedPassword = await encryptPasswordForServer(password);
+      const bodyObj = { domain, username, encryptedPassword, q, ...dateRange };
+      if (campaignId) bodyObj.campaignId = campaignId;
+
       const resp = await fetch(apiUrl, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(bodyObj)
@@ -354,6 +437,9 @@
 
       currentRecordings = data.recordings || [];
       logEntry(`${currentRecordings.length} grabaciones recibidas (total API: ${data.total})`, "ok");
+      if (data.queryCount || data.saturatedWindows) {
+        logEntry(`Consultas internas=${data.queryCount || 0} ventanas divididas=${data.saturatedWindows || 0}${data.truncated ? " límite alcanzado" : ""}`, data.truncated ? "warn" : "info");
+      }
 
       renderTable(currentRecordings);
       const dl = getDownloaded(domain);
@@ -363,6 +449,7 @@
       el("progressWrap").hidden = true;
       hideAlert("downloadAlert");
       updateDownloadBtn();
+      updateHistorySummary();
 
     } catch (err) {
       logEntry(`Error: ${err.message}`, "err");
@@ -384,25 +471,42 @@
       const tr = document.createElement("tr");
       tr.className = done ? "dl-done" : "is-selected";
       tr.dataset.id = id;
-      tr.innerHTML = `
-        <td class="cb-col"><input type="checkbox" class="rec-cb" data-id="${id}" ${done ? "" : "checked"} /></td>
-        <td>${recDate(rec)}</td>
-        <td>${escHtml(recTo(rec))}</td>
-        <td>${escHtml(recFrom(rec))}</td>
-        <td>${recDuration(rec)}</td>
-        <td style="font-size:.72rem;font-family:ui-monospace,monospace;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(recFile(rec))}">${escHtml(recFile(rec))}</td>
-        <td class="st-col" id="st-${id}">${done ? '<span style="color:var(--ok)">✓</span>' : "—"}</td>`;
-      tr.querySelector(".rec-cb").addEventListener("change", e => {
+      const cbCell = document.createElement("td");
+      cbCell.className = "cb-col";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.className = "rec-cb";
+      cb.dataset.id = id;
+      cb.checked = !done;
+      cbCell.appendChild(cb);
+
+      const dateCell = document.createElement("td");
+      dateCell.textContent = recDate(rec);
+      const toCell = document.createElement("td");
+      toCell.textContent = recTo(rec);
+      const fromCell = document.createElement("td");
+      fromCell.textContent = recFrom(rec);
+      const durationCell = document.createElement("td");
+      durationCell.textContent = recDuration(rec);
+      const fileCell = document.createElement("td");
+      fileCell.style.cssText = "font-size:.72rem;font-family:ui-monospace,monospace;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+      fileCell.title = recFile(rec);
+      fileCell.textContent = recFile(rec);
+      const statusCell = document.createElement("td");
+      statusCell.className = "st-col";
+      statusCell.id = statusId(id);
+      statusCell.textContent = done ? "✓" : "—";
+      if (done) statusCell.style.color = "var(--ok)";
+
+      tr.append(cbCell, dateCell, toCell, fromCell, durationCell, fileCell, statusCell);
+      cb.addEventListener("change", e => {
         tr.classList.toggle("is-selected", e.target.checked);
         updateDownloadBtn();
       });
       tbody.appendChild(tr);
     });
     el("cbAll").checked = recordings.some(r => !dl.has(recId(r)));
-  }
-
-  function escHtml(s) {
-    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    updateHistorySummary();
   }
 
   function selectAll(checked) {
@@ -429,6 +533,16 @@
     const n = document.querySelectorAll(".rec-cb:checked").length;
     el("btnDownloadLabel").textContent = `Descargar seleccionadas (${n})`;
     el("btnDownload").disabled = n === 0;
+    updateHistorySummary();
+  }
+
+  function updateHistorySummary() {
+    const summary = el("historySummary");
+    if (!summary || !currentDomain) return;
+    const dl = getDownloaded(currentDomain);
+    const inRangeDownloaded = currentRecordings.filter(r => dl.has(recId(r))).length;
+    const pending = currentRecordings.length - inRangeDownloaded;
+    summary.textContent = `${inRangeDownloaded} ya descargadas en este rango · ${pending} pendientes`;
   }
 
   // ── Download ─────────────────────────────────────────────────────────────────
@@ -450,15 +564,20 @@
     const urlsEndpoint = new URL("api/recording-downloader/download-urls", window.location.href).toString();
     logEntry(`Obteniendo URLs de descarga para ${ids.length} grabaciones…`, "info");
 
-    let details;
+    let details = [];
     try {
-      const resp = await fetch(urlsEndpoint, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ domain, username, password, ids })
-      });
-      const data = await resp.json();
-      if (!resp.ok || !data.ok) throw new Error(data.error || `HTTP ${resp.status}`);
-      details = data.details;
+      const encryptedPassword = await encryptPasswordForServer(password);
+      const batches = chunkArray(ids, 200);
+      for (let i = 0; i < batches.length; i++) {
+        logEntry(`Lote URLs ${i + 1}/${batches.length} (${batches[i].length})`, "info");
+        const resp = await fetch(urlsEndpoint, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ domain, username, encryptedPassword, ids: batches[i] })
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+        details = details.concat(data.details || []);
+      }
       const withUrl = details.filter(d => d.ok && d.downloadUrl).length;
       const noUrl   = details.length - withUrl;
       logEntry(`URLs obtenidas: ${withUrl} con URL${noUrl ? ", " + noUrl + " sin URL" : ""}`, "ok");
@@ -471,12 +590,13 @@
 
     // Step 2 — download each file
     let done = 0;
+    let successCount = 0;
     for (const { id, ok, downloadUrl, error } of details) {
-      const stEl = el("st-" + id);
+      const stEl = el(statusId(id));
       const trEl = stEl?.closest("tr");
 
       if (!ok || !downloadUrl) {
-        if (stEl) stEl.innerHTML = `<span style="color:var(--err)">✗ Sin URL</span>`;
+        setStatus(id, "✗ Sin URL", "err");
         if (trEl) trEl.className = "dl-error";
         logEntry(`${id}: sin URL — ${error || "campo no encontrado en el detalle"}`, "warn");
         done++;
@@ -484,7 +604,12 @@
         continue;
       }
 
-      if (stEl) stEl.innerHTML = `<span class="spinner"></span>`;
+      if (stEl) {
+        stEl.innerHTML = "";
+        const spinner = document.createElement("span");
+        spinner.className = "spinner";
+        stEl.appendChild(spinner);
+      }
       if (trEl) trEl.className = "downloading";
 
       const rec = currentRecordings.find(r => recId(r) === id) || {};
@@ -493,29 +618,42 @@
 
       try {
         await downloadFile(downloadUrl, filename);
-        markDownloaded(currentDomain, [id]);
-        if (stEl) stEl.innerHTML = `<span style="color:var(--ok)">✓</span>`;
-        if (trEl) trEl.className = "dl-done";
+        markDownloaded(currentDomain, [{ id, filename, recordingDate: recRawMs(rec) || "" }]);
+        successCount++;
+        setStatus(id, "✓", "ok");
+        if (trEl) {
+          trEl.className = "dl-done";
+          const cb = trEl.querySelector(".rec-cb");
+          if (cb) cb.checked = false;
+        }
         logEntry(`✓ ${filename}`, "ok");
       } catch (e) {
-        if (stEl) stEl.innerHTML = `<span style="color:var(--err)">✗</span>`;
+        setStatus(id, "✗", "err");
         if (trEl) trEl.className = "dl-error";
         logEntry(`✗ ${filename}: ${e.message}`, "err");
       }
 
       done++;
       updateProgress(done, details.length);
+      updateHistorySummary();
       await new Promise(r => setTimeout(r, 300));
     }
 
-    const ok = details.filter(d => d.ok && d.downloadUrl).length;
-    logEntry(`Completado: ${ok} descargadas, ${details.length - ok} sin URL.`, "ok");
+    const noUrl = details.filter(d => !d.ok || !d.downloadUrl).length;
+    logEntry(`Completado: ${successCount} descargadas, ${noUrl} sin URL, ${details.length - noUrl - successCount} con error.`, "ok");
     el("btnDownload").disabled = false;
+    updateDownloadBtn();
   }
 
   function updateProgress(done, total) {
     el("progressText").textContent = `${done} / ${total} procesadas`;
     el("progressBar").style.width = `${total ? Math.round(done / total * 100) : 0}%`;
+  }
+
+  function chunkArray(items, size) {
+    const chunks = [];
+    for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
+    return chunks;
   }
 
   function buildFilename(rec, id, downloadUrl) {
@@ -535,20 +673,14 @@
   }
 
   async function downloadFile(url, filename) {
-    try {
-      const resp = await fetch(url);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const blob = await resp.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl; a.download = filename;
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
-    } catch {
-      // CORS fallback: abrir en nueva pestaña
-      logEntry(`CORS: abriendo ${filename} en nueva pestaña`, "warn");
-      window.open(url, "_blank");
-    }
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const blob = await resp.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = blobUrl; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
   }
 
   el("inputPassword").addEventListener("keydown", e => { if (e.key === "Enter") doSearch(); });
